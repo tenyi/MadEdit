@@ -807,6 +807,45 @@ mod tests {
     }
 
     #[test]
+    fn test_line_insert_and_delete_keeps_colors_aligned() {
+        let mut lines: Vec<String> = (0..80)
+            .map(|i| if i % 2 == 0 { format!("// c{i}") } else { format!("let v{i} = {i};") })
+            .collect();
+        let mut cache = SyntaxCache::default();
+        drain(&mut cache, &lines, 0, lines.len());
+        lines.insert(5, String::new());
+        cache.invalidate_from(5);
+        assert_eq!(
+            drain(&mut cache, &lines, 0, lines.len()),
+            drain(&mut SyntaxCache::default(), &lines, 0, lines.len())
+        );
+        lines.drain(10..12);
+        cache.invalidate_from(10);
+        assert_eq!(
+            drain(&mut cache, &lines, 0, lines.len()),
+            drain(&mut SyntaxCache::default(), &lines, 0, lines.len())
+        );
+    }
+
+    #[test]
+    fn test_line_insert_before_pending_frontier() {
+        let mut lines: Vec<String> = (0..80).map(|i| format!("let v{i} = {i};")).collect();
+        let mut cache = SyntaxCache { parse_budget: Some(Duration::ZERO), ..Default::default() };
+        for _ in 0..8 {
+            cache.highlight(&lines, 0, lines.len(), "Rust", "InspiredGitHub", false, &[]);
+        }
+        assert!(cache.has_pending());
+        lines.insert(2, "/*".into());
+        lines.insert(40, "*/".into());
+        cache.invalidate_from(2);
+        cache.invalidate_from(40);
+        assert_eq!(
+            drain(&mut cache, &lines, 12, lines.len() - 12),
+            drain(&mut SyntaxCache::default(), &lines, 12, lines.len() - 12)
+        );
+    }
+
+    #[test]
     fn test_invalidate_after_edit() {
         let mut lines: Vec<String> = vec!["let a = 1;".into(), "let b = 2;".into()];
         let mut cache = SyntaxCache::default();
