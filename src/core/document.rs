@@ -824,6 +824,40 @@ mod tests {
     }
 
     #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "edit modified lines before hint")]
+    fn test_edit_rejects_changes_before_hint() {
+        let mut doc = Document::default();
+        doc.editor.set_text("prefix\neditable\nsuffix");
+        doc.edit(EditKind::Other, 1..2, |ed| ed.lines[0].push('!'));
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "edit modified lines after hint")]
+    fn test_edit_rejects_changes_after_shifted_hint() {
+        let mut doc = Document::default();
+        doc.editor.set_text("prefix\neditable\nsuffix");
+        doc.edit(EditKind::Other, 1..2, |ed| {
+            ed.lines.insert(1, "inserted".into());
+            ed.lines[3].push('!');
+        });
+    }
+
+    #[test]
+    fn test_edit_contract_allows_empty_document_and_boundary_insertions() {
+        let mut doc = Document::default();
+        doc.editor.set_text("a\nb\nc");
+        doc.edit(EditKind::Other, 1..1, |ed| ed.lines.insert(1, "middle".into()));
+        doc.edit(EditKind::Other, 4..4, |ed| ed.lines.push("end".into()));
+        assert_eq!(doc.text(), "a\nmiddle\nb\nc\nend");
+        doc.edit(EditKind::Other, 0..5, |ed| ed.lines.clear());
+        assert_eq!(doc.text(), "");
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "a\nmiddle\nb\nc\nend");
+    }
+
+    #[test]
     fn test_undo_redo_and_typing_merge() {
         let mut doc = Document::default();
         for c in "abc".chars() {
