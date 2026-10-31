@@ -59,6 +59,9 @@ The original C++ / wxWidgets **MadEdit** is a classic tool for many developers a
 - **Edit**: bookmark line operations, hex string conversion, indent, comment, change case, full/half width, tabs to spaces and back, increment numbers, sort, column alignment.
 - **Search**: plain text / case / whole word / Regex / Hex find and replace, find and replace in multiple files, jump to matching bracket.
 - **View**: word wrap, line numbers, bookmark gutter, ruler, control characters, current line, column guide lines, System / Light / Dark theme, Markdown / HTML preview.
+- **Custom syntax and themes**: place Sublime Text `.sublime-syntax` definitions in `syntaxes/` and TextMate `.tmTheme` files in `themes/`, beside `settings.json` (Help > About shows its path; `MADEDIT_CONFIG_DIR` can override the directory). Subfolders are supported; symlinks are skipped. Restart MadEdit after installing files.
+  - Custom definitions take precedence over bundled extension matches and approximate language fallbacks. Choose them from View > Syntax; themes appear in the Syntax Highlighting dialog using the file name without `.tmTheme`. A matching name overrides a bundled resource.
+  - Malformed files are skipped individually with a diagnostic on stderr; valid resources and built-ins remain available.
 - **Macros and tools**: macro record and playback, shortcut reassignment and a searchable shortcut list (Help > Keyboard Shortcuts, F1), spell check, word count, Simplified/Traditional Chinese and Japanese Kanji conversion, JSON / XML formatting, and a dprint-based formatter (Tools > Convert/Format > "dprint Format") for C/C++/Objective-C (clang-format), JavaScript/TypeScript, JSON/JSONC, CSS/SCSS, HTML/XML/SVG/Vue/Svelte, YAML, Markdown, TOML, GraphQL, SQL, Dockerfile, Shell, Python, Go, PHP, Lua and C#.
 
 ### 7. macOS native integration

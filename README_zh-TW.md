@@ -59,6 +59,9 @@
 - **編輯**：書籤行操作、Hex 字串互轉、縮排、註解、大小寫、全半形、Tab 與空白互轉、遞增數字、排序、欄位對齊。
 - **搜尋**：純文字 / 大小寫 / 全字 / Regex / Hex 搜尋取代、在多個檔案中尋找／取代、跳至對應括號。
 - **檢視**：自動換行、行號、書籤欄、尺標、控制字元、目前行、欄位提示線、系統／淺色／深色主題、Markdown／HTML 預覽。
+- **自訂語法與主題**：將 Sublime Text `.sublime-syntax` 定義放入 `settings.json` 旁的 `syntaxes/`，TextMate `.tmTheme` 檔案放入 `themes/`（「說明 > 關於」顯示設定路徑，也可用 `MADEDIT_CONFIG_DIR` 指定目錄）。支援子目錄，略過符號連結。安裝後請重新啟動 MadEdit。
+  - 自訂定義的副檔名比對優先於內建語法及近似語言回退。可從「檢視 > 語法類型」選擇；主題以去除 `.tmTheme` 的檔名顯示於「語法高亮」對話框。同名資源會覆寫內建項目。
+  - 損壞的檔案會個別略過，並將診斷訊息寫至 stderr，不影響有效資源與內建項目。
 - **巨集與工具**：巨集錄製播放、快捷鍵重新指派與可篩選的快捷鍵一覽（說明 > 鍵盤快捷鍵，F1）、拼字檢查、字數統計、簡繁與日文漢字轉換、JSON／XML 格式化，以及以 dprint 為基礎的格式化（工具 > 文字轉換／格式化 >「dprint 格式化」），支援 C/C++/Objective-C（clang-format）、JavaScript/TypeScript、JSON/JSONC、CSS/SCSS、HTML/XML/SVG/Vue/Svelte、YAML、Markdown、TOML、GraphQL、SQL、Dockerfile、Shell、Python、Go、PHP、Lua、C#。
 
 ### 7. macOS 原生整合
