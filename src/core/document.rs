@@ -268,6 +268,7 @@ impl Document {
     /// Notify incremental caches of a replacement in pre-edit line coordinates.
     fn text_changed(&mut self, line: usize, removed: usize, inserted: usize) {
         self.version += 1;
+        self.editor.lines_changed(line, self.version);
         self.syntax_cache.lines_replaced(line, removed, inserted);
     }
 
@@ -865,6 +866,28 @@ mod tests {
 
     fn temp_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("madedit_doc_{}_{}", std::process::id(), name))
+    }
+
+    #[test]
+    fn test_status_offsets_follow_edit_undo_redo_and_reset() {
+        let mut doc = Document::default();
+        doc.replace_all_text("中a\n🙂bc\nlast");
+        let check = |doc: &mut Document| {
+            for line in (0..doc.editor.lines.len()).rev() {
+                let expected = doc.editor.lines[..line].iter().map(|l| l.chars().count() + 1).sum::<usize>();
+                doc.editor.set_caret(line, 0);
+                assert_eq!(doc.editor.status_info(doc.version).1, expected);
+            }
+        };
+        check(&mut doc);
+        doc.edit(EditKind::Other, 0..1, |ed| ed.lines.insert(0, "new".into()));
+        check(&mut doc);
+        doc.undo();
+        check(&mut doc);
+        doc.redo();
+        check(&mut doc);
+        doc.apply_decoded(encoding::decode_with(b"reset\ntext", encoding_rs::UTF_8));
+        check(&mut doc);
     }
 
     #[test]

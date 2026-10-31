@@ -263,6 +263,20 @@ pub fn extract_visual_slice(
     (result, s_char, e_char)
 }
 
+/// A line-start offset remains valid when edits are at or after that line.
+#[derive(Debug, Clone, Copy)]
+struct CharOffset {
+    version: u64,
+    line: usize,
+    start: usize,
+}
+
+#[derive(Debug, Clone)]
+struct StatusCache {
+    key: (TextPosition, TextPosition, u64, usize),
+    info: (usize, usize, usize),
+}
+
 /// 核心編輯狀態：管理行清單快取、選取狀態、游標導覽、書籤與基礎編輯邏輯
 #[derive(Debug, Clone)]
 pub struct EditorState {
@@ -275,8 +289,8 @@ pub struct EditorState {
     pub clipboard_is_block: bool,
     pub bookmarks: BTreeSet<usize>,
     pub overwrite_mode: bool,
-    /// 狀態列數值快取：（錨點、游標、文件版本、Tab 寬）→（視覺欄、字元位置、選取字數）
-    status_cache: Option<((TextPosition, TextPosition, u64, usize), (usize, usize, usize))>,
+    status_cache: Option<StatusCache>,
+    char_offset: Option<CharOffset>,
 }
 
 impl Default for EditorState {
@@ -290,6 +304,7 @@ impl Default for EditorState {
             bookmarks: BTreeSet::new(),
             overwrite_mode: false,
             status_cache: None,
+            char_offset: None,
         }
     }
 }
@@ -325,6 +340,8 @@ impl EditorState {
             lines.push(String::new());
         }
         self.lines = lines;
+        self.char_offset = None;
+        self.status_cache = None;
         self.selection = Selection::caret(TextPosition::new(0, 0));
         self.clamp_caret();
     }
@@ -344,18 +361,29 @@ impl EditorState {
         self.lines.get(line_idx).map_or(0, |l| l.chars().count())
     }
 
-    /// 游標位置自文件開頭起算的字元索引（每行結尾計入一個換行字元）
-    ///
-    /// 對應原版 MadEdit 狀態列的「CharPos」欄位。
-    pub fn char_pos(&self, pos: TextPosition) -> usize {
-        // 行號超出範圍時夾限至最後一行
-        let end_line = pos.line.min(self.lines.len().saturating_sub(1));
-        let mut count = 0usize;
-        for line in self.lines.iter().take(end_line) {
-            // 每個非最後一行結尾都有一個換行字元
-            count += line.chars().count() + 1;
-        }
-        count + self.line_char_count(end_line).min(pos.col)
+    /// Character index, counting one newline between lines. The caller's
+    /// document version also makes unannounced external line mutations safe.
+    pub fn char_pos(&mut self, pos: TextPosition, doc_version: u64) -> usize {
+        let line = pos.line.min(self.lines.len().saturating_sub(1));
+        let anchor = self.char_offset
+            .filter(|a| a.version == doc_version && a.line < self.lines.len())
+            .unwrap_or(CharOffset { version: doc_version, line: 0, start: 0 });
+        let chars = |lines: &[String]| lines.iter().map(|l| l.chars().count() + 1).sum::<usize>();
+        let start = if line >= anchor.line {
+            anchor.start + chars(&self.lines[anchor.line..line])
+        } else {
+            anchor.start - chars(&self.lines[line..anchor.line])
+        };
+        self.char_offset = Some(CharOffset { version: doc_version, line, start });
+        start + self.line_char_count(line).min(pos.col)
+    }
+
+    /// Preserve only offsets whose preceding text was not touched by the edit.
+    pub fn lines_changed(&mut self, start: usize, doc_version: u64) {
+        self.status_cache = None;
+        self.char_offset = self.char_offset
+            .filter(|a| a.line <= start)
+            .map(|a| CharOffset { version: doc_version, ..a });
     }
 
     /// 狀態列顯示值（視覺欄位、游標自文件頭起算的字元位置、選取字元數）
@@ -363,16 +391,16 @@ impl EditorState {
     /// 游標與文件版本不變時直接沿用快取，避免每幀對超長文件重掃字數。
     pub fn status_info(&mut self, doc_version: u64) -> (usize, usize, usize) {
         let key = (self.selection.anchor, self.selection.head, doc_version, tab_size());
-        if let Some((k, v)) = &self.status_cache
-            && *k == key
+        if let Some(cache) = &self.status_cache
+            && cache.key == key
         {
-            return *v;
+            return cache.info;
         }
         let head = self.selection.head;
         let line_text = self.lines.get(head.line).map(|s| s.as_str()).unwrap_or("");
         let vcol = char_col_to_visual_col(line_text, head.col);
-        let info = (vcol, self.char_pos(head), self.selection_char_count());
-        self.status_cache = Some((key, info));
+        let info = (vcol, self.char_pos(head, doc_version), self.selection_char_count());
+        self.status_cache = Some(StatusCache { key, info });
         info
     }
 
@@ -1325,19 +1353,71 @@ mod tests {
     #[test]
     fn test_char_pos_counts_newlines() {
         // 三行內容："abc" / "de" / "f"
-        let editor = EditorState::from_text("abc\nde\nf");
+        let mut editor = EditorState::from_text("abc\nde\nf");
 
         // 第一行開頭
-        assert_eq!(editor.char_pos(TextPosition::new(0, 0)), 0);
+        assert_eq!(editor.char_pos(TextPosition::new(0, 0), 0), 0);
         // 第一行第 3 個字元之後
-        assert_eq!(editor.char_pos(TextPosition::new(0, 3)), 3);
+        assert_eq!(editor.char_pos(TextPosition::new(0, 3), 0), 3);
         // 第二行開頭（第一行 3 字元 + 1 個換行）
-        assert_eq!(editor.char_pos(TextPosition::new(1, 0)), 4);
+        assert_eq!(editor.char_pos(TextPosition::new(1, 0), 0), 4);
         // 第三行結尾（3 + 1 + 2 + 1 + 最後一行 1 個字元 = 8）
-        assert_eq!(editor.char_pos(TextPosition::new(2, 1)), 8);
+        assert_eq!(editor.char_pos(TextPosition::new(2, 1), 0), 8);
 
         // 行號超出範圍時應夾限於文件長度
-        assert_eq!(editor.char_pos(TextPosition::new(99, 0)), 7);
+        assert_eq!(editor.char_pos(TextPosition::new(99, 0), 0), 7);
+    }
+
+    #[test]
+    fn test_char_offsets_follow_edits_navigation_and_versions() {
+        let mut ed = EditorState::from_text("中a\n🙂bc\nlast");
+        assert_eq!(ed.char_pos(TextPosition::new(2, 2), 0), 9);
+        ed.lines[2].push('界');
+        ed.lines_changed(2, 1);
+        assert_eq!(ed.char_pos(TextPosition::new(2, 5), 1), 12);
+        assert_eq!(ed.char_pos(TextPosition::new(1, 1), 1), 4);
+        ed.lines.insert(0, "new".into());
+        ed.lines_changed(0, 2);
+        assert_eq!(ed.char_pos(TextPosition::new(3, 5), 2), 16);
+        ed.lines.drain(1..3);
+        ed.lines_changed(1, 3);
+        assert_eq!(ed.char_pos(TextPosition::new(1, 99), 3), 9);
+        ed.lines[0] = "longer".into();
+        assert_eq!(ed.char_pos(TextPosition::new(1, 0), 4), 7);
+        ed.set_text("reset\ntext");
+        assert_eq!(ed.char_pos(TextPosition::new(1, 0), 4), 6);
+    }
+
+    #[test]
+    fn test_tail_char_offsets_match_full_scan() {
+        let mut ed = EditorState::from_text(&"中🙂abc\n".repeat(99_999));
+        for version in 0..1000 {
+            if version % 2 == 0 {
+                ed.lines[99_999].push('界');
+            } else {
+                ed.lines[99_999].pop();
+            }
+            ed.lines_changed(99_999, version);
+            let pos = TextPosition::new(99_999, 1);
+            let expected = ed.lines[..pos.line].iter().map(|l| l.chars().count() + 1).sum::<usize>()
+                + ed.line_char_count(pos.line).min(pos.col);
+            assert_eq!(ed.char_pos(pos, version), expected);
+        }
+    }
+
+    #[test]
+    #[ignore = "optimized timing smoke; run with --release --ignored --nocapture"]
+    fn benchmark_tail_char_offsets() {
+        let mut ed = EditorState::from_text(&"中🙂abc\n".repeat(99_999));
+        let pos = TextPosition::new(99_999, 1);
+        std::hint::black_box(ed.char_pos(pos, 0));
+        let started = std::time::Instant::now();
+        for version in 1..=1000 {
+            if version % 2 == 0 { ed.lines[99_999].pop(); } else { ed.lines[99_999].push('界'); }
+            ed.lines_changed(99_999, version);
+            std::hint::black_box(ed.char_pos(pos, version));
+        }
+        eprintln!("1000 tail edits + character offset queries: {:?}", started.elapsed());
     }
 
     #[test]
