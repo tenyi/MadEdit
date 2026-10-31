@@ -181,6 +181,7 @@ Run them from the project root (use PowerShell on Windows; bash or zsh on macOS 
 
 - [x] **Syntax cache line identities** (#9): `SyntaxCache::lines_replaced` rebases cached spans and checkpoints after line-count changes and rewinds pending parsing. Document edits, undo and redo report exact removed/inserted counts; decoding a whole document clears parser state.
 - [x] **Edit range contracts** (#10): debug-only prefix/suffix fingerprints reject out-of-range edits, including shifted suffixes; empty-document normalization and zero-width insertion ranges remain valid. Release builds do not compute these fingerprints.
+- [x] **Whole-edit memory** (#11): undo snapshots transfer changed strings with `truncate`/`drain`. Whole-document or ≥10,000-line edits release reconstructible Unicode original bytes before cloning; no-ops restore them. Malformed, legacy and mixed-newline raw data is retained until a real change is confirmed to preserve lossless reinterpretation.
 
 - [x] **Local test improvements**: deterministic decode-error protection, exact undo/redo and truncation assertions, a 30-case encoding/BOM/newline matrix, seeded Piece Table/document models, and an explicit 1 GiB streaming-save regression. `make test-visual` compares four scenes with bundled test fonts and strict glyph checks; reviewed baselines currently cover macOS only. `make bench` saves raw samples and environment metadata and optionally rejects regressions against a compatible baseline. See [local testing](docs/testing.md). CI/CD remains unchanged.
 

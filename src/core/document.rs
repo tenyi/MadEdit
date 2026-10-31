@@ -304,7 +304,18 @@ impl Document {
             hash_line_slice(&self.editor.lines[..a]),
             hash_line_slice(&self.editor.lines[b..]),
         );
-        let old: Vec<String> = self.editor.lines[a..b].to_vec();
+        // Canonical Unicode can be rebuilt byte-for-byte on a no-op. Keep raw
+        // bytes for malformed, legacy or mixed-newline input: re-encoding those
+        // could lose data even when the editing command changes nothing.
+        let rebuild_pristine = self.pristine_bytes.is_some()
+            && (a == 0 && b == len_before || b - a >= 10_000)
+            && !self.has_decode_error
+            && !self.mixed_newlines
+            && [encoding_rs::UTF_8, encoding_rs::UTF_16LE, encoding_rs::UTF_16BE].contains(&self.encoding);
+        if rebuild_pristine {
+            self.pristine_bytes = None;
+        }
+        let mut old: Vec<String> = self.editor.lines[a..b].to_vec();
         let sel_before = self.editor.selection;
         let bm_before = self.editor.bookmarks.clone();
 
@@ -340,16 +351,23 @@ impl Document {
             .take(max_suffix)
             .take_while(|(x, y)| x == y)
             .count();
-        let old_changed = old[prefix..old.len() - suffix].to_vec();
-        let new_changed = new_region[prefix..new_region.len() - suffix].to_vec();
+        old.truncate(old.len() - suffix);
+        old.drain(..prefix);
+        let old_changed = old;
+        let new_region = &new_region[prefix..new_region.len() - suffix];
 
-        if old_changed.is_empty() && new_changed.is_empty() {
-            // 內容未變（可能只是選取改變），不產生復原紀錄
+        if old_changed.is_empty() && new_region.is_empty() {
+            // Release the snapshot before rebuilding original bytes on a no-op.
+            drop(old_changed);
+            if rebuild_pristine {
+                self.pristine_bytes = Some(self.encode().expect("valid Unicode remains encodable"));
+            }
             return result;
         }
 
-        let start = a + prefix;
         self.pristine_bytes = None;
+        let new_changed = new_region.to_vec();
+        let start = a + prefix;
         self.text_changed(start, old_changed.len(), new_changed.len());
 
         // 連續輸入合併為一筆；已存檔的紀錄不再合併，否則 serial 不前進，存檔後的輸入不會被視為修改
@@ -847,6 +865,29 @@ mod tests {
 
     fn temp_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("madedit_doc_{}_{}", std::process::id(), name))
+    }
+
+    #[test]
+    fn test_whole_edit_noop_preserves_original_bytes() {
+        for (enc, bytes) in [
+            (encoding_rs::UTF_8, b"\xef\xbb\xbfhello\r\nworld".to_vec()),
+            (encoding_rs::UTF_16LE, vec![0xff, 0xfe, b'a', 0, 13, 0, 10, 0, b'b', 0]),
+            (encoding_rs::UTF_16BE, vec![0xfe, 0xff, 0, b'a', 0, 13, 0, 10, 0, b'b']),
+            (encoding_rs::UTF_8, b"a\r\nb\nc\r".to_vec()),
+            (encoding_rs::UTF_8, b"caf\xe9".to_vec()),
+            (encoding_rs::WINDOWS_1252, b"caf\xe9".to_vec()),
+        ] {
+            let mut doc = Document::default();
+            doc.apply_decoded(encoding::decode_with(&bytes, enc));
+            doc.pristine_bytes = Some(bytes.clone());
+            let hint = doc.whole_hint();
+            doc.edit(EditKind::Other, hint, |_| {});
+            assert_eq!(doc.pristine_bytes.as_deref(), Some(bytes.as_slice()));
+            assert!(!doc.can_undo());
+            assert!(!doc.is_modified());
+            doc.reinterpret(encoding_rs::WINDOWS_1252).unwrap();
+            assert_eq!(doc.pristine_bytes.as_deref(), Some(bytes.as_slice()));
+        }
     }
 
     #[test]
