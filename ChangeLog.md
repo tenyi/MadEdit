@@ -10,6 +10,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - The text editor renders syntax-defined bold and italic styles, including Markdown headings and emphasis, without changing caret, selection or wrapping metrics.
 - Load custom `.sublime-syntax` definitions and `.tmTheme` themes from `syntaxes/` and `themes/` beside the settings file at startup. Custom extension matches take precedence over approximate language fallbacks; malformed files do not prevent other resources from loading.
 
+### Changed
+- Mark ADR 0002's text-storage and mmap design as historical and partially superseded by ADR 0011, with links to the current text, hex and positioned-read implementations.
+
 ### Fixed
 - Syntax highlighting stays aligned after inserting or deleting lines, including undo/redo and edits during time-sliced parsing.
 - Debug builds detect edits outside their declared line range using allocation-free fingerprints, protecting undo and incremental caches without copying untouched lines.
@@ -21,6 +24,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 #### 新增
 - 文字編輯器支援語法定義的粗體與斜體，包括 Markdown 標題與強調文字，且不改變游標、選取範圍及折行的字寬計算。
 - 啟動時從設定檔旁的 `syntaxes/` 與 `themes/` 載入自訂 `.sublime-syntax` 定義和 `.tmTheme` 主題。自訂副檔名比對優先於近似語言回退，損壞的檔案也不會阻止其他資源載入。
+
+#### 變更
+- 將 ADR 0002 的文字儲存與 mmap 設計標記為歷史方案，說明其部分已由 ADR 0011 取代，並連結至現行文字、十六進位及定位讀取實作。
 
 #### 修正
 - 插入或刪除行後，語法高亮仍與文字對齊；復原／重做及分幀解析期間的編輯也一併處理。

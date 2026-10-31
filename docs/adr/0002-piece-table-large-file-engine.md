@@ -1,5 +1,17 @@
 # 0002: 大檔案核心採用 Piece Table 搭配 memmap2 記憶體對映與按需行解碼
 
+- Status: Partially superseded by [ADR 0011](0011-egui-rewrite.md). Text mode now uses a `Vec<String>` line array; the Piece Table and on-demand byte reads remain for hexadecimal editing and files above the text-size threshold.
+
+## Architecture evolution
+
+The proposal below records the historical Slint implementation, not the current text engine:
+
+- [ADR 0011](0011-egui-rewrite.md) replaced ordinary text-mode storage with fully decoded lines in [`EditorState`](../../src/core/editor.rs). [`Document`](../../src/core/document.rs) owns encoding, text undo/redo, saving and the text/hex transition.
+- [`HexBuffer`](../../src/core/hexbuf.rs) owns the [`PieceTable`](../../src/core/piece_table.rs) byte buffer. Files exceeding `OpenOptions::max_text_size` open in **hex-only mode**, without decoding the whole file; this is not a paged text-editing mode.
+- File-backed pieces use cached positioned reads, not `memmap2`. This avoids `SIGBUS` if another process truncates the original file. The historical `LineIndex` and on-demand text-line decoding described below are no longer part of the current implementation.
+
+## Historical proposal
+
 為了解決原先將整個檔案載入記憶體並另存一份整檔 `String` 所導致的記憶體膨脹與開檔卡頓，我們決定採用 Piece Table 搭配 `memmap2` 唯讀記憶體對映與按需行解碼（On-demand Line Decoding）。
 
 ## Context

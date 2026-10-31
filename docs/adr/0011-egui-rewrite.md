@@ -4,6 +4,7 @@
 - 日期：2026-10-23
 - 取代：[ADR 0001](0001-slint-virtual-line-editor-view.md)、[ADR 0009](0009-madedit-classic-ui-and-focus-fix.md)、[ADR 0010](0010-classic-ui-consolidation.md) 中與 Slint 介面相關的部分
 - 關聯：`docs/feature-gap-analysis.md`、`problem.md`
+- Partially supersedes: [ADR 0002](0002-piece-table-large-file-engine.md), specifically shared text/hex storage, mmap and on-demand text-line decoding. Its updated architecture note identifies the current source modules.
 
 ## 背景
 
