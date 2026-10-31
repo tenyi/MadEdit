@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 - The text editor renders syntax-defined bold and italic styles, including Markdown headings and emphasis, without changing caret, selection or wrapping metrics.
+- Load custom `.sublime-syntax` definitions and `.tmTheme` themes from `syntaxes/` and `themes/` beside the settings file at startup. Custom extension matches take precedence over approximate language fallbacks; malformed files do not prevent other resources from loading.
 
 ### Fixed
 - Syntax highlighting stays aligned after inserting or deleting lines, including undo/redo and edits during time-sliced parsing.
@@ -19,6 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 #### 新增
 - 文字編輯器支援語法定義的粗體與斜體，包括 Markdown 標題與強調文字，且不改變游標、選取範圍及折行的字寬計算。
+- 啟動時從設定檔旁的 `syntaxes/` 與 `themes/` 載入自訂 `.sublime-syntax` 定義和 `.tmTheme` 主題。自訂副檔名比對優先於近似語言回退，損壞的檔案也不會阻止其他資源載入。
 
 #### 修正
 - 插入或刪除行後，語法高亮仍與文字對齊；復原／重做及分幀解析期間的編輯也一併處理。
