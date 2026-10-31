@@ -229,7 +229,8 @@ impl Document {
         self.editor.set_text(&decoded.text);
         self.editor.bookmarks = bookmarks.into_iter().filter(|&l| l < self.editor.lines.len()).collect();
         self.editor.overwrite_mode = overwrite;
-        self.text_changed(0);
+        self.version += 1;
+        self.syntax_cache.clear();
     }
 
     /// 目前語法為 Markdown（決定能否開啟 Markdown 預覽）
@@ -255,10 +256,10 @@ impl Document {
         self.serial != self.saved_serial || self.meta_modified || hex_dirty
     }
 
-    /// 文字自第 line 行起有變動
-    fn text_changed(&mut self, line: usize) {
+    /// Notify incremental caches of a replacement in pre-edit line coordinates.
+    fn text_changed(&mut self, line: usize, removed: usize, inserted: usize) {
         self.version += 1;
-        self.syntax_cache.invalidate_from(line);
+        self.syntax_cache.lines_replaced(line, removed, inserted);
     }
 
     // ── 編輯與復原 ──────────────────────────────────────────────
@@ -323,7 +324,7 @@ impl Document {
 
         let start = a + prefix;
         self.pristine_bytes = None;
-        self.text_changed(start);
+        self.text_changed(start, old_changed.len(), new_changed.len());
 
         // 連續輸入合併為一筆；已存檔的紀錄不再合併，否則 serial 不前進，存檔後的輸入不會被視為修改
         let mergeable = kind == EditKind::Typing
@@ -396,7 +397,7 @@ impl Document {
         self.editor.bookmarks.retain(|&l| l < self.editor.lines.len());
         self.editor.clamp_caret();
         self.serial = rec.serial_before;
-        self.text_changed(rec.start);
+        self.text_changed(rec.start, rec.new.len(), rec.old.len());
         self.redo.push(rec);
         true
     }
@@ -413,7 +414,7 @@ impl Document {
         self.editor.bookmarks.retain(|&l| l < self.editor.lines.len());
         self.editor.clamp_caret();
         self.serial = rec.serial_after;
-        self.text_changed(rec.start);
+        self.text_changed(rec.start, rec.old.len(), rec.new.len());
         self.undo.push(rec);
         true
     }

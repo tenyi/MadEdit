@@ -397,6 +397,31 @@ impl SyntaxCache {
         self.dirty_from = Some(self.dirty_from.map_or(line, |d| d.min(line)));
     }
 
+    /// Rebase cached line identities before invalidating parser state.
+    pub fn lines_replaced(&mut self, start: usize, removed: usize, inserted: usize) {
+        if removed != inserted {
+            let old_end = start + removed;
+            let shifted = |line: usize| line - removed + inserted;
+            self.checkpoints.retain_mut(|c| {
+                if c.line >= old_end {
+                    c.line = shifted(c.line);
+                    true
+                } else {
+                    c.line < start
+                }
+            });
+            self.lines.retain(|&line, _| line < start || line >= old_end);
+            // Remove all moving entries first, so shifted keys cannot overwrite
+            // entries that have not moved yet. Span allocations remain Rc-shared.
+            let moving: Vec<_> = self.lines.extract_if(|&line, _| line >= old_end).collect();
+            self.lines.extend(moving.into_iter().map(|(line, spans)| (shifted(line), spans)));
+        }
+        self.invalidate_from(start);
+        if let Some(frontier) = &mut self.parse_frontier {
+            *frontier = (*frontier).min(start);
+        }
+    }
+
     /// 清除全部快取
     pub fn clear(&mut self) {
         self.checkpoints.clear();
@@ -807,6 +832,45 @@ mod tests {
     }
 
     #[test]
+    fn test_line_insert_and_delete_keeps_colors_aligned() {
+        let mut lines: Vec<String> = (0..80)
+            .map(|i| if i % 2 == 0 { format!("// c{i}") } else { format!("let v{i} = {i};") })
+            .collect();
+        let mut cache = SyntaxCache::default();
+        drain(&mut cache, &lines, 0, lines.len());
+        lines.insert(5, String::new());
+        cache.lines_replaced(5, 0, 1);
+        assert_eq!(
+            drain(&mut cache, &lines, 0, lines.len()),
+            drain(&mut SyntaxCache::default(), &lines, 0, lines.len())
+        );
+        lines.drain(10..12);
+        cache.lines_replaced(10, 2, 0);
+        assert_eq!(
+            drain(&mut cache, &lines, 0, lines.len()),
+            drain(&mut SyntaxCache::default(), &lines, 0, lines.len())
+        );
+    }
+
+    #[test]
+    fn test_line_insert_before_pending_frontier() {
+        let mut lines: Vec<String> = (0..80).map(|i| format!("let v{i} = {i};")).collect();
+        let mut cache = SyntaxCache { parse_budget: Some(Duration::ZERO), ..Default::default() };
+        for _ in 0..8 {
+            cache.highlight(&lines, 0, lines.len(), "Rust", "InspiredGitHub", false, &[]);
+        }
+        assert!(cache.has_pending());
+        lines.insert(2, "/*".into());
+        cache.lines_replaced(2, 0, 1);
+        lines.insert(40, "*/".into());
+        cache.lines_replaced(40, 0, 1);
+        assert_eq!(
+            drain(&mut cache, &lines, 12, lines.len() - 12),
+            drain(&mut SyntaxCache::default(), &lines, 12, lines.len() - 12)
+        );
+    }
+
+    #[test]
     fn test_invalidate_after_edit() {
         let mut lines: Vec<String> = vec!["let a = 1;".into(), "let b = 2;".into()];
         let mut cache = SyntaxCache::default();
@@ -864,8 +928,7 @@ mod tests {
         // 預算歸零：每幀只解析一行，未完成的行先以前景色暫替，最終結果與一次算完一致
         let pad = "x".repeat(4096);
         let lines: Vec<String> = (0..6).map(|i| format!("let v{i} = {i}; // {pad}")).collect();
-        let mut cache = SyntaxCache::default();
-        cache.parse_budget = Some(Duration::ZERO);
+        let mut cache = SyntaxCache { parse_budget: Some(Duration::ZERO), ..Default::default() };
         let mut frames = 0;
         let last = loop {
             assert!(frames < 20, "分時解析必須在有限幀內完成");

@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+- Syntax highlighting stays aligned after inserting or deleting lines, including undo/redo and edits during time-sliced parsing.
+
+### 繁體中文
+
+#### 修正
+- 插入或刪除行後，語法高亮仍與文字對齊；復原／重做及分幀解析期間的編輯也一併處理。
+
 ## [0.6.7] - 2026-10-30
 
 ### Fixed
