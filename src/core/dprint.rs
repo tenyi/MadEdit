@@ -90,10 +90,8 @@ pub fn extension_for_syntax(syntax: &str) -> Option<&'static str> {
 
 /// 傳給 `dprint fmt --stdin` 的檔名：優先目前檔名，未存檔時用語法推導
 pub fn stdin_file_name(doc: &Document) -> Result<String, String> {
-    if let Some(path) = &doc.path {
-        if let Some(name) = path.file_name() {
-            return Ok(name.to_string_lossy().into_owned());
-        }
+    if let Some(path) = &doc.path && let Some(name) = path.file_name() {
+        return Ok(name.to_string_lossy().into_owned());
     }
     let ext = extension_for_syntax(&doc.syntax)
         .ok_or_else(|| "無法判斷檔案類型：請先存檔，或把語法切到支援的語言（C/C++、JS/TS、JSON、Markdown、TOML、Python）。".to_string())?;
@@ -135,11 +133,9 @@ pub fn find_helper() -> Option<(PathBuf, PathBuf)> {
         }
     }
     // 乾淨版：使用者自裝的 dprint（PATH），設定檔仍用隨附／開發目錄的那份
-    if let Ok(output) = Command::new("dprint").arg("--version").stdin(Stdio::null()).output() {
-        if output.status.success() {
-            let config = formatter_dirs().into_iter().map(|d| d.join("dprint.json")).find(|p| p.is_file())?;
-            return Some((PathBuf::from("dprint"), config));
-        }
+    if let Ok(output) = Command::new("dprint").arg("--version").stdin(Stdio::null()).output() && output.status.success() {
+        let config = formatter_dirs().into_iter().map(|d| d.join("dprint.json")).find(|p| p.is_file())?;
+        return Some((PathBuf::from("dprint"), config));
     }
     None
 }

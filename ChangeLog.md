@@ -12,6 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 - Mark ADR 0002's text-storage and mmap design as historical and partially superseded by ADR 0011, with links to the current text, hex and positioned-read implementations.
+- Split the custom text editor into layout, painting and input modules while preserving its public API and rendered output.
 
 ### Fixed
 - Syntax highlighting stays aligned after inserting or deleting lines, including undo/redo and edits during time-sliced parsing.
@@ -27,6 +28,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 #### 變更
 - 將 ADR 0002 的文字儲存與 mmap 設計標記為歷史方案，說明其部分已由 ADR 0011 取代，並連結至現行文字、十六進位及定位讀取實作。
+- 將自繪文字編輯器拆分為版面計算、繪製與輸入模組，保留既有公開介面與畫面輸出。
 
 #### 修正
 - 插入或刪除行後，語法高亮仍與文字對齊；復原／重做及分幀解析期間的編輯也一併處理。

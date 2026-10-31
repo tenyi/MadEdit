@@ -16,7 +16,7 @@ Slint 版在 macOS 上問題很多（輸入法、主題切換時好時壞、焦�
 ## 決策
 
 1. **GUI 改用 eframe / egui 0.35**，刪除 `ui/*.slint` 與 Slint 相依。
-   - 編輯區完全自繪（`src/app/view.rs`），逐字量測字寬。
+   - 編輯區完全自繪（`src/app/view/`），逐字量測字寬。
      等寬模式用格網排版；比例字型模式改為累加各字的寬度。
    - 系統字型由 `fontique` 列舉，載入使用者選的字型；
      字型鏈依序為：使用者字型 → 系統 CJK 字型 → egui 內建字型。
@@ -48,6 +48,6 @@ Slint 版在 macOS 上問題很多（輸入法、主題切換時好時壞、焦�
 
 ## 後果
 
-- 編輯區的所有行為都由本專案自己維護：游標、選取、換行、捲動、輸入法。
-  好處是跨平台行為一致，代價是程式碼量較大（`view.rs` 約 1500 行）。
+- Editor behavior remains maintained in-project: caret, selection, wrapping, scrolling and IME.
+  The original monolithic editor has since been split into `src/app/view/{mod,layout,paint,input}.rs`, retaining the existing public API.
 - egui 每幀重繪，閒置時不耗 CPU（只在事件或游標閃爍時重繪）。
