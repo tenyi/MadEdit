@@ -16,6 +16,15 @@ use super::model::{EditMode, NewLineFormat};
 use super::piece_table::PieceTable;
 use super::syntax::{self, SyntaxCache};
 
+/// Debug-only fingerprints validate untouched lines without cloning their text.
+#[cfg(debug_assertions)]
+fn hash_line_slice(lines: &[String]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    lines.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// 編輯動作種類：連續的同類輸入會合併成一筆復原紀錄
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditKind {
@@ -290,6 +299,11 @@ impl Document {
         let len_before = self.editor.lines.len();
         let a = hint.start.min(len_before);
         let b = hint.end.clamp(a, len_before);
+        #[cfg(debug_assertions)]
+        let untouched = (
+            hash_line_slice(&self.editor.lines[..a]),
+            hash_line_slice(&self.editor.lines[b..]),
+        );
         let old: Vec<String> = self.editor.lines[a..b].to_vec();
         let sel_before = self.editor.selection;
         let bm_before = self.editor.bookmarks.clone();
@@ -302,6 +316,18 @@ impl Document {
         let len_after = self.editor.lines.len();
         let new_end = (b as isize + len_after as isize - len_before as isize).max(a as isize) as usize;
         let new_end = new_end.min(len_after);
+        debug_assert!(len_after >= a + len_before - b, "edit removed lines outside hint");
+        #[cfg(debug_assertions)]
+        {
+            debug_assert_eq!(
+                hash_line_slice(&self.editor.lines[..a]), untouched.0,
+                "edit modified lines before hint"
+            );
+            debug_assert_eq!(
+                hash_line_slice(&self.editor.lines[new_end..]), untouched.1,
+                "edit modified lines after hint"
+            );
+        }
         let new_region = &self.editor.lines[a..new_end];
 
         // 修剪前後相同的行，只保存真正變動的部分
@@ -821,6 +847,40 @@ mod tests {
 
     fn temp_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("madedit_doc_{}_{}", std::process::id(), name))
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "edit modified lines before hint")]
+    fn test_edit_rejects_changes_before_hint() {
+        let mut doc = Document::default();
+        doc.editor.set_text("prefix\neditable\nsuffix");
+        doc.edit(EditKind::Other, 1..2, |ed| ed.lines[0].push('!'));
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "edit modified lines after hint")]
+    fn test_edit_rejects_changes_after_shifted_hint() {
+        let mut doc = Document::default();
+        doc.editor.set_text("prefix\neditable\nsuffix");
+        doc.edit(EditKind::Other, 1..2, |ed| {
+            ed.lines.insert(1, "inserted".into());
+            ed.lines[3].push('!');
+        });
+    }
+
+    #[test]
+    fn test_edit_contract_allows_empty_document_and_boundary_insertions() {
+        let mut doc = Document::default();
+        doc.editor.set_text("a\nb\nc");
+        doc.edit(EditKind::Other, 1..1, |ed| ed.lines.insert(1, "middle".into()));
+        doc.edit(EditKind::Other, 4..4, |ed| ed.lines.push("end".into()));
+        assert_eq!(doc.text(), "a\nmiddle\nb\nc\nend");
+        doc.edit(EditKind::Other, 0..5, |ed| ed.lines.clear());
+        assert_eq!(doc.text(), "");
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "a\nmiddle\nb\nc\nend");
     }
 
     #[test]
