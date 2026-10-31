@@ -179,6 +179,8 @@ Run them from the project root (use PowerShell on Windows; bash or zsh on macOS 
 > **Since 2026-10-23 the UI has been rewritten in egui** ([ADR 0011](docs/adr/0011-egui-rewrite.md)). Phases 1–10 below are the history of the Slint era.
 > The `.slint` files, `buffer.rs`, `hex.rs` and `memmap2` mentioned there have been removed; their features were reimplemented in the egui version.
 
+- [x] **Syntax cache line identities** (#9): `SyntaxCache::lines_replaced` rebases cached spans and checkpoints after line-count changes and rewinds pending parsing. Document edits, undo and redo report exact removed/inserted counts; decoding a whole document clears parser state.
+
 - [x] **Local test improvements**: deterministic decode-error protection, exact undo/redo and truncation assertions, a 30-case encoding/BOM/newline matrix, seeded Piece Table/document models, and an explicit 1 GiB streaming-save regression. `make test-visual` compares four scenes with bundled test fonts and strict glyph checks; reviewed baselines currently cover macOS only. `make bench` saves raw samples and environment metadata and optionally rejects regressions against a compatible baseline. See [local testing](docs/testing.md). CI/CD remains unchanged.
 
 - [x] **Long single-line performance** (branch `perf/long-line-lag`): files whose lines reach hundreds of KB (minified JSON/JS, logs, `example.js` 1.99 MB / 180 lines / 158,953 B max line) no longer lag on open, typing, caret moves or scrolling.
