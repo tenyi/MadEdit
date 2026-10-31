@@ -913,6 +913,29 @@ fn rgb((r, g, b): (u8, u8, u8)) -> Color32 {
     Color32::from_rgb(r, g, b)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct GlyphStyle {
+    color: Color32,
+    bold: bool,
+    italic: bool,
+}
+
+/// Keep glyph advances unchanged: the caret and wrapping share unstyled widths.
+fn paint_syntax_text(painter: &egui::Painter, pos: Pos2, text: String, font: FontId, style: GlyphStyle) {
+    if !style.bold && !style.italic {
+        painter.text(pos, Align2::LEFT_TOP, text, font, style.color);
+        return;
+    }
+    let format = egui::TextFormat { font_id: font, color: style.color, italics: style.italic, ..Default::default() };
+    let galley = painter.layout_job(egui::text::LayoutJob::simple_format(text, format));
+    if style.bold {
+        // Synthetic weight avoids loading a second font or changing grid metrics.
+        let offset = Vec2::new(0.5 / painter.ctx().pixels_per_point(), 0.0);
+        painter.galley(pos + offset, galley.clone(), style.color);
+    }
+    painter.galley(pos, galley, style.color);
+}
+
 /// 編輯區的固定 Id（App 用來判斷焦點與要求焦點）
 pub fn editor_id(doc_id: u64) -> egui::Id {
     egui::Id::unique(("madedit-editor", doc_id))
@@ -1360,24 +1383,25 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, view: &mut ViewState, env: &m
                 spell_ranges = r;
             }
         }
-        // 每字元顏色：單一空白文字區段（如純文字檔）直接使用前景色，免去逐字表
+        // Empty default spans avoid a per-character table for plain text.
         let line_spans: &[HighlightSpan] = spans.get(line - first_line).map(|v| v.as_slice()).unwrap_or(&[]);
-        let colors: Option<Vec<Color32>> = if line_spans.len() <= 1 && line_spans.first().is_none_or(|s| s.text.is_empty()) {
+        let default_style = GlyphStyle { color: fg, bold: false, italic: false };
+        let styles: Option<Vec<GlyphStyle>> = if line_spans.len() <= 1 && line_spans.first().is_none_or(|s| s.text.is_empty() && !s.bold && !s.italic) {
             None
         } else {
-            let mut v: Vec<Color32> = Vec::with_capacity(chars.len());
+            let mut v = Vec::with_capacity(chars.len());
             for sp in line_spans {
                 if sp.skip_chars > 0 {
                     // 超長行只解析可見視窗：視窗之前的字元以前景色顯示
-                    v.resize(v.len() + sp.skip_chars, fg);
+                    v.resize(v.len() + sp.skip_chars, default_style);
                 }
-                let c = rgb(sp.color_rgb);
-                v.extend(std::iter::repeat_n(c, sp.text.chars().count()));
+                let style = GlyphStyle { color: rgb(sp.color_rgb), bold: sp.bold, italic: sp.italic };
+                v.extend(std::iter::repeat_n(style, sp.text.chars().count()));
             }
-            v.resize(chars.len(), fg);
+            v.resize(chars.len(), default_style);
             Some(v)
         };
-        let color_at = |i: usize| colors.as_ref().map_or(fg, |v| v[i]);
+        let style_at = |i: usize| styles.as_ref().map_or(default_style, |v| v[i]);
         let mut draw_row = |row: usize, start: usize, end: usize| {
         let y = text_rect.top() + (row - first_row) as f32 * lay.row_h;
         let text_y = y + (lay.row_h - widths.text_h) / 2.0;
@@ -1462,10 +1486,10 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, view: &mut ViewState, env: &m
         // 文字：依語法色彩分段；等寬模式下字寬與格網相符的連續字元合併繪製（比例模式逐字繪製）
         let mut run = String::new();
         let mut run_x = 0.0f32;
-        let mut run_color = fg;
-        let flush = |run: &mut String, run_x: f32, color: Color32| {
+        let mut run_style = default_style;
+        let flush = |run: &mut String, run_x: f32, style: GlyphStyle| {
             if !run.is_empty() {
-                text_painter.text(Pos2::new(sx(run_x, 0.0), text_y), Align2::LEFT_TOP, std::mem::take(run), lay.font.clone(), color);
+                paint_syntax_text(&text_painter, Pos2::new(sx(run_x, 0.0), text_y), std::mem::take(run), lay.font.clone(), style);
             }
         };
         let view_left = view.scroll_x - widths.cell_w * 4.0;
@@ -1475,12 +1499,12 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, view: &mut ViewState, env: &m
             let xa = xs[i] - x0;
             let w = xs[i + 1] - xs[i];
             if xa + w < view_left || xa > view_right {
-                flush(&mut run, run_x, run_color);
+                flush(&mut run, run_x, run_style);
                 continue;
             }
-            let color = color_at(i);
+            let style = style_at(i);
             if c == '\t' || c == ' ' || c == '\u{3000}' {
-                flush(&mut run, run_x, run_color);
+                flush(&mut run, run_x, run_style);
                 let show = if c == '\t' { settings.show_tab } else { settings.show_space };
                 if show {
                     let sym = if c == '\t' { "»" } else { "·" };
@@ -1492,7 +1516,7 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, view: &mut ViewState, env: &m
                 continue;
             }
             if c.is_control() {
-                flush(&mut run, run_x, run_color);
+                flush(&mut run, run_x, run_style);
                 let label = format!("{:02X}", c as u32);
                 let r = Rect::from_min_size(Pos2::new(sx(xa, w), y + 1.0), Vec2::new(w.max(widths.cell_w), lay.row_h - 2.0));
                 text_painter.rect_filled(r, CornerRadius::same(2), control_color.gamma_multiply(0.6));
@@ -1506,22 +1530,22 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, view: &mut ViewState, env: &m
             // wrapping) does not have, so a long run drifted from them: 11 px over a 360-char
             // base64 line in Noto Sans TC, showing as a gap before the next run.
             if lay.rtl || !grid_ok || !lay.fixed {
-                flush(&mut run, run_x, run_color);
+                flush(&mut run, run_x, run_style);
                 // 字寬與格子不同（例如 CJK 後備字型）：在格子內置中
                 let px = sx(xa, w) + ((w - gw) / 2.0).max(0.0);
-                text_painter.text(Pos2::new(px, text_y), Align2::LEFT_TOP, c, lay.font.clone(), color);
+                paint_syntax_text(&text_painter, Pos2::new(px, text_y), c.to_string(), lay.font.clone(), style);
                 continue;
             }
             // 相鄰的 ASCII 符號分開繪製，避免程式字型把 -> => != 等連字成單一圖形
             let ligature_risk = c.is_ascii_punctuation() && run.chars().last().is_some_and(|p| p.is_ascii_punctuation());
-            if run.is_empty() || color != run_color || ligature_risk {
-                flush(&mut run, run_x, run_color);
+            if run.is_empty() || style != run_style || ligature_risk {
+                flush(&mut run, run_x, run_style);
                 run_x = xa;
-                run_color = color;
+                run_style = style;
             }
             run.push(c);
         }
-        flush(&mut run, run_x, run_color);
+        flush(&mut run, run_x, run_style);
 
         // 行尾符號
         if settings.show_eol && end == char_count && line + 1 < ed.lines.len() {
