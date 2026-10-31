@@ -1,7 +1,7 @@
 //! 語法突顯：syntect 增量解析與逐行快取
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use syntect::highlighting::{
     FontStyle, HighlightIterator, HighlightState, Highlighter, Theme, ThemeSet,
 };
-use syntect::parsing::{ParseState, ScopeStack, ScopeStackOp, SyntaxReference, SyntaxSet};
+use syntect::parsing::{ParseState, ScopeStack, ScopeStackOp, SyntaxDefinition, SyntaxReference, SyntaxSet};
 
 /// 純文字（不突顯）
 pub const PLAIN_TEXT: &str = "Plain Text";
@@ -79,11 +79,76 @@ static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
 static THEME_SET: OnceLock<ThemeSet> = OnceLock::new();
 
 fn syntax_set() -> &'static SyntaxSet {
-    SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_newlines)
+    SYNTAX_SET.get_or_init(|| load_syntaxes(super::settings::Settings::path().as_deref().and_then(Path::parent)))
 }
 
 fn theme_set() -> &'static ThemeSet {
-    THEME_SET.get_or_init(ThemeSet::load_defaults)
+    THEME_SET.get_or_init(|| load_themes(super::settings::Settings::path().as_deref().and_then(Path::parent)))
+}
+
+/// Stable traversal makes duplicate-name overrides reproducible. Do not follow
+/// symlinks: a settings-directory link must not cause a recursive cycle.
+fn resource_files(root: &Path, extension: &str) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut folders = vec![root.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        let entries = match std::fs::read_dir(&folder) {
+            Ok(entries) => entries,
+            Err(e) => {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!("MadEdit: cannot read {}: {e}", folder.display());
+                }
+                continue;
+            }
+        };
+        for entry in entries {
+            match entry.and_then(|e| Ok((e.path(), e.file_type()?))) {
+                Ok((path, kind)) if kind.is_dir() => folders.push(path),
+                Ok((path, kind)) if kind.is_file() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case(extension)) => files.push(path),
+                Ok(_) => {}
+                Err(e) => eprintln!("MadEdit: cannot read resource entry in {}: {e}", folder.display()),
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+fn load_syntaxes(config_dir: Option<&Path>) -> SyntaxSet {
+    let defaults = SyntaxSet::load_defaults_newlines();
+    let Some(dir) = config_dir else { return defaults };
+    let files = resource_files(&dir.join("syntaxes"), "sublime-syntax");
+    if files.is_empty() {
+        return defaults;
+    }
+    let mut builder = defaults.into_builder();
+    for path in files {
+        let loaded = std::fs::read_to_string(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|text| SyntaxDefinition::load_from_str(&text, true, path.file_stem().and_then(|s| s.to_str())).map_err(|e| e.to_string()));
+        match loaded {
+            Ok(definition) => builder.add(definition),
+            Err(e) => eprintln!("MadEdit: cannot load syntax {}: {e}", path.display()),
+        }
+    }
+    builder.build()
+}
+
+fn load_themes(config_dir: Option<&Path>) -> ThemeSet {
+    let mut themes = ThemeSet::load_defaults();
+    if let Some(dir) = config_dir {
+        for path in resource_files(&dir.join("themes"), "tmTheme") {
+            match ThemeSet::get_theme(&path) {
+                Ok(theme) => {
+                    if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+                        themes.themes.insert(name.to_owned(), theme);
+                    }
+                }
+                Err(e) => eprintln!("MadEdit: cannot load theme {}: {e}", path.display()),
+            }
+        }
+    }
+    themes
 }
 
 /// 所有可選語法名稱（純文字在最前，其餘依字母排序）
@@ -156,12 +221,19 @@ fn find_syntax(name: &str) -> Option<&'static SyntaxReference> {
 
 /// 依檔案路徑偵測語法名稱（副檔名 → 檔名 → 第一行，例如 shebang）
 pub fn detect_syntax(path: &Path, first_line: &str) -> String {
-    let ps = syntax_set();
+    detect_syntax_in(syntax_set(), path, first_line)
+}
+
+fn detect_syntax_in(ps: &SyntaxSet, path: &Path, first_line: &str) -> String {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if let Some(syntax) = ps.find_syntax_by_extension(file_name).or_else(|| ps.find_syntax_by_extension(&ext)) {
+        return syntax.name.clone();
+    }
     // syntect 預設集缺少或命名不同的副檔名
     let mapped = match ext.as_str() {
         "ts" | "mts" | "cts" | "tsx" => Some("JavaScript"),
@@ -174,10 +246,7 @@ pub fn detect_syntax(path: &Path, first_line: &str) -> String {
     if let Some(name) = mapped.filter(|n| ps.find_syntax_by_name(n).is_some()) {
         return name.to_string();
     }
-    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    ps.find_syntax_by_extension(file_name)
-        .or_else(|| ps.find_syntax_by_extension(&ext))
-        .or_else(|| ps.find_syntax_by_first_line(first_line))
+    ps.find_syntax_by_first_line(first_line)
         .map(|s| s.name.clone())
         .unwrap_or_else(|| PLAIN_TEXT.to_string())
 }
@@ -714,6 +783,60 @@ mod tests {
                 return out;
             }
         }
+    }
+
+    #[test]
+    fn test_custom_syntax_and_theme_override_fallbacks_despite_bad_files() {
+        let dir = crate::test_support::TempDir::new("custom-syntax-theme");
+        let syntaxes = dir.path().join("syntaxes/nested");
+        let themes = dir.path().join("themes");
+        std::fs::create_dir_all(&syntaxes).unwrap();
+        std::fs::create_dir_all(&themes).unwrap();
+        std::fs::write(syntaxes.join("00-broken.sublime-syntax"), "contexts: [invalid").unwrap();
+        std::fs::write(syntaxes.join("custom.sublime-syntax"), r#"%YAML 1.2
+---
+name: Custom Language
+file_extensions: [ts, toml, CustomFile]
+scope: source.custom
+contexts:
+  main:
+    - match: '\bmagic\b'
+      scope: keyword.control.custom
+"#).unwrap();
+        std::fs::write(themes.join("00-broken.tmTheme"), "not a plist").unwrap();
+        std::fs::write(themes.join("Custom.tmTheme"), r##"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>name</key><string>Custom</string>
+<key>settings</key><array>
+<dict><key>settings</key><dict><key>foreground</key><string>#112233</string></dict></dict>
+<dict><key>scope</key><string>keyword.control.custom</string><key>settings</key><dict>
+<key>foreground</key><string>#dd2244</string><key>fontStyle</key><string>bold italic</string>
+</dict></dict></array></dict></plist>"##).unwrap();
+        let defaults = load_syntaxes(None);
+        assert_eq!(detect_syntax_in(&defaults, Path::new("foo.ts"), ""), "JavaScript");
+        let ps = load_syntaxes(Some(dir.path()));
+        for file in ["foo.ts", "foo.toml", "CustomFile"] {
+            assert_eq!(detect_syntax_in(&ps, Path::new(file), ""), "Custom Language");
+        }
+        let themes = load_themes(Some(dir.path()));
+        let theme = &themes.themes["Custom"];
+        let syntax = ps.find_syntax_by_name("Custom Language").unwrap();
+        let mut hl = syntect::easy::HighlightLines::new(syntax, theme);
+        let spans = hl.highlight_line("magic\n", &ps).unwrap();
+        let style = spans.iter().find(|(_, s)| s.contains("magic")).unwrap().0;
+        assert_eq!((style.foreground.r, style.foreground.g, style.foreground.b), (0xdd, 0x22, 0x44));
+        assert!(style.font_style.contains(FontStyle::BOLD | FontStyle::ITALIC));
+        assert!(themes.themes.contains_key("InspiredGitHub"));
+    }
+
+    #[test]
+    fn test_missing_custom_resource_folders_keep_builtins() {
+        let dir = crate::test_support::TempDir::new("no-custom-syntax");
+        let ps = load_syntaxes(Some(dir.path()));
+        assert_eq!(detect_syntax_in(&ps, Path::new("foo.ts"), ""), "JavaScript");
+        assert_eq!(detect_syntax_in(&ps, Path::new("foo.swift"), ""), "Rust");
+        assert_eq!(detect_syntax_in(&ps, Path::new("foo.rs"), ""), "Rust");
+        assert!(load_themes(Some(dir.path())).themes.contains_key("InspiredGitHub"));
     }
 
     #[test]

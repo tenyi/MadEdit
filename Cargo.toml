@@ -30,7 +30,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 spellbook = "0.4.2"
 sys-locale = "0.3"
-syntect = { version = "5.2", default-features = false, features = ["default-syntaxes", "default-themes", "regex-onig"] }
+syntect = { version = "5.2", default-features = false, features = ["default-syntaxes", "default-themes", "regex-onig", "yaml-load", "plist-load"] }
 unicode-width = "0.2"
 latex-rust = "3.0.1"
 
