@@ -717,6 +717,36 @@ mod tests {
     }
 
     #[test]
+    fn test_markdown_preserves_bold_and_italic_spans() {
+        let lines = vec!["# Heading".into(), "**bold** and *italic*".into()];
+        let spans = SyntaxCache::default().highlight_full(&lines, 0, lines.len(), "Markdown", "InspiredGitHub", false);
+        assert!(spans[0].iter().any(|s| s.bold && s.text.contains("Heading")));
+        assert!(spans[1].iter().any(|s| s.bold && s.text.contains("bold")));
+        assert!(spans[1].iter().any(|s| s.italic && s.text.contains("italic")));
+    }
+
+    #[test]
+    fn test_foreground_colored_styles_are_not_collapsed() {
+        let mut theme = Theme::default();
+        let color = syntect::highlighting::Color { r: 30, g: 40, b: 50, a: 255 };
+        theme.settings.foreground = Some(color);
+        theme.scopes.push(syntect::highlighting::ThemeItem {
+            scope: "markup.heading".parse().unwrap(),
+            style: syntect::highlighting::StyleModifier {
+                foreground: Some(color),
+                font_style: Some(FontStyle::BOLD | FontStyle::ITALIC),
+                ..Default::default()
+            },
+        });
+        let highlighter = Highlighter::new(&theme);
+        let mut parse = ParseState::new(syntax_set().find_syntax_by_name("Markdown").unwrap());
+        let mut hl = HighlightState::new(&highlighter, ScopeStack::new());
+        let ops = parse.parse_line("# Heading\n", syntax_set()).unwrap();
+        let spans = spans_of(&mut hl, &ops, "# Heading\n", &highlighter, (30, 40, 50));
+        assert!(spans.iter().any(|s| s.bold && s.italic && s.text.contains("Heading")));
+    }
+
+    #[test]
     fn test_detect_syntax() {
         assert_eq!(detect_syntax(Path::new("main.rs"), ""), "Rust");
         assert_eq!(detect_syntax(Path::new("a.py"), ""), "Python");
