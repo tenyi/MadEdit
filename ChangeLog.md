@@ -6,6 +6,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+- The text editor renders syntax-defined bold and italic styles, including Markdown headings and emphasis, without changing caret, selection or wrapping metrics.
+
 ### Fixed
 - Syntax highlighting stays aligned after inserting or deleting lines, including undo/redo and edits during time-sliced parsing.
 - Debug builds detect edits outside their declared line range using allocation-free fingerprints, protecting undo and incremental caches without copying untouched lines.
@@ -13,6 +16,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Character-position queries reuse a versioned line-start offset across local edits and nearby cursor moves instead of rescanning the document prefix on every keystroke. Undo/redo and full resets invalidate the offset when necessary.
 
 ### 繁體中文
+
+#### 新增
+- 文字編輯器支援語法定義的粗體與斜體，包括 Markdown 標題與強調文字，且不改變游標、選取範圍及折行的字寬計算。
 
 #### 修正
 - 插入或刪除行後，語法高亮仍與文字對齊；復原／重做及分幀解析期間的編輯也一併處理。
