@@ -28,7 +28,7 @@ This document is written for AI agents taking over the project. It gives the ful
 - **Language**: Rust (Edition 2024; latex-rust needs Rust 1.99 or newer, egui / eframe 0.37 needs 1.95)
 - **GUI framework**: [eframe / egui](https://github.com/emilk/egui) (v0.37), rewritten from Slint in 2026-10 (see [ADR 0011](docs/adr/0011-egui-rewrite.md))
   - Why: it can measure width per character and supports any system font the user picks (proportional fonts included); input method events (`Event::Ime`) go straight to the custom-drawn editor.
-  - The editor, hex view, scrollbars and ruler are all custom-drawn (`src/app/view.rs`, `src/app/hexview.rs`).
+  - The editor, hex view, scrollbars and ruler are all custom-drawn (`src/app/view/`, `src/app/hexview.rs`).
 - **System fonts**: `fontique` enumerates and loads system fonts; CJK characters automatically fall back to a system CJK font.
 - **Markdown preview**: `egui_commonmark` renders Markdown. `fermaid` (pure Rust) turns ```mermaid blocks into SVG, written with the actual colors from `Palette` (resvg does not support CSS variables), then rasterized through a custom loader (`mdpreview::DiagramLoader`; the resvg font database holds a single CJK font and does not load all system fonts) for display. `egui_extras` enables only `svg`, not `svg_text` (which would load all system fonts).
 - **Markdown math**: `latex-rust` (pure Rust) lays out `$…$` / `$$…$$` into an SVG of STIX Two Math glyph outlines, drawn through the same `DiagramLoader` as Mermaid (`src/app/mdmath.rs`, hooked in with egui_commonmark's `render_math_fn`). Use only its SVG output: its `egui` feature pins egui 0.36.2. The math font has no CJK glyphs and the crate has no font fallback, so a top-level `\text{…}` with non-ASCII text is cut out and drawn as egui text; anything else it cannot render shows the TeX source.
@@ -90,7 +90,11 @@ MadEdit/
 │   │   ├── icons.rs        # Embedded toolbar icons and their dark-theme variants (black silhouette lightened)
 │   │   ├── dialogs.rs      # Options, font, sort, increment numbers, find in files and confirmation dialogs
 │   │   ├── form.rs         # Settings page widgets: cards of label / control rows, switches, segmented choices, sidebar and list rows
-│   │   ├── view.rs         # Custom-drawn text editor (grid / proportional layout, wrapping, input method, spelling underline)
+│   │   ├── view/           # Custom-drawn editor, with the existing view::* public API
+│   │   │   ├── mod.rs     # Shared state, public interface, frame orchestration and tests
+│   │   │   ├── layout.rs  # Width measurement, wrap/layout caches and coordinate conversion
+│   │   │   ├── paint.rs   # Text/syntax, selection, caret, gutter, ruler and scrollbars
+│   │   │   └── input.rs   # Keyboard, IME, pointer selection, scrolling and context menus
 │   │   ├── hexview.rs      # Custom-drawn hex view
 │   │   ├── find.rs         # Find / replace bar and go-to-line bar
 │   │   ├── findfiles.rs    # Find / replace in multiple files (background thread)
@@ -186,6 +190,7 @@ Run them from the project root (use PowerShell on Windows; bash or zsh on macOS 
 - [x] **Syntax font styles** (#13): glyph painting carries color, bold and italic through both fixed-grid runs and proportional/CJK per-character paths. Italics use egui text formatting; synthetic bold reuses the galley with a half-physical-pixel overdraw, keeping all layout metrics unchanged.
 - [x] **Custom syntax resources** (#14): startup merges per-file `.sublime-syntax` definitions from `syntaxes/` and `.tmTheme` themes from `themes/` beside `Settings::path()`. Deterministic recursive loading skips symlinks and isolates malformed files with stderr diagnostics. Custom extension matches precede approximate mappings. Tests use explicit temporary config paths, not global environment changes.
 - [x] **Large-file ADR status** (#15): ADR 0002 is explicitly historical and partially superseded by ADR 0011, with reciprocal links. Ordinary text uses decoded lines; files above the text-size threshold are hex-only, and file-backed pieces use positioned reads rather than mmap.
+- [x] **Editor view modules** (#16): `src/app/view/` separates layout, painting and input while retaining the `view::*` public API, shared state and original unit tests in `mod.rs`. A stack-only frame shares geometry and responses; horizontal scrollbar interaction still occurs after text painting. Rust/Markdown/column/hex before/after screenshots are byte-identical; the full suite and strict all-target Clippy pass.
 - **Visual baseline limitation**: the optional macOS `visual_regression_scenes` currently differs from its checked-in plain-text baseline by 976 pixels in Latin glyph placement. The parent of #13 produces the byte-identical image and the same failure; this is pre-existing baseline drift, not caused by syntax styling. Baselines were not silently regenerated.
 
 - [x] **Local test improvements**: deterministic decode-error protection, exact undo/redo and truncation assertions, a 30-case encoding/BOM/newline matrix, seeded Piece Table/document models, and an explicit 1 GiB streaming-save regression. `make test-visual` compares four scenes with bundled test fonts and strict glyph checks; reviewed baselines currently cover macOS only. `make bench` saves raw samples and environment metadata and optionally rejects regressions against a compatible baseline. See [local testing](docs/testing.md). CI/CD remains unchanged.
