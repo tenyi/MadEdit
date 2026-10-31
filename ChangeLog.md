@@ -9,12 +9,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Fixed
 - Syntax highlighting stays aligned after inserting or deleting lines, including undo/redo and edits during time-sliced parsing.
 - Debug builds detect edits outside their declared line range using allocation-free fingerprints, protecting undo and incremental caches without copying untouched lines.
+- Whole-document edits reuse the undo snapshot's changed strings instead of cloning them twice. Large canonical Unicode edits release original bytes before snapshotting; no-op commands still preserve the original bytes, and malformed, legacy-encoded or mixed-newline input retains its lossless recovery data.
 
 ### 繁體中文
 
 #### 修正
 - 插入或刪除行後，語法高亮仍與文字對齊；復原／重做及分幀解析期間的編輯也一併處理。
 - 除錯版本以不配置記憶體的雜湊檢查偵測超出宣告行範圍的編輯，保護復原紀錄與增量快取，無須複製未修改的行。
+- 全文編輯直接沿用復原快照中已變更的字串，避免重複複製。大型標準 Unicode 編輯會在建立快照前釋放原始位元組；無變更命令仍保留原始內容，解碼錯誤、傳統編碼或混合換行的資料也保留無損復原所需的原始位元組。
 
 ## [0.6.7] - 2026-10-30
 
