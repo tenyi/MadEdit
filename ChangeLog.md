@@ -19,6 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Debug builds detect edits outside their declared line range using allocation-free fingerprints, protecting undo and incremental caches without copying untouched lines.
 - Whole-document edits reuse the undo snapshot's changed strings instead of cloning them twice. Large canonical Unicode edits release original bytes before snapshotting; no-op commands still preserve the original bytes, and malformed, legacy-encoded or mixed-newline input retains its lossless recovery data.
 - Character-position queries reuse a versioned line-start offset across local edits and nearby cursor moves instead of rescanning the document prefix on every keystroke. Undo/redo and full resets invalidate the offset when necessary.
+- The print preview window follows the UI language (title, toolbar and page counter were always Traditional Chinese). Its first / last page buttons and the Find in Files folder button now have accessible names for screen readers.
 
 ### 繁體中文
 
@@ -35,6 +36,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - 除錯版本以不配置記憶體的雜湊檢查偵測超出宣告行範圍的編輯，保護復原紀錄與增量快取，無須複製未修改的行。
 - 全文編輯直接沿用復原快照中已變更的字串，避免重複複製。大型標準 Unicode 編輯會在建立快照前釋放原始位元組；無變更命令仍保留原始內容，解碼錯誤、傳統編碼或混合換行的資料也保留無損復原所需的原始位元組。
 - 字元位置查詢在局部編輯及鄰近游標移動時沿用含版本的行首偏移錨點，不再每次按鍵都重掃文件前綴；復原／重做及全文重設會在必要時使錨點失效。
+- 預覽列印視窗跟隨介面語言（標題、工具列與頁碼先前一律為繁體中文）；其第一頁／最後一頁按鈕及多檔案尋找的選擇資料夾按鈕提供螢幕閱讀器可讀的名稱。
 
 ## [0.6.7] - 2026-10-30
 

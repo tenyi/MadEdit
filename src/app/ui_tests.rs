@@ -1685,6 +1685,42 @@ fn test_icon_buttons_are_named_for_screen_readers() {
     h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("移除 madedit")).click();
     h.run_steps(3);
     assert_eq!(unnamed_buttons(&h), Vec::<String>::new(), "spelling page");
+
+    // Find in Files: the button that picks the folder.
+    h.state_mut().dialog = None;
+    h.state_mut().pending.push(C::FindInFiles);
+    h.run_steps(3);
+    assert_eq!(dialog(&h).query_all_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("選擇資料夾")).count(), 1);
+    assert_eq!(unnamed_buttons(&h), Vec::<String>::new(), "Find in Files");
+}
+
+#[test]
+fn test_print_preview_toolbar_is_translated_and_named() {
+    use crate::core::settings::UiLanguage;
+    let mut h = harness();
+    h.state_mut().doc_mut().editor.set_text("one\ntwo\n");
+    h.state_mut().doc_mut().version += 1;
+    h.state_mut().pending.push(C::PrintPreview);
+    h.run_steps(4);
+    assert!(h.state_mut().preview.is_some());
+    let button = |h: &Harness<'static, App>, label: &str| h.query_all_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some(label)).count();
+    // The first / last page buttons are named instead of read as "⏮" / "⏭".
+    assert_eq!(button(&h, "第一頁"), 1);
+    assert_eq!(button(&h, "最後一頁"), 1);
+    assert!(h.query_by_label("第 1 / 1 頁").is_some());
+    assert_eq!(unnamed_buttons(&h), Vec::<String>::new());
+    // Every toolbar text follows the UI language.
+    h.state_mut().settings.ui_language = UiLanguage::En;
+    h.run_steps(3);
+    for label in ["Print...", "First page", "◀ Previous", "Next ▶", "Last page"] {
+        assert_eq!(button(&h, label), 1, "{label}");
+    }
+    assert!(button(&h, "Close") >= 1);
+    assert!(h.query_by_label("Page 1 of 1").is_some());
+    assert!(h.query_by_label("Zoom:").is_some());
+    for zh in ["列印...", "第一頁", "上一頁", "下一頁", "最後一頁", "第 1 / 1 頁", "縮放：", "關閉"] {
+        assert!(h.query_all_by(|n| n.label().is_some_and(|l| l.contains(zh)) || n.value().is_some_and(|v| v.contains(zh))).next().is_none(), "{zh} left untranslated");
+    }
 }
 
 /// A temporary folder removed when dropped, so a failing test does not leave it behind.

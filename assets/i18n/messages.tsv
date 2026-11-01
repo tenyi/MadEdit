@@ -538,6 +538,14 @@ opt.personal_empty	No words added yet	尚未添加任何单词	まだ単語が�
 opt.no_keys	No shortcut	无快捷键	ショートカットなし	단축키 없음	Kein Tastenkürzel	Sin atajo	Aucun raccourci	Nessuna scorciatoia	Nenhum atalho
 print.sec.content	Printed Content	打印内容	印刷内容	인쇄 내용	Druckinhalt	Contenido impreso	Contenu imprimé	Contenuto stampato	Conteúdo impresso
 print.sec.header_footer	Header and Footer	页眉与页脚	ヘッダーとフッター	머리글 및 바닥글	Kopf- und Fußzeile	Encabezado y pie de página	En-tête et pied de page	Intestazione e piè di pagina	Cabeçalho e rodapé
+pv.title	Print Preview - {q}	打印预览 - {q}	印刷プレビュー - {q}	인쇄 미리 보기 - {q}	Druckvorschau - {q}	Vista previa de impresión - {q}	Aperçu avant impression - {q}	Anteprima di stampa - {q}	Visualizar impressão - {q}
+pv.print	Print...	打印...	印刷...	인쇄...	Drucken...	Imprimir...	Imprimer...	Stampa...	Imprimir...
+pv.first	First page	第一页	最初のページ	첫 페이지	Erste Seite	Primera página	Première page	Prima pagina	Primeira página
+pv.prev	Previous	上一页	前へ	이전	Zurück	Anterior	Précédente	Precedente	Anterior
+pv.page	Page {n} of {q}	第 {n} / {q} 页	{n} / {q} ページ	{n} / {q} 페이지	Seite {n} von {q}	Página {n} de {q}	Page {n} sur {q}	Pagina {n} di {q}	Página {n} de {q}
+pv.next	Next	下一页	次へ	다음	Weiter	Siguiente	Suivante	Successiva	Próxima
+pv.last	Last page	最后一页	最後のページ	마지막 페이지	Letzte Seite	Última página	Dernière page	Ultima pagina	Última página
+pv.zoom	Zoom:	缩放：	ズーム：	확대/축소:	Zoom:	Zoom:	Zoom :	Zoom:	Zoom:
 status.options_open	Close the Options dialog first	请先关闭选项对话框	先にオプションダイアログを閉じてください	먼저 옵션 대화 상자를 닫으세요	Schließen Sie zuerst den Optionen-Dialog	Cierre primero el cuadro de opciones	Fermez d’abord la boîte de dialogue Options	Chiudi prima la finestra Opzioni	Feche primeiro a caixa de diálogo Opções
 num.base	Base:	进制：	基数：	진법:	Basis:	Base:	Base :	Base:	Base:
 num.align	Alignment:	对齐：	配置：	정렬:	Ausrichtung:	Alineación:	Alignement :	Allineamento:	Alinhamento:
@@ -547,6 +555,7 @@ fif.match	Matching	匹配方式	照合方法	일치 방법	Abgleich	Coincidencia
 fif.whole_word	Whole words only	全字匹配	単語単位で検索	단어 단위로	Nur ganze Wörter	Solo palabras completas	Mots entiers uniquement	Solo parole intere	Somente palavras inteiras
 fif.regex	Use regular expressions (Regex)	使用正则表达式（Regex）	正規表現を使用（Regex）	정규식 사용(Regex)	Reguläre Ausdrücke verwenden (Regex)	Usar expresiones regulares (Regex)	Utiliser les expressions régulières (Regex)	Usa espressioni regolari (Regex)	Usar expressões regulares (Regex)
 fif.case	Match case	区分大小写	大文字小文字を区別	대소문자 구분	Groß-/Kleinschreibung	Distinguir mayúsculas	Respecter la casse	Distingui maiuscole	Diferenciar maiúsculas
+fif.browse	Choose folder	选择文件夹	フォルダーを選択	폴더 선택	Ordner auswählen	Elegir carpeta	Choisir un dossier	Scegli cartella	Escolher pasta
 updates.check	Check for updates	Check for updates	Check for updates	Check for updates	Check for updates	Check for updates	Check for updates	Check for updates	Check for updates
 updates.auto	Automatically check for updates (daily)	Automatically check for updates (daily)	Automatically check for updates (daily)	Automatically check for updates (daily)	Automatically check for updates (daily)	Automatically check for updates (daily)	Automatically check for updates (daily)	Automatically check for updates (daily)	Automatically check for updates (daily)
 updates.checking	Checking for updates…	Checking for updates…	Checking for updates…	Checking for updates…	Checking for updates…	Checking for updates…	Checking for updates…	Checking for updates…	Checking for updates…

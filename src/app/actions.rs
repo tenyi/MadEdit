@@ -5,7 +5,7 @@ use eframe::egui;
 use super::commands::C;
 use super::dialogs::Dialog;
 use super::view::{self, selected_line_range};
-use super::{print, App, Confirm};
+use super::{i18n, print, App, Confirm};
 use crate::core::chinese::{self, ChineseConversion};
 use crate::core::document::EditKind;
 use crate::core::dprint;
@@ -90,11 +90,13 @@ impl App {
         let Some(mut pv) = self.preview.take() else { return };
         // 預覽中的文件已被關閉時，一併關閉預覽
         let Some(idx) = self.tabs.iter().position(|t| t.doc.id == pv.doc_id) else { return };
+        let lang = self.ui_lang();
+        let title = i18n::fill(i18n::translate(lang, "pv.title", "預覽列印 - {q}"), None, Some(&pv.title));
         let builder = egui::ViewportBuilder::default()
-            .with_title(format!("預覽列印 - {}", pv.title))
+            .with_title(title)
             .with_inner_size([880.0, 960.0])
             .with_min_inner_size([480.0, 360.0]);
-        let action = ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("madedit-print-preview"), builder, |ui, _class| pv.ui(ui));
+        let action = ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("madedit-print-preview"), builder, |ui, _class| pv.ui(ui, lang));
         match action {
             super::preview::PreviewAction::None => self.preview = Some(pv),
             super::preview::PreviewAction::Print => self.print_doc(idx),

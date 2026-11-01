@@ -527,6 +527,7 @@ impl App {
                 let l_rep = self.t("fif.replace", "取代為：");
                 let l_scope = self.t("fif.scope", "搜尋範圍");
                 let l_dir = self.t("fif.folder", "資料夾：");
+                let l_browse = self.t("fif.browse", "選擇資料夾");
                 let l_types = self.t("fif.types", "檔案類型：");
                 let l_types_hint = self.t("fif.types_hint", "例如 *.rs;*.toml");
                 let l_ex = self.t("fif.exclude", "排除：");
@@ -554,7 +555,7 @@ impl App {
                         let o = &mut self.settings.find_in_files;
                         form::section(ui, l_scope, |s| {
                             s.row(l_dir, |ui| {
-                                if ui.button("…").clicked()
+                                if form::icon_button(ui, egui::Button::new("…"), l_browse, l_browse).clicked()
                                     && let Some(d) = rfd::FileDialog::new().pick_folder()
                                 {
                                     o.directory = d.display().to_string();
