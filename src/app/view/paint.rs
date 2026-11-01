@@ -172,6 +172,20 @@ pub(super) fn text(
         None
     };
 
+    // Find bar matches, cached per line content like the spell-check ranges.
+    if let Some((_, id)) = &view.find_regex
+        && *id != view.find_cache_id
+    {
+        view.find_cache.clear();
+        view.find_cache_id = *id;
+    }
+    let match_color = if env.is_dark {
+        Color32::from_rgba_unmultiplied(255, 170, 0, 70)
+    } else {
+        Color32::from_rgba_unmultiplied(255, 190, 0, 110)
+    };
+    let mut match_ranges: Vec<(usize, usize)> = Vec::new();
+
     let mut max_w = 0.0f32;
     let control_color = if env.is_dark {
         Color32::from_rgb(90, 110, 120)
@@ -203,6 +217,20 @@ pub(super) fn text(
                 let r = sc.misspelled_ranges(&ed.lines[line]);
                 view.spell_cache.insert(hash, r.clone());
                 spell_ranges = r;
+            }
+        }
+        match_ranges.clear();
+        if let Some((re, _)) = &view.find_regex {
+            let hash = content_hash(&ed.lines[line]);
+            if let Some(r) = view.find_cache.get(&hash) {
+                match_ranges = r.clone();
+            } else {
+                if view.find_cache.len() > 4000 {
+                    view.find_cache.clear();
+                }
+                let r = match_char_ranges(re, &ed.lines[line]);
+                view.find_cache.insert(hash, r.clone());
+                match_ranges = r;
             }
         }
         // Empty default spans avoid a per-character table for plain text.
@@ -260,6 +288,18 @@ pub(super) fn text(
             // 目前行
             if settings.mark_active_line && sel.head.line == line && sel.is_empty() {
                 painter.rect_filled(row_rect, CornerRadius::ZERO, active_line_color);
+            }
+
+            for &(a, b) in &match_ranges {
+                let (a, b) = (a.max(start), b.min(end));
+                if a < b {
+                    let (xa, xb) = (xs[a] - x0, xs[b] - x0);
+                    let rect = Rect::from_min_size(
+                        Pos2::new(sx(xa, xb - xa), y),
+                        Vec2::new(xb - xa, lay.row_h),
+                    );
+                    text_painter.rect_filled(rect, CornerRadius::same(2), match_color);
+                }
             }
 
             // 選取範圍
@@ -692,5 +732,31 @@ pub(super) fn scrollbars(
     painter.rect_filled(frame.hbar, CornerRadius::ZERO, track_color);
     if let Some(bar) = horizontal {
         painter.rect_filled(bar.thumb, CornerRadius::same(3), thumb_color);
+    }
+}
+
+/// Character ranges of the non-empty matches of `re` in `line`.
+fn match_char_ranges(re: &regex::Regex, line: &str) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let (mut byte, mut chars) = (0, 0);
+    for m in re.find_iter(line).filter(|m| m.start() != m.end()) {
+        chars += line[byte..m.start()].chars().count();
+        let len = line[m.start()..m.end()].chars().count();
+        ranges.push((chars, chars + len));
+        chars += len;
+        byte = m.end();
+    }
+    ranges
+}
+
+#[cfg(test)]
+mod tests {
+    use super::match_char_ranges;
+
+    #[test]
+    fn test_match_char_ranges_count_characters_and_skip_empty_matches() {
+        let re = regex::Regex::new("ab|x*").unwrap();
+        assert_eq!(match_char_ranges(&re, "中ab文ab"), vec![(1, 3), (4, 6)]);
+        assert!(match_char_ranges(&re, "中文").is_empty());
     }
 }

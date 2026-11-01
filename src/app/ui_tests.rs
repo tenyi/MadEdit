@@ -333,6 +333,50 @@ fn test_find_bar_selects_match() {
 }
 
 #[test]
+fn test_find_bar_counts_and_highlights_matches_live() {
+    use egui::accesskit::Role;
+    let mut h = harness();
+    let s = &mut h.state_mut().settings;
+    (s.search_match_case, s.search_whole_word, s.search_regex) = (false, false, false);
+    h.state_mut().doc_mut().editor.set_text("one two one\nONE");
+    h.state_mut().doc_mut().version += 1;
+    h.state_mut().pending.push(C::Find);
+    h.run_steps(3);
+    type_text(&mut h, "one");
+    assert!(h.query_by_label("共 3 個符合").is_some());
+    assert!(h.state_mut().tab_mut().view.find_regex.is_some());
+    // The option chips are named checkboxes.
+    h.get_by(|n| n.role() == Role::CheckBox && n.label().as_deref() == Some("區分大小寫")).click();
+    h.run_steps(2);
+    assert!(h.state_mut().settings.search_match_case);
+    assert!(h.query_by_label("共 2 個符合").is_some());
+    h.state_mut().pending.push(C::FindNext);
+    h.run_steps(3);
+    assert!(h.query_by_label("1 / 2").is_some());
+    h.state_mut().find.query = "zzz".into();
+    h.run_steps(2);
+    assert!(h.query_by_label("無結果").is_some());
+    h.state_mut().settings.search_regex = true;
+    h.state_mut().find.query = "(".into();
+    h.run_steps(2);
+    assert!(h.query_all_by(|n| n.role() == Role::Label && n.value().is_some_and(|v| v.starts_with("無效的正規表達式"))).next().is_some());
+    assert!(h.state_mut().tab_mut().view.find_regex.is_none());
+    // Replacing is offered only where it can work.
+    h.state_mut().doc_mut().read_only = true;
+    h.state_mut().find.replace = true;
+    h.run_steps(2);
+    assert_eq!(h.query_all_by(|n| n.role() == Role::Button && n.label().as_deref() == Some("全部取代") && n.is_disabled()).count(), 1);
+    // Closing the bar removes the highlight.
+    h.state_mut().find.query = "one".into();
+    h.run_steps(2);
+    assert!(h.state_mut().tab_mut().view.find_regex.is_some());
+    h.key_press(Key::Escape);
+    h.run_steps(2);
+    assert!(!h.state_mut().find.visible);
+    assert!(h.state_mut().tab_mut().view.find_regex.is_none());
+}
+
+#[test]
 fn test_toggle_theme_command_switches_light_and_dark_like_the_icon() {
     use crate::core::settings::ThemeChoice;
     let mut h = harness();
@@ -583,6 +627,75 @@ fn test_dialog_shortcuts_keep_open_options() {
     h.key_press(egui::Key::F1);
     h.run_steps(3);
     assert_eq!(tab(&mut h), Some(super::dialogs::OPTIONS_KEYS_TAB));
+}
+
+#[test]
+fn test_dialogs_take_the_keyboard_and_answer_enter_and_escape() {
+    let mut h = harness();
+    h.state_mut().doc_mut().editor.set_text("b\na");
+    h.state_mut().doc_mut().version += 1;
+    h.run_steps(2);
+    // Enter runs the primary action (Sort) instead of typing a newline into the document.
+    h.state_mut().pending.push(C::SortOptions);
+    h.run_steps(3);
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    assert!(h.state_mut().dialog.is_none());
+    assert_eq!(text(&mut h), "a\nb");
+    // Typing goes nowhere while a dialog is open, and its Esc leaves the find bar alone.
+    h.state_mut().pending.push(C::Find);
+    h.run_steps(3);
+    h.state_mut().pending.push(C::WordCount);
+    h.run_steps(3);
+    type_text(&mut h, "x");
+    assert_eq!(text(&mut h), "a\nb");
+    assert_eq!(h.state_mut().find.query, "");
+    h.key_press(Key::Escape);
+    h.run_steps(3);
+    assert!(h.state_mut().dialog.is_none());
+    assert!(h.state_mut().find.visible);
+    // A confirmation on top takes Esc for itself.
+    h.state_mut().pending.push(C::WordCount);
+    h.run_steps(3);
+    h.state_mut().confirm = Some(Confirm::Message { title: "t".into(), text: "x".into() });
+    h.run_steps(3);
+    h.key_press(Key::Escape);
+    h.run_steps(3);
+    assert!(h.state_mut().confirm.is_none());
+    assert!(h.state_mut().dialog.is_some());
+    // While Options waits for a shortcut, Esc only cancels the capture.
+    h.state_mut().dialog = None;
+    h.run_steps(2);
+    h.state_mut().pending.push(C::Options);
+    h.run_steps(3);
+    if let Some(Dialog::Options(st)) = &mut h.state_mut().dialog {
+        st.capturing = Some(C::Find);
+    }
+    h.key_press(Key::Escape);
+    h.run_steps(3);
+    assert!(matches!(&h.state_mut().dialog, Some(Dialog::Options(st)) if st.capturing.is_none()));
+    h.key_press(Key::Escape);
+    h.run_steps(3);
+    assert!(h.state_mut().dialog.is_none());
+}
+
+#[test]
+fn test_recent_files_list_explains_an_empty_list() {
+    let mut h = harness();
+    h.state_mut().settings.recent_files.clear();
+    h.state_mut().pending.push(C::RecentFilesList);
+    h.run_steps(3);
+    assert!(h.query_by_label("還沒有最近使用的檔案").is_some());
+    h.state_mut().dialog = None;
+    h.state_mut().settings.recent_files = vec![std::path::PathBuf::from("/tmp/a.txt")];
+    h.run_steps(2);
+    h.state_mut().pending.push(C::RecentFilesList);
+    h.run_steps(3);
+    assert!(h.query_by_label("沒有符合的檔案").is_none());
+    // The filter has the keyboard as soon as the list opens.
+    type_text(&mut h, "zzz");
+    h.run_steps(2);
+    assert!(h.query_by_label("沒有符合的檔案").is_some());
 }
 
 #[test]
@@ -934,6 +1047,72 @@ fn test_replace_in_files_skips_opened_file_via_symlink_alias() {
     assert_eq!(std::fs::read_to_string(&opened).unwrap(), "old", "已開啟的檔案不可被背景寫入");
     assert_eq!(std::fs::read_to_string(&closed).unwrap(), "new");
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Find in Files results: matches grouped under foldable file rows, each opening its match;
+/// the header and the per-file notes are translated text built from the outcome.
+#[test]
+fn test_find_in_files_results_group_files_and_report_replacements() {
+    use egui::accesskit::Role;
+    let dir = std::env::temp_dir().join(format!("madedit_ui_fif_panel_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let a = dir.join("a.txt");
+    std::fs::write(&a, "foo\n  bar foo\n").unwrap();
+    std::fs::write(dir.join("b.txt"), "x foo\n").unwrap();
+    std::fs::write(dir.join("c.txt"), "none\n").unwrap();
+
+    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, vec![], None));
+    h.run_steps(3);
+    let run = |h: &mut Harness<'_, App>, replace: Option<&str>| {
+        let opts = &mut h.state_mut().settings.find_in_files;
+        opts.directory = dir.to_string_lossy().into_owned();
+        opts.opened_files_only = false;
+        opts.file_filter = "*.txt".into();
+        opts.exclude_filter.clear();
+        h.state_mut().start_find_in_files("foo".into(), replace.map(str::to_owned));
+        for _ in 0..200 {
+            h.run_steps(1);
+            if !h.state_mut().fif.running {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        h.run_steps(2);
+    };
+    let has = |h: &Harness<'_, App>, role: Role, name: &str| h.query_all_by(|n| n.role() == role && (n.label().as_deref() == Some(name) || n.value().as_deref() == Some(name))).count() > 0;
+
+    run(&mut h, None);
+    assert!(has(&h, Role::Label, "3 筆結果，共掃描 3 個檔案"));
+    for row in ["a.txt (2)", "b.txt (1)", "1: foo", "2: bar foo", "1: x foo"] {
+        assert!(has(&h, Role::Button, row), "missing row {row}");
+    }
+
+    h.get_by(|n| n.role() == Role::Button && n.label().as_deref() == Some("a.txt (2)")).click();
+    h.run_steps(2);
+    assert!(!has(&h, Role::Button, "2: bar foo"), "a folded file hides its matches");
+    assert!(has(&h, Role::Button, "1: x foo"), "other files stay open");
+    h.state_mut().pending.push(C::CollapseAllResults);
+    h.run_steps(2);
+    assert!(!has(&h, Role::Button, "1: x foo") && !has(&h, Role::Button, "2: bar foo"));
+    h.state_mut().pending.push(C::CollapseAllResults);
+    h.run_steps(2);
+
+    h.get_by(|n| n.role() == Role::Button && n.label().as_deref() == Some("2: bar foo")).click();
+    h.run_steps(3);
+    let doc = h.state_mut().doc();
+    assert_eq!(doc.path.as_deref().map(|p| p.canonicalize().unwrap()), Some(a.canonicalize().unwrap()));
+    let sel = doc.editor.selection;
+    assert_eq!((sel.anchor.line, sel.anchor.col, sel.head.col), (1, 6, 9));
+
+    // a.txt is open now, so only b.txt is written; the opened copy is replaced in memory.
+    run(&mut h, Some("baz"));
+    assert!(has(&h, Role::Label, "共掃描 3 個檔案 · 已取代 3 處"));
+    assert!(has(&h, Role::Button, "a.txt: 已取代 2 處"));
+    assert!(has(&h, Role::Button, "b.txt: 已取代 1 處"));
+    assert_eq!(h.state_mut().doc().text(), "baz\n  bar baz\n");
+    assert_eq!(std::fs::read_to_string(dir.join("b.txt")).unwrap(), "x baz\n");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Markdown 預覽：並排顯示時，編輯區捲動後預覽會記錄同步的行號，且錨點隨內容量得

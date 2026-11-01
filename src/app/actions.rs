@@ -576,7 +576,7 @@ impl App {
                 self.dialog = Some(Dialog::FindInFiles { query: q, replacement: self.find.replacement.clone() });
             }
             C::ShowFindInFilesResults => self.fif.show_results = !self.fif.show_results,
-            C::CollapseAllResults => self.fif.collapsed = !self.fif.collapsed,
+            C::CollapseAllResults => self.fif.toggle_collapsed(),
             C::GoToLine | C::GoToPosition => {
                 self.goto.visible = true;
                 self.goto.by_position = c == C::GoToPosition;

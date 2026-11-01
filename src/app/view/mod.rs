@@ -140,6 +140,14 @@ pub struct ViewState {
     preferred_x: Option<f32>,
     /// 雙擊標示的字詞
     pub highlight_word: Option<String>,
+    /// Matches of the find bar's query, highlighted while the bar is open, with an id that
+    /// changes whenever the query or its options do (the regex's own text does not show
+    /// case-insensitivity).
+    pub find_regex: Option<(regex::Regex, u64)>,
+    /// Character ranges of `find_regex`'s matches per line content hash, for the id in
+    /// `find_cache_id`.
+    find_cache: HashMap<u64, Vec<(usize, usize)>>,
+    find_cache_id: u64,
     /// 可見列數（翻頁用）
     pub visible_rows: usize,
     /// 強制捲動到游標（例如搜尋後）
@@ -166,6 +174,9 @@ impl Default for ViewState {
             content_width: 0.0,
             preferred_x: None,
             highlight_word: None,
+            find_regex: None,
+            find_cache: HashMap::new(),
+            find_cache_id: 0,
             visible_rows: 30,
             ensure_visible: true,
             brace_cache: None,

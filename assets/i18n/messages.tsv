@@ -253,6 +253,8 @@ find.goto_line	Go to line (line or line:column):	转到行（行号 或 行:栏�
 find.go	Go	前往	移動	이동	Gehe	Ir	Aller	Vai	Ir
 find.by_bytes	By byte offset	按字节位置	バイト位置	바이트 위치	Nach Byte-Offset	Por posición en bytes	Par position en octets	Per posizione in byte	Por posição em bytes
 find.not_found	Not found	找不到符合的文字	見つかりません	찾을 수 없습니다	Nicht gefunden	No se encontró	Introuvable	Non trovato	Não encontrado
+find.no_results	No results	无结果	結果なし	결과 없음	Keine Treffer	Sin resultados	Aucun résultat	Nessun risultato	Sem resultados
+find.history	Search history	搜索记录	検索履歴	검색 기록	Suchverlauf	Historial de búsqueda	Historique de recherche	Cronologia ricerche	Histórico de pesquisa
 find.not_found_q	Not found: {q}	找不到「{q}」	見つかりません：{q}	찾을 수 없음: {q}	Nicht gefunden: {q}	No se encontró: {q}	Introuvable : {q}	Non trovato: {q}	Não encontrado: {q}
 find.wrapped	Continued from the other end	已从另一端继续搜索	端から続けて検索しました	다른 끝에서 계속 검색했습니다	Am anderen Ende fortgesetzt	Continuado desde el otro extremo	Repris depuis l'autre extrémité	Continuato dall'altra estremità	Continuado a partir da outra extremidade
 find.bad_encoding	Current encoding cannot represent the search text	目前编码无法表示搜索文字	現在の文字コードでは検索文字列を表せません	현재 인코딩으로 검색 텍스트를 표현할 수 없습니다	Die Kodierung kann den Suchtext nicht darstellen	La codificación no puede representar el texto	L'encodage ne peut pas représenter le texte	La codifica non può rappresentare il testo	A codificação não pode representar o texto
@@ -318,6 +320,8 @@ dlg.options	Options	选项	オプション	옵션	Optionen	Opciones	Options	Opzi
 dlg.font	Font	字体	フォント	글꼴	Schriftart	Fuente	Police	Carattere	Tipo de letra
 dlg.page	Page Setup	页面设置	ページ設定	페이지 설정	Seite einrichten	Configurar página	Mise en page	Imposta pagina	Configurar página
 dlg.recent	Recent Files	最近使用的文件	最近使ったファイル	최근 파일	Zuletzt verwendet	Archivos recientes	Fichiers récents	File recenti	Ficheiros recentes
+recent.empty	No recent files yet	还没有最近使用的文件	最近使ったファイルはまだありません	최근 파일이 아직 없습니다	Noch keine zuletzt verwendeten Dateien	Aún no hay archivos recientes	Aucun fichier récent pour le moment	Ancora nessun file recente	Ainda não há ficheiros recentes
+recent.none	No matching files	没有符合的文件	一致するファイルがありません	일치하는 파일이 없습니다	Keine passenden Dateien	No hay archivos que coincidan	Aucun fichier correspondant	Nessun file corrispondente	Nenhum ficheiro correspondente
 dlg.fullwidth	To Fullwidth by Options	按选项转为全角	オプションに従って全角に	옵션대로 전각으로	Volle Breite nach Optionen	A ancho completo según opciones	Pleine chasse selon les options	Larghezza intera in base alle opzioni	Largura inteira conforme opções
 dlg.halfwidth	To Halfwidth by Options	按选项转为半角	オプションに従って半角に	옵션대로 반각으로	Halbe Breite nach Optionen	A ancho medio según opciones	Demi-chasse selon les options	Mezza larghezza in base alle opzioni	Meia largura conforme opções
 dlg.numbers	Insert Incremental Numbers	插入递增数字	連番を挿入	증가 숫자 삽입	Fortlaufende Zahlen einfügen	Insertar números incrementales	Insérer des nombres croissants	Inserisci numeri progressivi	Inserir números incrementais
@@ -393,6 +397,7 @@ font.filter	Filter:	筛选：	絞り込み：	필터:	Filter:	Filtro:	Filtre :	F
 font.auto	(Automatic monospace font)	（自动选择等宽字体）	（等幅フォントを自動選択）	(고정폭 글꼴 자동 선택)	(Automatische dicktengleiche Schrift)	(Fuente monoespaciada automática)	(Police à chasse fixe automatique)	(Carattere a spaziatura fissa automatico)	(Tipo monoespaçado automático)
 font.size	Size:	大小：	サイズ：	크기:	Größe:	Tamaño:	Taille :	Dimensione:	Tamanho:
 font.cjk	Chinese, Japanese, and Korean characters missing from the font are filled from a system CJK font. Turn off fixed-width mode for proportional fonts.	中文、日文等字符若字体中没有，会自动以系统的 CJK 字体补字。比例字体请搭配关闭「等宽模式」。	フォントにない中日韓の文字はシステムの CJK フォントで補います。プロポーショナルフォントでは等幅モードをオフにしてください。	글꼴에 없는 한중일 문자는 시스템 CJK 글꼴로 채웁니다. 비례 글꼴은 고정폭 모드를 끄세요.	Fehlende CJK-Zeichen werden mit einer Systemschrift ergänzt. Für Proportionalschriften die feste Breite ausschalten.	Los caracteres CJK que falten se toman de una fuente del sistema. Desactive el ancho fijo con fuentes proporcionales.	Les caractères CJK absents sont complétés par une police système. Désactivez la largeur fixe pour une police proportionnelle.	I caratteri CJK mancanti usano un font di sistema. Disattiva la larghezza fissa con font proporzionali.	Caracteres CJK em falta usam um tipo de letra do sistema. Desative a largura fixa com tipos proporcionais.
+font.none	No matching fonts	没有符合的字体	一致するフォントがありません	일치하는 글꼴이 없습니다	Keine passenden Schriften	No hay fuentes que coincidan	Aucune police correspondante	Nessun carattere corrispondente	Nenhum tipo de letra correspondente
 print.syntax	Print syntax colors	打印语法色彩	構文の色を印刷	구문 색 인쇄	Syntaxfarben drucken	Imprimir colores de sintaxis	Imprimer les couleurs de syntaxe	Stampa i colori della sintassi	Imprimir cores da sintaxe
 print.lines	Print line numbers	打印行号	行番号を印刷	줄 번호 인쇄	Zeilennummern drucken	Imprimir números de línea	Imprimer les numéros de ligne	Stampa i numeri di riga	Imprimir números de linha
 print.bookmarks	Print bookmarks	打印书签	ブックマークを印刷	책갈피 인쇄	Lesezeichen drucken	Imprimir marcadores	Imprimer les signets	Stampa i segnalibri	Imprimir marcadores
@@ -556,6 +561,22 @@ fif.whole_word	Whole words only	全字匹配	単語単位で検索	단어 단위
 fif.regex	Use regular expressions (Regex)	使用正则表达式（Regex）	正規表現を使用（Regex）	정규식 사용(Regex)	Reguläre Ausdrücke verwenden (Regex)	Usar expresiones regulares (Regex)	Utiliser les expressions régulières (Regex)	Usa espressioni regolari (Regex)	Usar expressões regulares (Regex)
 fif.case	Match case	区分大小写	大文字小文字を区別	대소문자 구분	Groß-/Kleinschreibung	Distinguir mayúsculas	Respecter la casse	Distingui maiuscole	Diferenciar maiúsculas
 fif.browse	Choose folder	选择文件夹	フォルダーを選択	폴더 선택	Ordner auswählen	Elegir carpeta	Choisir un dossier	Scegli cartella	Escolher pasta
+fif.results	Search Results	搜索结果	検索結果	검색 결과	Suchergebnisse	Resultados de búsqueda	Résultats de recherche	Risultati della ricerca	Resultados da pesquisa
+fif.searching	Searching…	搜索中…	検索中…	검색 중…	Suche läuft…	Buscando…	Recherche…	Ricerca in corso…	A pesquisar…
+fif.replacing	Replacing…	替换中…	置換中…	바꾸는 중…	Ersetzen läuft…	Reemplazando…	Remplacement…	Sostituzione in corso…	A substituir…
+fif.hits	{n} results	{n} 个结果	{n} 件	결과 {n}개	{n} Treffer	{n} resultados	{n} résultats	{n} risultati	{n} resultados
+fif.found	{n} results in {q} files scanned	{n} 个结果，共扫描 {q} 个文件	{n} 件（{q} 個のファイルを検索）	결과 {n}개, 파일 {q}개 검색	{n} Treffer in {q} durchsuchten Dateien	{n} resultados en {q} archivos analizados	{n} résultats dans {q} fichiers analysés	{n} risultati in {q} file analizzati	{n} resultados em {q} ficheiros analisados
+fif.scanned	{n} files scanned	共扫描 {n} 个文件	{n} 個のファイルを検索	파일 {n}개 검색	{n} Dateien durchsucht	{n} archivos analizados	{n} fichiers analysés	{n} file analizzati	{n} ficheiros analisados
+fif.found_opened	{n} results in open files	在打开的文件中找到 {n} 个结果	開いているファイルで {n} 件	열린 파일에서 결과 {n}개	{n} Treffer in geöffneten Dateien	{n} resultados en archivos abiertos	{n} résultats dans les fichiers ouverts	{n} risultati nei file aperti	{n} resultados nos ficheiros abertos
+fif.replaced_n	{n} replaced	已替换 {n} 处	{n} 件置換	{n}개 바꿈	{n} ersetzt	{n} reemplazados	{n} remplacés	{n} sostituiti	{n} substituídos
+fif.stopped	Stopped	已停止	停止しました	중지됨	Angehalten	Detenido	Arrêté	Interrotto	Parado
+fif.stop	Stop	停止	停止	중지	Anhalten	Detener	Arrêter	Interrompi	Parar
+fif.skip_decode	Skipped: could not be decoded	已跳过：无法正确解码	スキップ：正しくデコードできません	건너뜀: 디코딩할 수 없음	Übersprungen: nicht dekodierbar	Omitido: no se pudo decodificar	Ignoré : décodage impossible	Saltato: impossibile decodificare	Ignorado: não foi possível descodificar
+fif.skip_opened	Skipped: open in the editor	已跳过：已在编辑器中打开	スキップ：エディターで開いています	건너뜀: 편집기에서 열려 있음	Übersprungen: im Editor geöffnet	Omitido: abierto en el editor	Ignoré : ouvert dans l’éditeur	Saltato: aperto nell’editor	Ignorado: aberto no editor
+fif.skip_readonly	Skipped: read-only	已跳过：只读	スキップ：読み取り専用	건너뜀: 읽기 전용	Übersprungen: schreibgeschützt	Omitido: solo lectura	Ignoré : lecture seule	Saltato: sola lettura	Ignorado: só de leitura
+fif.skip_encode	Skipped: the result cannot be saved in its encoding	已跳过：替换后的文字无法以原编码保存	スキップ：置換後の文字列を元のエンコードで保存できません	건너뜀: 바꾼 텍스트를 원래 인코딩으로 저장할 수 없음	Übersprungen: Ergebnis in dieser Kodierung nicht speicherbar	Omitido: el resultado no se puede guardar en su codificación	Ignoré : le résultat ne peut pas être enregistré dans son encodage	Saltato: il risultato non può essere salvato nella sua codifica	Ignorado: o resultado não pode ser guardado na sua codificação
+fif.no_folder	Folder does not exist: {q}	文件夹不存在：{q}	フォルダーが存在しません：{q}	폴더가 없습니다: {q}	Ordner existiert nicht: {q}	La carpeta no existe: {q}	Le dossier n’existe pas : {q}	La cartella non esiste: {q}	A pasta não existe: {q}
+fif.bad_query	Invalid Search	搜索条件错误	検索条件が正しくありません	검색 조건 오류	Ungültige Suche	Búsqueda no válida	Recherche non valide	Ricerca non valida	Pesquisa inválida
 updates.check	Check for updates	Check for updates	Check for updates	Check for updates	Check for updates	Check for updates	Check for updates	Check for updates	Check for updates
 updates.auto	Automatically check for updates (daily)	Automatically check for updates (daily)	Automatically check for updates (daily)	Automatically check for updates (daily)	Automatically check for updates (daily)	Automatically check for updates (daily)	Automatically check for updates (daily)	Automatically check for updates (daily)	Automatically check for updates (daily)
 updates.checking	Checking for updates…	Checking for updates…	Checking for updates…	Checking for updates…	Checking for updates…	Checking for updates…	Checking for updates…	Checking for updates…	Checking for updates…

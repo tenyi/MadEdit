@@ -23,10 +23,28 @@ fn dialog_window(ctx: &egui::Context, title: impl Into<egui::WidgetText>) -> egu
         .collapsible(false)
 }
 
+/// Sets a dialog's content width and its form style: taller, roomier controls than the compact
+/// menus and toolbar, and outlined fields, which would otherwise vanish into the light theme's
+/// cards. Call it first in every dialog and confirmation.
+fn begin_dialog(ui: &mut egui::Ui, width: f32) {
+    ui.set_width(width);
+    let spacing = ui.spacing_mut();
+    spacing.button_padding = egui::vec2(10.0, 4.0);
+    spacing.interact_size.y = 26.0;
+    form::outline_fields(ui);
+}
+
+/// Whether Enter should run the dialog's primary action: no widget has the keyboard (a
+/// single-line field gives it up on Enter, a focused button takes Enter for itself) and the
+/// dialog is not ignoring keys (see `show_dialogs`).
+fn enter_pressed(ui: &egui::Ui, ignore_keys: bool) -> bool {
+    !ignore_keys && ui.memory(|m| m.focused().is_none()) && ui.input(|i| i.key_pressed(Key::Enter))
+}
+
 /// Accent-filled button for a dialog's main, safe action (OK, Save). Destructive choices such as
 /// Overwrite or Reload use `danger_button` instead, so they never look like the default.
-fn primary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    ui.add(egui::Button::new(RichText::new(text).color(egui::Color32::WHITE)).fill(form::ACCENT))
+pub(super) fn primary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    ui.add(egui::Button::new(RichText::new(text).color(egui::Color32::WHITE)).fill(form::ACCENT).stroke(egui::Stroke::NONE))
 }
 
 /// Button for a choice that throws work away (Don't Save, Overwrite, Clear), in the error colour.
@@ -40,7 +58,13 @@ fn danger_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
 fn footer<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ui.add_space(4.0);
     ui.separator();
-    ui.horizontal(|ui| ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), add).inner).inner
+    ui.add_space(2.0);
+    ui.horizontal(|ui| {
+        // Wider buttons, so short labels such as "OK" are still easy targets.
+        ui.spacing_mut().button_padding.x = 16.0;
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), add).inner
+    })
+    .inner
 }
 
 /// A dialog's content width: `width`, or less when the main window is narrower.
@@ -74,9 +98,15 @@ fn list_card(ui: &mut egui::Ui, id: &str, height: f32, add: impl FnOnce(&mut egu
     });
 }
 
+/// What a list shows instead of rows when it has none, so it never looks broken.
+fn empty_list(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(24.0);
+    ui.vertical_centered(|ui| ui.label(RichText::new(text).weak()));
+}
+
 /// The title and text of a confirmation, at the same width and type as the dialogs.
 fn confirm_body(ui: &mut egui::Ui, opened: bool, title: &str, texts: &[&str]) {
-    ui.set_width(dialog_width(ui.ctx(), 400.0));
+    begin_dialog(ui, dialog_width(ui.ctx(), 400.0));
     ui.label(RichText::new(title).size(16.0).strong());
     ui.add_space(4.0);
     dialog_body(ui, opened, |ui| {
@@ -86,9 +116,9 @@ fn confirm_body(ui: &mut egui::Ui, opened: bool, title: &str, texts: &[&str]) {
     });
 }
 
-/// A small explanatory paragraph under a dialog's cards.
+/// A dimmed explanatory paragraph under a dialog's cards.
 fn hint(ui: &mut egui::Ui, text: &str) {
-    ui.add(egui::Label::new(RichText::new(text).small().weak()).wrap());
+    ui.add(egui::Label::new(RichText::new(text).weak()).wrap());
 }
 
 /// 選項對話框的狀態
@@ -155,23 +185,23 @@ const SHORTCUTS_TWO_COLUMN_WIDTH: f32 = 560.0;
 
 /// Height the Options dialog needs around its pages: title bar, separator, footer buttons
 /// and margins.
-const OPTIONS_CHROME_HEIGHT: f32 = 110.0;
+const OPTIONS_CHROME_HEIGHT: f32 = 120.0;
 
 /// Height the Keyboard Shortcuts dialog needs around its list: title bar, filter row,
 /// separators, footer buttons and margins.
-const SHORTCUTS_CHROME_HEIGHT: f32 = 150.0;
+const SHORTCUTS_CHROME_HEIGHT: f32 = 160.0;
 
 /// Height a list dialog (Font, Recent Files, Window List, Temporary Macro) needs around its
 /// list: title bar, filter or hint, footer buttons and margins.
-const LIST_DIALOG_CHROME_HEIGHT: f32 = 140.0;
+const LIST_DIALOG_CHROME_HEIGHT: f32 = 150.0;
 
 /// Height a dialog needs outside `dialog_body`: title bar, footer buttons, margins and room
 /// above and below the window.
-const DIALOG_CHROME_HEIGHT: f32 = 120.0;
+const DIALOG_CHROME_HEIGHT: f32 = 130.0;
 
 /// Height the Font dialog needs below its list on top of `LIST_DIALOG_CHROME_HEIGHT`: the
 /// size row and the note about fallback fonts.
-const FONT_DIALOG_EXTRA_HEIGHT: f32 = 90.0;
+const FONT_DIALOG_EXTRA_HEIGHT: f32 = 110.0;
 
 /// Room kept between a dialog and the sides of the main window.
 const DIALOG_SIDE_MARGIN: f32 = 48.0;
@@ -181,7 +211,7 @@ const DIALOG_SIDE_MARGIN: f32 = 48.0;
 /// the height the dialog needs outside this content.
 fn fit_to_window(ctx: &egui::Context, size: egui::Vec2, chrome: f32) -> egui::Vec2 {
     let room = ctx.content_rect().size() - egui::vec2(DIALOG_SIDE_MARGIN, chrome);
-    size.min(room).max(egui::vec2(240.0, 80.0))
+    size.min(room).max(egui::vec2(240.0, 60.0))
 }
 
 /// First command of each menu section in `commands::ALL` (the table is ordered by menu),
@@ -230,7 +260,7 @@ fn column_split(heights: &[usize]) -> usize {
 }
 
 /// The path with the home directory shown as "~", so copied info does not reveal the user name.
-fn tilde_path(path: &std::path::Path) -> String {
+pub(super) fn tilde_path(path: &std::path::Path) -> String {
     match dirs::home_dir().and_then(|home| path.strip_prefix(home).ok().map(std::path::Path::to_path_buf)) {
         Some(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
         None => path.display().to_string(),
@@ -300,8 +330,22 @@ impl App {
         };
         let kind = std::mem::discriminant(&dlg);
         let opened = self.shown_dialog != Some(kind);
+        if opened && self.shown_dialog.is_none() {
+            // The dialog takes the keyboard: typing and Enter must not keep editing the document
+            // behind it, or reach the find bar.
+            if let Some(focused) = ctx.memory(|m| m.focused()) {
+                ctx.memory_mut(|m| m.surrender_focus(focused));
+            }
+        }
+        // Keys are ignored on the first frame, whose Enter may be the one that opened the dialog,
+        // and while a confirmation on top of it takes them.
+        let ignore_keys = opened || self.confirm.is_some();
+        // Esc cancels like the close button, unless it is closing a drop-down list or the
+        // Options dialog is waiting for a shortcut to bind.
+        let capturing = matches!(&dlg, Dialog::Options(st) if st.capturing.is_some());
+        let escape = !ignore_keys && !capturing && !egui::Popup::is_any_open(ctx) && ctx.input(|i| i.key_pressed(Key::Escape));
         let mut open = true;
-        let mut close = false;
+        let mut close = escape;
         // Set when a dialog hands over to another one (About → Shortcuts → Options > Keys).
         let mut switch_to: Option<Dialog> = None;
         match &mut dlg {
@@ -309,24 +353,33 @@ impl App {
             Dialog::Font { filter, family, size } => {
                 let filter_hint = form::bare(self.t("font.filter", "篩選：")).to_string();
                 let l_auto = self.t("font.auto", "（自動選擇等寬字型）");
+                let l_no_fonts = self.t("font.none", "沒有符合的字型");
                 let l_size = self.t("font.size", "大小：");
                 let l_cjk = self.t("font.cjk", "中文、日文等字元若字型中沒有，會自動以系統的 CJK 字型補字。比例字型請搭配關閉「等寬模式」。");
                 let (l_ok, l_cancel) = (self.t("btn.ok", "確定"), self.t("btn.cancel", "取消"));
                 let fit = fit_to_window(ctx, egui::vec2(440.0, 260.0), LIST_DIALOG_CHROME_HEIGHT + FONT_DIALOG_EXTRA_HEIGHT);
                 let mut apply = false;
                 dialog_window(ctx, self.t("dlg.font", "字型")).open(&mut open).resizable(false).show(ctx, |ui| {
-                    ui.set_width(fit.x);
-                    ui.add(egui::TextEdit::singleline(filter).hint_text(filter_hint).desired_width(f32::INFINITY));
+                    begin_dialog(ui, fit.x);
+                    let field = form::search_field(ui, filter, &filter_hint);
+                    if opened {
+                        field.request_focus();
+                    }
                     ui.add_space(6.0);
                     list_card(ui, "fonts", fit.y, |ui| {
-                        if form::list_row(ui, egui::Role::Button, family.is_empty(), l_auto, "").clicked() {
+                        let f = filter.to_lowercase();
+                        if f.is_empty() && form::list_row(ui, egui::Role::Button, family.is_empty(), l_auto, "").clicked() {
                             family.clear();
                         }
-                        let f = filter.to_lowercase();
-                        for name in &self.fonts.families {
-                            if (f.is_empty() || name.to_lowercase().contains(&f)) && form::list_row(ui, egui::Role::Button, name == family, name, "").clicked() {
+                        let mut any = f.is_empty();
+                        for name in self.fonts.families.iter().filter(|n| f.is_empty() || n.to_lowercase().contains(&f)) {
+                            any = true;
+                            if form::list_row(ui, egui::Role::Button, name == family, name, "").clicked() {
                                 *family = name.clone();
                             }
+                        }
+                        if !any {
+                            empty_list(ui, l_no_fonts);
                         }
                     });
                     ui.add_space(8.0);
@@ -335,7 +388,7 @@ impl App {
                     });
                     hint(ui, l_cjk);
                     footer(ui, |ui| {
-                        apply = primary_button(ui, l_ok).clicked();
+                        apply = primary_button(ui, l_ok).clicked() || enter_pressed(ui, ignore_keys);
                         if ui.button(l_cancel).clicked() {
                             close = true;
                         }
@@ -353,13 +406,13 @@ impl App {
                 let l_browser = self.t("print.browser", "列印時會以瀏覽器開啟排版後的頁面，紙張大小與邊界請在瀏覽器的列印對話框中設定。");
                 let l_close = self.t("btn.close", "關閉");
                 dialog_window(ctx, self.t("dlg.page", "頁面設定")).open(&mut open).resizable(false).show(ctx, |ui| {
-                    ui.set_width(dialog_width(ctx, PAGE_SETUP_WIDTH));
+                    begin_dialog(ui, dialog_width(ctx, PAGE_SETUP_WIDTH));
                     dialog_body(ui, opened, |ui| {
                         print_options_ui(ui, &mut self.settings.print, lang);
                         hint(ui, l_browser);
                     });
                     footer(ui, |ui| {
-                        if primary_button(ui, l_close).clicked() {
+                        if primary_button(ui, l_close).clicked() || enter_pressed(ui, ignore_keys) {
                             close = true;
                         }
                     });
@@ -368,11 +421,13 @@ impl App {
             Dialog::RecentFiles { filter } => {
                 let mut chosen = None;
                 let filter_hint = form::bare(self.t("opt.filter", "篩選：")).to_string();
+                let l_no_recent = self.t("recent.empty", "還沒有最近使用的檔案");
+                let l_no_match = self.t("recent.none", "沒有符合的檔案");
                 let l_close = self.t("btn.close", "關閉");
                 let fit = fit_to_window(ctx, egui::vec2(560.0, 320.0), LIST_DIALOG_CHROME_HEIGHT);
                 dialog_window(ctx, self.t("dlg.recent", "最近使用的檔案")).open(&mut open).resizable(false).show(ctx, |ui| {
-                    ui.set_width(fit.x);
-                    let field = ui.add(egui::TextEdit::singleline(filter).hint_text(filter_hint).desired_width(f32::INFINITY));
+                    begin_dialog(ui, fit.x);
+                    let field = form::search_field(ui, filter, &filter_hint);
                     // Focused only when the dialog opens, so Tab can still move on to the list.
                     if opened {
                         field.request_focus();
@@ -381,6 +436,9 @@ impl App {
                     let f = filter.to_lowercase();
                     let matches = |p: &std::path::PathBuf| f.is_empty() || p.display().to_string().to_lowercase().contains(&f);
                     list_card(ui, "recent", fit.y, |ui| {
+                        if !self.settings.recent_files.iter().any(&matches) {
+                            empty_list(ui, if f.is_empty() { l_no_recent } else { l_no_match });
+                        }
                         for p in self.settings.recent_files.iter().filter(|p| matches(p)) {
                             // The file name, with its folder dimmed at the right.
                             let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.display().to_string());
@@ -412,12 +470,12 @@ impl App {
                 let (l_ok, l_cancel) = (self.t("btn.ok", "確定"), self.t("btn.cancel", "取消"));
                 let mut convert = false;
                 dialog_window(ctx, title).open(&mut open).resizable(false).show(ctx, |ui| {
-                    ui.set_width(dialog_width(ctx, 360.0));
+                    begin_dialog(ui, dialog_width(ctx, 360.0));
                     dialog_body(ui, opened, |ui| {
                         width_options_ui(ui, &mut self.settings.width, lang);
                     });
                     footer(ui, |ui| {
-                        convert = primary_button(ui, l_ok).clicked();
+                        convert = primary_button(ui, l_ok).clicked() || enter_pressed(ui, ignore_keys);
                         if ui.button(l_cancel).clicked() {
                             close = true;
                         }
@@ -456,7 +514,7 @@ impl App {
                 let (l_ok, l_cancel) = (self.t("btn.ok", "確定"), self.t("btn.cancel", "取消"));
                 let mut insert = false;
                 dialog_window(ctx, title).open(&mut open).resizable(false).show(ctx, |ui| {
-                    ui.set_width(dialog_width(ctx, 440.0));
+                    begin_dialog(ui, dialog_width(ctx, 440.0));
                     dialog_body(ui, opened, |ui| {
                         let n = &mut self.settings.numbers;
                         form::section(ui, "", |s| {
@@ -478,7 +536,7 @@ impl App {
                         hint(ui, l_hint);
                     });
                     footer(ui, |ui| {
-                        insert = primary_button(ui, l_ok).clicked();
+                        insert = primary_button(ui, l_ok).clicked() || enter_pressed(ui, ignore_keys);
                         if ui.button(l_cancel).clicked() {
                             close = true;
                         }
@@ -499,7 +557,7 @@ impl App {
                 let l_go = self.t("sort.go", "排序");
                 let l_close = self.t("btn.close", "關閉");
                 dialog_window(ctx, title).open(&mut open).resizable(false).show(ctx, |ui| {
-                    ui.set_width(dialog_width(ctx, 380.0));
+                    begin_dialog(ui, dialog_width(ctx, 380.0));
                     dialog_body(ui, opened, |ui| {
                         let s = &mut self.settings.sort;
                         form::section(ui, "", |sec| {
@@ -510,7 +568,7 @@ impl App {
                         });
                     });
                     footer(ui, |ui| {
-                        if primary_button(ui, l_go).clicked() {
+                        if primary_button(ui, l_go).clicked() || enter_pressed(ui, ignore_keys) {
                             self.pending.push(C::SortByOptions);
                             close = true;
                         }
@@ -546,7 +604,7 @@ impl App {
                 // Text fields share one width so their left edges line up too.
                 let field = (width * 0.6).floor();
                 dialog_window(ctx, title).open(&mut open).resizable(false).show(ctx, |ui| {
-                    ui.set_width(width);
+                    begin_dialog(ui, width);
                     dialog_body(ui, opened, |ui| {
                         form::section(ui, "", |s| {
                             s.row(l_find, |ui| ui.add(egui::TextEdit::singleline(query).desired_width(field)));
@@ -576,7 +634,7 @@ impl App {
                     });
                     let ready = !self.fif.running && !query.is_empty();
                     footer(ui, |ui| {
-                        if ui.add_enabled_ui(ready, |ui| primary_button(ui, l_find_all)).inner.clicked() {
+                        if ui.add_enabled_ui(ready, |ui| primary_button(ui, l_find_all)).inner.clicked() || (ready && enter_pressed(ui, ignore_keys)) {
                             start = Some(None);
                         }
                         if ui.add_enabled(ready, egui::Button::new(l_rep_all)).clicked() {
@@ -598,12 +656,15 @@ impl App {
                 let fit = fit_to_window(ctx, egui::vec2(560.0, 300.0), LIST_DIALOG_CHROME_HEIGHT);
                 let mut run = false;
                 dialog_window(ctx, self.t("dlg.macro", "執行暫存巨集")).open(&mut open).resizable(false).show(ctx, |ui| {
-                    ui.set_width(fit.x);
+                    begin_dialog(ui, fit.x);
                     hint(ui, l_hint);
                     ui.add_space(4.0);
                     // The editor fills the card, so a click anywhere in it starts typing, and the
                     // card's border shows the focus the frameless editor cannot.
                     let editor_id = ui.make_persistent_id("macro-script");
+                    if opened {
+                        ui.memory_mut(|m| m.request_focus(editor_id));
+                    }
                     let visuals = ui.visuals();
                     let border = if ui.memory(|m| m.has_focus(editor_id)) { visuals.selection.stroke } else { visuals.widgets.noninteractive.bg_stroke };
                     form::card_with_stroke(ui, egui::Margin::same(4), border, |ui| {
@@ -616,7 +677,7 @@ impl App {
                         ui.colored_label(ui.visuals().error_fg_color, e.as_str());
                     }
                     footer(ui, |ui| {
-                        run = primary_button(ui, l_run).clicked();
+                        run = primary_button(ui, l_run).clicked() || enter_pressed(ui, ignore_keys);
                         if ui.button(l_close).clicked() {
                             close = true;
                         }
@@ -646,7 +707,7 @@ impl App {
                 let mut theme = self.settings.theme;
                 let syntax_before = (self.settings.syntax_theme_light.clone(), self.settings.syntax_theme_dark.clone());
                 dialog_window(ctx, self.t("dlg.syntax", "語法突顯設定")).open(&mut open).resizable(false).show(ctx, |ui| {
-                    ui.set_width(dialog_width(ctx, 440.0));
+                    begin_dialog(ui, dialog_width(ctx, 440.0));
                     dialog_body(ui, opened, |ui| {
                         form::section(ui, "", |s| {
                             for (label, id, value) in [(l_light, "light-theme", &mut self.settings.syntax_theme_light), (l_dark, "dark-theme", &mut self.settings.syntax_theme_dark)] {
@@ -662,7 +723,7 @@ impl App {
                         });
                     });
                     footer(ui, |ui| {
-                        if primary_button(ui, l_close).clicked() {
+                        if primary_button(ui, l_close).clicked() || enter_pressed(ui, ignore_keys) {
                             close = true;
                         }
                     });
@@ -679,7 +740,7 @@ impl App {
                 let l_hint = self.t("fmt.hint", "需要系統已安裝 astyle 執行檔。選項說明請見 https://astyle.sourceforge.net/astyle.html");
                 let l_close = self.t("btn.close", "關閉");
                 dialog_window(ctx, self.t("dlg.formatter", "原始碼格式化設定（AStyle）")).open(&mut open).resizable(false).show(ctx, |ui| {
-                    ui.set_width(dialog_width(ctx, 480.0));
+                    begin_dialog(ui, dialog_width(ctx, 480.0));
                     dialog_body(ui, opened, |ui| {
                         form::section(ui, l_opt, |s| {
                             s.body(|ui| ui.add(egui::TextEdit::singleline(&mut self.settings.astyle_options).code_editor().desired_width(f32::INFINITY)));
@@ -687,7 +748,7 @@ impl App {
                         });
                     });
                     footer(ui, |ui| {
-                        if primary_button(ui, l_close).clicked() {
+                        if primary_button(ui, l_close).clicked() || enter_pressed(ui, ignore_keys) {
                             close = true;
                         }
                     });
@@ -700,7 +761,7 @@ impl App {
                 let l_cancel = self.t("btn.cancel", "取消");
                 let mut clear = false;
                 dialog_window(ctx, self.t("dlg.history", "清除歷史紀錄")).open(&mut open).resizable(false).show(ctx, |ui| {
-                    ui.set_width(dialog_width(ctx, 380.0));
+                    begin_dialog(ui, dialog_width(ctx, 380.0));
                     dialog_body(ui, opened, |ui| {
                         ui.add(egui::Label::new(l_ask).wrap());
                     });
@@ -730,7 +791,7 @@ impl App {
                 let l_cancel = self.t("btn.cancel", "取消");
                 let mut convert = false;
                 dialog_window(ctx, self.t("dlg.encoding", "轉換檔案編碼")).open(&mut open).resizable(false).show(ctx, |ui| {
-                    ui.set_width(dialog_width(ctx, 440.0));
+                    begin_dialog(ui, dialog_width(ctx, 440.0));
                     dialog_body(ui, opened, |ui| {
                         form::section(ui, "", |s| {
                             s.row(&l_current, |ui| ui.label(RichText::new(&current).weak()));
@@ -742,7 +803,7 @@ impl App {
                         hint(ui, l_hint);
                     });
                     footer(ui, |ui| {
-                        convert = primary_button(ui, l_convert).clicked();
+                        convert = primary_button(ui, l_convert).clicked() || enter_pressed(ui, ignore_keys);
                         if ui.button(l_cancel).clicked() {
                             close = true;
                         }
@@ -776,7 +837,7 @@ impl App {
                 ];
                 let l_close = self.t("btn.close", "關閉");
                 dialog_window(ctx, self.t("dlg.words", "字數統計")).open(&mut open).resizable(false).show(ctx, |ui| {
-                    ui.set_width(dialog_width(ctx, 360.0));
+                    begin_dialog(ui, dialog_width(ctx, 360.0));
                     dialog_body(ui, opened, |ui| {
                         form::section(ui, scope, |s| {
                             for (label, value) in rows {
@@ -785,7 +846,7 @@ impl App {
                         });
                     });
                     footer(ui, |ui| {
-                        if primary_button(ui, l_close).clicked() {
+                        if primary_button(ui, l_close).clicked() || enter_pressed(ui, ignore_keys) {
                             close = true;
                         }
                     });
@@ -798,7 +859,7 @@ impl App {
                 let l_close_list = self.t("btn.close_list", "關閉清單");
                 let fit = fit_to_window(ctx, egui::vec2(520.0, 300.0), LIST_DIALOG_CHROME_HEIGHT);
                 dialog_window(ctx, self.t("dlg.windows", "視窗清單")).open(&mut open).resizable(false).show(ctx, |ui| {
-                    ui.set_width(fit.x);
+                    begin_dialog(ui, fit.x);
                     list_card(ui, "windows", fit.y, |ui| {
                         for (i, t) in self.tabs.iter().enumerate() {
                             let size = egui::vec2(ui.available_width(), 28.0);
@@ -817,7 +878,7 @@ impl App {
                         }
                     });
                     footer(ui, |ui| {
-                        if primary_button(ui, l_close_list).clicked() {
+                        if primary_button(ui, l_close_list).clicked() || enter_pressed(ui, ignore_keys) {
                             close = true;
                         }
                     });
@@ -856,7 +917,7 @@ impl App {
                 let info = format!("MadEdit {version}\n{platform}\n{settings_path}");
                 let icon = self.icons.get("app").map(|(t, _)| t.id());
                 dialog_window(ctx, self.t("about.title", "關於 MadEdit")).open(&mut open).resizable(false).show(ctx, |ui| {
-                    ui.set_width(dialog_width(ctx, 440.0));
+                    begin_dialog(ui, dialog_width(ctx, 440.0));
                     dialog_body(ui, opened, |ui| {
                         ui.horizontal(|ui| {
                             if let Some(id) = icon {
@@ -888,7 +949,7 @@ impl App {
                         hint(ui, l_assets);
                     });
                     footer(ui, |ui| {
-                        if primary_button(ui, l_ok).clicked() {
+                        if primary_button(ui, l_ok).clicked() || enter_pressed(ui, ignore_keys) {
                             close = true;
                         }
                         // Secondary actions start at the left edge.
@@ -951,21 +1012,29 @@ impl App {
                                     ui.set_width(name_width);
                                     ui.add(egui::Label::new(cmd.as_str()).wrap());
                                 });
-                                ui.label(RichText::new(keys.as_str()).monospace());
+                                ui.vertical(|ui| {
+                                    ui.spacing_mut().item_spacing.y = 2.0;
+                                    for key in keys.lines() {
+                                        form::keycap(ui, key);
+                                    }
+                                });
                                 ui.end_row();
                             }
                         });
                     }
                 };
                 dialog_window(ctx, title).open(&mut open).resizable(false).show(ctx, |ui| {
-                    ui.set_width(size.x);
-                    ui.add(egui::TextEdit::singleline(filter).hint_text(filter_hint).desired_width(f32::INFINITY));
+                    begin_dialog(ui, size.x);
+                    let field = form::search_field(ui, filter, &filter_hint);
+                    if opened {
+                        field.request_focus();
+                    }
                     ui.add_space(6.0);
                     // Fixed height so filtering does not resize the window; `min_scrolled_height`
                     // keeps the area from eating the footer's room on the window's sizing pass.
                     egui::ScrollArea::vertical().auto_shrink([false, false]).min_scrolled_height(size.y).max_height(size.y).show(ui, |ui| {
                         if sections.is_empty() {
-                            ui.label(RichText::new(l_none).weak());
+                            empty_list(ui, l_none);
                         }
                         if two_columns {
                             ui.columns(2, |cols| {
@@ -977,7 +1046,7 @@ impl App {
                         }
                     });
                     footer(ui, |ui| {
-                        if primary_button(ui, l_close).clicked() {
+                        if primary_button(ui, l_close).clicked() || enter_pressed(ui, ignore_keys) {
                             close = true;
                         }
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -994,6 +1063,9 @@ impl App {
             self.dialog = Some(next);
         } else if open && !close {
             self.dialog = Some(dlg);
+        } else if self.dialog.is_none() {
+            // Back to the document, unless an action replaced this dialog with another.
+            self.focus_editor = true;
         }
         // The kind drawn this frame, not a replacement set meanwhile (About handing over to
         // Keyboard Shortcuts), so the replacement counts as opened on its first frame.
@@ -1104,7 +1176,7 @@ impl App {
         // Fixed size: the window used to shrink and grow with each page's content.
         dialog_window(ctx, self.t("dlg.options", "選項")).open(open).resizable(false).show(ctx, |ui| {
             let size = fit_to_window(ui.ctx(), OPTIONS_SIZE, OPTIONS_CHROME_HEIGHT);
-            ui.set_width(size.x);
+            begin_dialog(ui, size.x);
             let nav_width = (size.x * 0.22).clamp(90.0, 150.0);
             ui.horizontal_top(|ui| {
                 ui.allocate_ui_with_layout(egui::vec2(nav_width, size.y), egui::Layout::top_down(egui::Align::LEFT), |ui| {
@@ -1223,7 +1295,7 @@ impl App {
                     3 => print_options_ui(ui, &mut draft.print, lang),
                     4 => {
                         let hint = form::bare(self.t("opt.filter", "篩選：")).to_string();
-                        ui.add(egui::TextEdit::singleline(&mut st.filter).hint_text(hint).desired_width(f32::INFINITY));
+                        form::search_field(ui, &mut st.filter, &hint);
                         ui.add_space(8.0);
                         let list_height = (size.y - 44.0).max(80.0);
                         let list_width = (ui.available_width() * 0.58).floor();
@@ -1265,7 +1337,7 @@ impl App {
                                     let mut remove = None;
                                     for (i, k) in list.iter().enumerate() {
                                         ui.horizontal(|ui| {
-                                            egui::Frame::new().fill(ui.visuals().extreme_bg_color).corner_radius(4.0).inner_margin(egui::Margin::symmetric(6, 2)).show(ui, |ui| ui.monospace(k));
+                                            form::keycap(ui, k);
                                             if form::icon_button(ui, egui::Button::new("×").small(), l_remove, &format!("{l_remove} {k}")).clicked() {
                                                 remove = Some(i);
                                             }
