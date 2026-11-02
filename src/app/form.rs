@@ -19,6 +19,56 @@ pub fn icon_button(ui: &mut Ui, button: egui::Button<'_>, tip: &str, name: &str)
     response
 }
 
+/// Outlines text fields and other inputs drawn in `ui`, which would otherwise vanish into the
+/// light theme's panels and cards, and gives dark fields a softer fill than near-black.
+pub fn outline_fields(ui: &mut Ui) {
+    let visuals = ui.visuals_mut();
+    visuals.widgets.inactive.bg_stroke = visuals.widgets.noninteractive.bg_stroke;
+    if visuals.dark_mode {
+        visuals.text_edit_bg_color = Some(Color32::from_gray(24));
+    }
+}
+
+/// A small on/off button such as a search option ("Aa" for match case): accent-filled while
+/// on, with `name` as its tooltip and screen reader name.
+pub fn toggle_chip(ui: &mut Ui, on: &mut bool, text: &str, name: &str) -> Response {
+    let galley = WidgetText::from(text).into_galley(ui, Some(TextWrapMode::Extend), f32::INFINITY, TextStyle::Button);
+    let size = egui::vec2((galley.size().x + 12.0).max(26.0), ui.spacing().interact_size.y.max(22.0));
+    let (rect, mut response) = ui.allocate_exact_size(size, Sense::click());
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+    response.widget_info(|| WidgetInfo::selected(Role::CheckBox, ui.is_enabled(), *on, name));
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.visuals();
+        let color = if *on {
+            ui.painter().rect_filled(rect, 5.0, ACCENT);
+            Color32::WHITE
+        } else {
+            let fill = if response.hovered() { visuals.widgets.hovered.weak_bg_fill } else { Color32::TRANSPARENT };
+            ui.painter().rect(rect, 5.0, fill, visuals.widgets.noninteractive.bg_stroke, egui::StrokeKind::Inside);
+            visuals.widgets.inactive.fg_stroke.color
+        };
+        ui.painter().galley(rect.center() - galley.size() / 2.0, galley, color);
+        focus_ring(ui, &response, rect, 5.0, ACCENT);
+    }
+    response.on_hover_text(name)
+}
+
+/// A filter box across the row with a magnifier in front, for the lists in dialogs.
+pub fn search_field(ui: &mut Ui, text: &mut String, hint: &str) -> Response {
+    let edit = egui::TextEdit::singleline(text).hint_text(hint.to_owned()).prefix(RichText::new("🔍").weak()).desired_width(f32::INFINITY);
+    ui.add(edit)
+}
+
+/// A shortcut such as "Ctrl+S" drawn as a key cap.
+pub fn keycap(ui: &mut Ui, keys: &str) -> Response {
+    let visuals = ui.visuals();
+    let frame = egui::Frame::new().fill(visuals.extreme_bg_color).stroke(visuals.widgets.noninteractive.bg_stroke).corner_radius(4.0).inner_margin(egui::Margin::symmetric(6, 1));
+    frame.show(ui, |ui| ui.label(RichText::new(keys).monospace())).inner
+}
+
 /// The label without its trailing colon; rows separate label and value by position instead.
 pub fn bare(label: &str) -> &str {
     label.trim_end().trim_end_matches([':', '：']).trim_end()
@@ -111,9 +161,9 @@ impl Section<'_> {
         inner.inner
     }
 
-    /// Small explanatory text under the previous row.
+    /// Dimmed explanatory text under the previous row.
     pub fn note(&mut self, text: &str) {
-        self.ui.add(egui::Label::new(RichText::new(text).small().weak()).wrap());
+        self.ui.add(egui::Label::new(RichText::new(text).weak()).wrap());
         self.ui.add_space(4.0);
     }
 

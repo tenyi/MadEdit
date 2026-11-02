@@ -13,12 +13,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Changed
 - Mark ADR 0002's text-storage and mmap design as historical and partially superseded by ADR 0011, with links to the current text, hex and positioned-read implementations.
 - Split the custom text editor into layout, painting and input modules while preserving its public API and rendered output.
+- Dialogs have a more modern look and keyboard behaviour. Controls are taller and footer buttons wider. Text fields are outlined, so they no longer disappear on light-theme cards. Hint text is readable rather than small, list filters show a magnifier, empty lists say why they are empty, and keyboard shortcuts appear as key caps. Esc closes a dialog and Enter runs its main action. While a dialog is open, typing no longer reaches the document behind it, and focus returns to the editor when the dialog closes.
+- The find bar is redesigned. It counts matches as you type ("3 / 12", "No results", or the regex error) and highlights every match in the editor, so the Count button is gone. Match case, whole word, regex, hex and wrap-around are compact toggle chips, the history is a drop-down beside the field, and previous / next / close are icon buttons with their shortcuts in the tooltip. Replace and Replace All are disabled in read-only and hex documents. The go-to bar shows the valid line range and marks invalid input in red.
+- The Find in Files results panel groups matches under each file, with a match count and a fold arrow; the "Collapse all results" command folds them all. Each match shows its line number and the line with the match highlighted, without the indent and scrolled to the match on long lines. Replacements list each file changed, skipped or failed (including open and read-only files) instead of mixing them into the matches. A spinner and a Stop button appear while a search runs.
 
 ### Fixed
 - Syntax highlighting stays aligned after inserting or deleting lines, including undo/redo and edits during time-sliced parsing.
 - Debug builds detect edits outside their declared line range using allocation-free fingerprints, protecting undo and incremental caches without copying untouched lines.
 - Whole-document edits reuse the undo snapshot's changed strings instead of cloning them twice. Large canonical Unicode edits release original bytes before snapshotting; no-op commands still preserve the original bytes, and malformed, legacy-encoded or mixed-newline input retains its lossless recovery data.
 - Character-position queries reuse a versioned line-start offset across local edits and nearby cursor moves instead of rescanning the document prefix on every keystroke. Undo/redo and full resets invalidate the offset when necessary.
+- The print preview window follows the UI language (title, toolbar and page counter were always Traditional Chinese). Its first / last page buttons and the Find in Files folder button now have accessible names for screen readers.
+- Find in Files messages follow the UI language (the results summary, skipped-file reasons and errors were always Traditional Chinese), and starting a new search stops the one still running.
+- Clearing the Find in Files results no longer crashes while the results are on screen; the list, notes and counters reset after the frame completes and a new search works right away.
+- Matches deep inside long lines (beyond the per-result character budget) show a short excerpt centred on the match with the match highlighted; such results used to crash and never showed the match. Clicking a result still selects the original columns.
+- With the find bar open, moving the caret or using Find Next no longer rescans the whole document for the live count; the pattern and per-line counts are cached per document version and only invalidated by edits, so navigation stays instant in large files.
 
 ### 繁體中文
 
@@ -29,12 +37,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 #### 變更
 - 將 ADR 0002 的文字儲存與 mmap 設計標記為歷史方案，說明其部分已由 ADR 0011 取代，並連結至現行文字、十六進位及定位讀取實作。
 - 將自繪文字編輯器拆分為版面計算、繪製與輸入模組，保留既有公開介面與畫面輸出。
+- 對話框外觀與鍵盤操作更現代：控制項加高、底部按鈕加寬；文字欄位加上外框，在淺色主題的卡片上不再隱形；說明文字改為易讀的大小，清單篩選欄加上放大鏡圖示，空清單會顯示說明，快捷鍵以鍵帽樣式呈現。按 Esc 關閉對話框、按 Enter 執行主要動作；對話框開啟時輸入不再傳到後方的文件，關閉後焦點回到編輯區。
+- 重新設計尋找列：輸入時即時計算符合數量（「3 / 12」、「無結果」或正規表達式錯誤），並在編輯區標示所有符合處，因此移除「計數」按鈕。區分大小寫、全字、正規表達式、十六進位及循環搜尋改為精簡的切換按鈕，歷史紀錄改為欄位旁的下拉選單，上一個／下一個／關閉改為圖示按鈕，提示中附快捷鍵。唯讀與十六進位文件中停用「取代」與「全部取代」。移至行列會顯示有效的行號範圍，輸入錯誤時以紅框標示。
+- 「在檔案中尋找」結果面板依檔案分組，顯示符合數量與摺疊箭頭；「摺疊所有結果」命令可一次全部摺疊。每筆結果顯示行號，以及去除縮排、標示符合處的該行內容，長行會捲到符合處。取代時逐一列出已取代、略過或失敗的檔案（包括已開啟與唯讀的檔案），不再混入搜尋結果。搜尋進行中顯示進度圖示與「停止」按鈕。
 
 #### 修正
 - 插入或刪除行後，語法高亮仍與文字對齊；復原／重做及分幀解析期間的編輯也一併處理。
 - 除錯版本以不配置記憶體的雜湊檢查偵測超出宣告行範圍的編輯，保護復原紀錄與增量快取，無須複製未修改的行。
 - 全文編輯直接沿用復原快照中已變更的字串，避免重複複製。大型標準 Unicode 編輯會在建立快照前釋放原始位元組；無變更命令仍保留原始內容，解碼錯誤、傳統編碼或混合換行的資料也保留無損復原所需的原始位元組。
 - 字元位置查詢在局部編輯及鄰近游標移動時沿用含版本的行首偏移錨點，不再每次按鍵都重掃文件前綴；復原／重做及全文重設會在必要時使錨點失效。
+- 預覽列印視窗跟隨介面語言（標題、工具列與頁碼先前一律為繁體中文）；其第一頁／最後一頁按鈕及多檔案尋找的選擇資料夾按鈕提供螢幕閱讀器可讀的名稱。
+- 「在檔案中尋找」的訊息跟隨介面語言（結果摘要、略過檔案的原因與錯誤訊息先前一律為繁體中文）；開始新的搜尋時會停止仍在執行的上一次搜尋。
+- 結果顯示時按下「在檔案中尋找」的「清除」不再當機；清單、訊息與計數會在本幀繪製完成後統一清除，並可立即再次搜尋。
+- 位於長行深處（超過每筆結果字元上限）的符合項目，現在顯示以符合處為中心的片段並標示符合文字；先前這類結果可能導致當機，也看不到符合內容。點擊結果仍會選取原始欄位。
+- 尋找列開啟時，移動游標或「找下一個」不再為了即時計數重掃整份文件；搜尋樣式與逐行符合數會依文件版本快取，僅在編輯時失效，大型文件中的導航不再延遲。
 
 ## [0.6.7] - 2026-10-30
 

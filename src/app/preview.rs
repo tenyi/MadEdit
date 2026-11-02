@@ -10,6 +10,8 @@ use eframe::egui::{self, Color32, FontFamily, FontId, Galley, Pos2, Rect, Sense,
 use eframe::egui::text::{LayoutJob, TextFormat};
 
 use crate::app::fonts::EDITOR_FAMILY;
+use crate::app::form;
+use crate::app::i18n::{self, Lang};
 use crate::app::print::{PrintContent, SpanKind, PAGE_NO_MARK, PAGE_TOTAL_MARK};
 use crate::core::editor::{char_visual_columns, tab_columns_at};
 
@@ -269,7 +271,7 @@ impl PrintPreview {
     }
 
     /// 繪製預覽視窗內容，回傳使用者要求的動作
-    pub fn ui(&mut self, ui: &mut egui::Ui) -> PreviewAction {
+    pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang) -> PreviewAction {
         let mut action = PreviewAction::None;
         if ui.ctx().input(|i| i.viewport().close_requested() || i.key_pressed(egui::Key::Escape)) {
             return PreviewAction::Close;
@@ -296,34 +298,36 @@ impl PrintPreview {
             }
         });
 
+        let t = |key: &str, zh: &'static str| i18n::translate(lang, key, zh);
+        let (first, last) = (t("pv.first", "第一頁"), t("pv.last", "最後一頁"));
         egui::Panel::top("print-preview-toolbar").show(ui, |ui| {
             ui.horizontal(|ui| {
-                if ui.button("列印...").clicked() {
+                if ui.button(t("pv.print", "列印...")).clicked() {
                     action = PreviewAction::Print;
                 }
                 ui.separator();
-                if ui.add_enabled(self.page > 0, egui::Button::new("⏮")).on_hover_text("第一頁").clicked() {
+                if ui.add_enabled_ui(self.page > 0, |ui| form::icon_button(ui, egui::Button::new("⏮"), first, first)).inner.clicked() {
                     self.page = 0;
                 }
-                if ui.add_enabled(self.page > 0, egui::Button::new("◀ 上一頁")).clicked() {
+                if ui.add_enabled(self.page > 0, egui::Button::new(format!("◀ {}", t("pv.prev", "上一頁")))).clicked() {
                     self.page -= 1;
                 }
-                ui.label(format!("第 {} / {} 頁", self.page + 1, total));
-                if ui.add_enabled(self.page + 1 < total, egui::Button::new("下一頁 ▶")).clicked() {
+                ui.label(i18n::fill(t("pv.page", "第 {n} / {q} 頁"), Some(self.page + 1), Some(&total.to_string())));
+                if ui.add_enabled(self.page + 1 < total, egui::Button::new(format!("{} ▶", t("pv.next", "下一頁")))).clicked() {
                     self.page += 1;
                 }
-                if ui.add_enabled(self.page + 1 < total, egui::Button::new("⏭")).on_hover_text("最後一頁").clicked() {
+                if ui.add_enabled_ui(self.page + 1 < total, |ui| form::icon_button(ui, egui::Button::new("⏭"), last, last)).inner.clicked() {
                     self.page = total - 1;
                 }
                 ui.separator();
-                ui.label("縮放：");
+                ui.label(t("pv.zoom", "縮放："));
                 egui::ComboBox::from_id_salt("print-preview-zoom").selected_text(format!("{:.0}%", self.zoom * 100.0)).show_ui(ui, |ui| {
                     for &z in ZOOMS {
                         ui.selectable_value(&mut self.zoom, z, format!("{:.0}%", z * 100.0));
                     }
                 });
                 ui.separator();
-                if ui.button("關閉").clicked() {
+                if ui.button(t("btn.close", "關閉")).clicked() {
                     action = PreviewAction::Close;
                 }
             });
