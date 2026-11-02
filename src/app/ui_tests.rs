@@ -2128,3 +2128,122 @@ fn test_mouse_backward_drag_across_lines() {
     h.run_steps(1);
     assert_eq!(h.state().doc().editor.selected_text(), "bcdefghij\nklm", "跨行往回拖曳的選取範圍");
 }
+
+/// 有結果時按下「清除」：同一幀仍在繪製舊結果，動作必須延後到繪製結束，不能越界
+#[test]
+fn test_find_in_files_clear_survives_the_same_frame_drawing() {
+    use egui::accesskit::Role;
+    let dir = std::env::temp_dir().join(format!("madedit_ui_fif_clear_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("clear.txt");
+    std::fs::write(&file, "needle one\nplain\nneedle two\n").unwrap();
+    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, vec![file.clone()], None));
+    h.state_mut().settings.find_in_files.opened_files_only = true;
+    h.run_steps(3);
+    h.state_mut().start_find_in_files("needle".into(), None);
+    for _ in 0..200 {
+        h.run_steps(1);
+        if !h.state_mut().fif.running {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    h.run_steps(2);
+    assert_eq!(h.state_mut().fif.results.len(), 2);
+    h.get_by(|n| n.role() == Role::Button && n.label().as_deref() == Some("清除")).click();
+    h.run_steps(2);
+    let s = h.state_mut();
+    assert!(s.fif.results.is_empty(), "results must be cleared");
+    assert!(s.fif.notes.is_empty());
+    assert_eq!(s.fif.replaced, 0);
+    assert_eq!(s.fif.status, super::findfiles::Status::Idle);
+    // 清除後可以再次搜尋
+    h.state_mut().start_find_in_files("two".into(), None);
+    for _ in 0..200 {
+        h.run_steps(1);
+        if !h.state_mut().fif.running {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    h.run_steps(2);
+    assert_eq!(h.state_mut().fif.results.len(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 第 150 欄的符合：片段以符合處為中心，列上找得到、點擊後仍選取原始欄位
+#[test]
+fn test_find_in_files_row_shows_and_opens_matches_beyond_the_excerpt_budget() {
+    use egui::accesskit::Role;
+    let dir = std::env::temp_dir().join(format!("madedit_ui_fif_deep_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("deep.txt"), format!("{}needle tail\n", "x".repeat(150))).unwrap();
+
+    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, vec![], None));
+    h.run_steps(3);
+    {
+        let opts = &mut h.state_mut().settings.find_in_files;
+        opts.directory = dir.to_string_lossy().into_owned();
+        opts.opened_files_only = false;
+        opts.file_filter = "*.txt".into();
+        opts.exclude_filter.clear();
+    }
+    h.state_mut().start_find_in_files("needle".into(), None);
+    for _ in 0..200 {
+        h.run_steps(1);
+        if !h.state_mut().fif.running {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    h.run_steps(2);
+    assert_eq!(h.state_mut().fif.results.len(), 1);
+    // 片段不是行首前 100 字：名稱含符合前 24 字與符合字串本身（繪製時才加「…」）
+    let row = format!("1: {}needle tail", "x".repeat(24));
+    assert!(
+        h.query_all_by(|n| n.role() == Role::Button && n.label().as_deref() == Some(row.as_str())).count() > 0,
+        "missing deep-match row {row}"
+    );
+    h.get_by(|n| n.role() == Role::Button && n.label().as_deref() == Some(row.as_str())).click();
+    h.run_steps(3);
+    assert_eq!(h.state_mut().doc().editor.selected_text(), "needle", "點擊結果應選取原始欄位的符合文字");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 查詢與文件不變時，移動游標或 Find Next 不得重啟全文計數，只更新目前序號
+#[test]
+fn test_find_bar_navigation_does_not_restart_the_full_text_count() {
+    let mut h = harness();
+    {
+        let s = h.state_mut();
+        (s.settings.search_match_case, s.settings.search_whole_word, s.settings.search_regex) = (false, false, false);
+        s.doc_mut().editor.set_text("one two one\nONE");
+        s.doc_mut().version += 1;
+        s.pending.push(C::Find);
+    }
+    h.run_steps(3);
+    type_text(&mut h, "one");
+    h.run_steps(2);
+    assert!(h.query_by_label("共 3 個符合").is_some());
+    let key = h.state_mut().find.live.counts_key;
+    let pattern = h.state_mut().find.live.pattern_id;
+    // Find Next（F3）只移動目前序號
+    h.state_mut().pending.push(C::FindNext);
+    h.run_steps(3);
+    assert_eq!(h.state_mut().find.live.counts_key, key, "navigation must not restart the full-text count");
+    assert_eq!(h.state_mut().find.live.pattern_id, pattern);
+    assert!(h.query_by_label("1 / 3").is_some());
+    // 一般游標移動也一樣
+    h.state_mut().doc_mut().editor.set_caret(1, 1);
+    h.run_steps(2);
+    assert_eq!(h.state_mut().find.live.counts_key, key);
+    assert!(h.query_by_label("共 3 個符合").is_some());
+    // 編輯文件才重新計數
+    h.state_mut().doc_mut().editor.set_text("one two one two one\nONE");
+    h.state_mut().doc_mut().version += 1;
+    h.run_steps(2);
+    assert_ne!(h.state_mut().find.live.counts_key, key, "an edit must recompute the counts");
+    assert!(h.query_by_label("共 4 個符合").is_some());
+}

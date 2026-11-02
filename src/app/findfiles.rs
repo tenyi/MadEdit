@@ -20,9 +20,35 @@ use crate::core::encoding;
 pub struct Hit {
     pub path: PathBuf,
     pub line: usize,
+    /// 符合在原始整行中的欄位（點擊結果後用來選取）
     pub col: usize,
     pub len: usize,
+    /// 顯示用的片段：以符合處為中心，絕不超過每行最多字元設定
     pub text: String,
+    /// 符合在 `text` 片段內的欄位
+    pub text_col: usize,
+    /// 片段從行首縮排之前開始，顯示時加上前導「…」
+    pub cut: bool,
+}
+
+impl Hit {
+    /// Builds one match from a regex hit in `line_text`: the excerpt keeps `HIT_CONTEXT`
+    /// characters before a match that sits far into the line and drops the indent otherwise,
+    /// never exceeding `max_chars` characters. `col`/`len` stay in whole-line coordinates for
+    /// selecting the match on click; `text_col` addresses the match inside the excerpt, so
+    /// drawing can never clamp against an out-of-range range.
+    fn new(path: PathBuf, line: usize, line_text: &str, m_start: usize, m_end: usize, max_chars: usize) -> Self {
+        let col = line_text[..m_start].chars().count();
+        let len = line_text[m_start..m_end].chars().count();
+        let chars: Vec<char> = line_text.chars().collect();
+        let indent = chars.iter().take_while(|c| c.is_whitespace()).count().min(col);
+        let cut = col > indent + 2 * HIT_CONTEXT;
+        let start = if cut { col - HIT_CONTEXT } else { indent };
+        // The match starts inside the excerpt even when `max_chars` is smaller than the
+        // context window (`col + 1 <= chars.len()`, the match is non-empty).
+        let end = chars.len().min((start + max_chars).max(col + 1));
+        Hit { path, line, col, len, text: chars[start..end].iter().collect(), text_col: col - start, cut }
+    }
 }
 
 /// A file the replacement changed or left alone, listed under the matches.
@@ -186,13 +212,7 @@ impl App {
             } else {
                 for (li, line) in t.doc.editor.lines.iter().enumerate() {
                     for m in re.find_iter(line).filter(|m| m.start() != m.end()) {
-                        self.fif.results.push(Hit {
-                            path: p.clone(),
-                            line: li,
-                            col: line[..m.start()].chars().count(),
-                            len: line[m.start()..m.end()].chars().count(),
-                            text: line.chars().take(max_chars).collect(),
-                        });
+                        self.fif.results.push(Hit::new(p.clone(), li, line, m.start(), m.end(), max_chars));
                     }
                 }
             }
@@ -244,13 +264,7 @@ impl App {
                     None => {
                         for (li, line) in d.text.lines().enumerate() {
                             for m in re.find_iter(line).filter(|m| m.start() != m.end()) {
-                                let _ = tx.send(Msg::Hit(Hit {
-                                    path: f.clone(),
-                                    line: li,
-                                    col: line[..m.start()].chars().count(),
-                                    len: line[m.start()..m.end()].chars().count(),
-                                    text: line.chars().take(max_chars).collect(),
-                                }));
+                                let _ = tx.send(Msg::Hit(Hit::new(f.clone(), li, line, m.start(), m.end(), max_chars)));
                             }
                         }
                     }
@@ -348,6 +362,8 @@ impl App {
         let mut open: Option<Hit> = None;
         let mut open_file: Option<PathBuf> = None;
         let mut fold: Option<PathBuf> = None;
+        // 清除動作延後到本幀繪製結束：本幀開頭保存的 hits 數目仍對應尚在顯示的結果
+        let mut clear_requested = false;
         ui.horizontal(|ui| {
             ui.label(RichText::new(l_title).strong());
             if running {
@@ -359,10 +375,7 @@ impl App {
                     self.fif.show_results = false;
                 }
                 if ui.add_enabled(!running && (hits > 0 || !notes.is_empty()), egui::Button::new(l_clear)).clicked() {
-                    self.fif.results.clear();
-                    self.fif.notes.clear();
-                    self.fif.replaced = 0;
-                    self.fif.status = Status::Idle;
+                    clear_requested = true;
                 }
                 let icon = if self.fif.collapsed { "▸" } else { "▾" };
                 if form::icon_button(ui, egui::Button::new(icon), &l_collapse, &l_collapse).clicked() {
@@ -427,6 +440,12 @@ impl App {
             self.tab_mut().view.ensure_visible = true;
             self.focus_editor = true;
         }
+        if clear_requested {
+            self.fif.results.clear();
+            self.fif.notes.clear();
+            self.fif.replaced = 0;
+            self.fif.status = Status::Idle;
+        }
     }
 }
 
@@ -476,16 +495,14 @@ fn file_row(ui: &mut egui::Ui, path: &Path, count: usize, folded: bool) -> egui:
 /// still in view.
 const HIT_CONTEXT: usize = 24;
 
-/// Splits a match's line into the text before, inside and after the match, without the
-/// indent and starting `HIT_CONTEXT` characters before a match that sits far into the line;
-/// the flag tells whether text was cut there.
+/// Splits a match's line into the text before, inside and after the match; the coordinates
+/// are the excerpt-relative ones recorded in the `Hit`, so stale or oversized values only
+/// truncate the display and can never clamp against an invalid range.
 fn excerpt(hit: &Hit) -> (bool, String, String, String) {
     let chars: Vec<char> = hit.text.trim_end().chars().collect();
-    let indent = chars.iter().take_while(|c| c.is_whitespace()).count().min(hit.col);
-    let start = if hit.col > indent + 2 * HIT_CONTEXT { hit.col - HIT_CONTEXT } else { indent };
-    let col = hit.col.clamp(start, chars.len());
-    let end = (hit.col + hit.len).clamp(col, chars.len());
-    (start > indent, chars[start..col].iter().collect(), chars[col..end].iter().collect(), chars[end..].iter().collect())
+    let col = hit.text_col.min(chars.len());
+    let end = col.saturating_add(hit.len).min(chars.len());
+    (hit.cut, chars[..col].iter().collect(), chars[col..end].iter().collect(), chars[end..].iter().collect())
 }
 
 /// One match: its line number dimmed in a gutter, then the line with the match highlighted.
@@ -597,11 +614,38 @@ mod tests {
 
     #[test]
     fn test_excerpt_drops_the_indent_and_keeps_far_matches_in_view() {
-        let hit = |text: &str, col, len| Hit { path: PathBuf::new(), line: 0, col, len, text: text.into() };
+        let hit = |line: &str, start, end, max| Hit::new(PathBuf::new(), 0, line, start, end, max);
         let parts = |cut, a: &str, b: &str, c: &str| (cut, a.to_owned(), b.to_owned(), c.to_owned());
-        assert_eq!(excerpt(&hit("    let 中文 = x;  ", 8, 2)), parts(false, "let ", "中文", " = x;"));
+        // "    let 中文 = x;  ": the match starts at byte 8 (column 8, 中文 is two characters).
+        assert_eq!(excerpt(&hit("    let 中文 = x;  ", 8, 14, 100)), parts(false, "let ", "中文", " = x;"));
         let far = format!("{}needle tail", "中".repeat(60));
-        assert_eq!(excerpt(&hit(&far, 60, 6)), parts(true, &"中".repeat(HIT_CONTEXT), "needle", " tail"));
-        assert_eq!(excerpt(&hit("ab", 5, 3)), parts(false, "ab", "", ""), "a stale column past the end must not panic");
+        assert_eq!(excerpt(&hit(&far, 180, 186, 100)), parts(true, &"中".repeat(HIT_CONTEXT), "needle", " tail"));
+        assert_eq!(excerpt(&hit("ab", 0, 2, 100)), parts(false, "", "ab", ""));
+    }
+
+    #[test]
+    fn test_excerpt_contains_matches_beyond_the_char_budget() {
+        // A match at column 150 with the default 100-character budget: the excerpt used to be
+        // cut from the line start, so highlighting clamped an invalid range and panicked.
+        let line = format!("{}needle tail", "x".repeat(150));
+        let hit = Hit::new(PathBuf::new(), 0, &line, 150, 156, 100);
+        assert_eq!((hit.col, hit.len, hit.cut), (150, 6, true));
+        let (cut, before, matched, after) = excerpt(&hit);
+        assert!(cut);
+        assert_eq!(before.chars().count(), HIT_CONTEXT);
+        assert_eq!((matched.as_str(), after.as_str()), ("needle", " tail"));
+        // Clicking the result still selects the original whole-line columns.
+        assert_eq!(hit.text_col, HIT_CONTEXT);
+        assert_eq!(hit.text.chars().count(), HIT_CONTEXT + "needle tail".chars().count());
+        // A match longer than the budget truncates the highlight instead of panicking.
+        let parts = |cut, a: &str, b: &str, c: &str| (cut, a.to_owned(), b.to_owned(), c.to_owned());
+        let long = format!("{}{}", "y".repeat(5), "a".repeat(200));
+        let hit = Hit::new(PathBuf::new(), 0, &long, 5, 205, 100);
+        let (cut, before, matched, after) = excerpt(&hit);
+        assert!(!cut);
+        assert_eq!((before.as_str(), matched.chars().count(), after.as_str()), ("yyyyy", 95, ""));
+        // Stale excerpt coordinates must only truncate the display.
+        let stale = Hit { path: PathBuf::new(), line: 0, col: 5, len: 3, text: "ab".into(), text_col: 5, cut: false };
+        assert_eq!(excerpt(&stale), parts(false, "ab", "", ""));
     }
 }

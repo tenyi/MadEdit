@@ -24,6 +24,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Character-position queries reuse a versioned line-start offset across local edits and nearby cursor moves instead of rescanning the document prefix on every keystroke. Undo/redo and full resets invalidate the offset when necessary.
 - The print preview window follows the UI language (title, toolbar and page counter were always Traditional Chinese). Its first / last page buttons and the Find in Files folder button now have accessible names for screen readers.
 - Find in Files messages follow the UI language (the results summary, skipped-file reasons and errors were always Traditional Chinese), and starting a new search stops the one still running.
+- Clearing the Find in Files results no longer crashes while the results are on screen; the list, notes and counters reset after the frame completes and a new search works right away.
+- Matches deep inside long lines (beyond the per-result character budget) show a short excerpt centred on the match with the match highlighted; such results used to crash and never showed the match. Clicking a result still selects the original columns.
+- With the find bar open, moving the caret or using Find Next no longer rescans the whole document for the live count; the pattern and per-line counts are cached per document version and only invalidated by edits, so navigation stays instant in large files.
 
 ### 繁體中文
 
@@ -45,6 +48,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - 字元位置查詢在局部編輯及鄰近游標移動時沿用含版本的行首偏移錨點，不再每次按鍵都重掃文件前綴；復原／重做及全文重設會在必要時使錨點失效。
 - 預覽列印視窗跟隨介面語言（標題、工具列與頁碼先前一律為繁體中文）；其第一頁／最後一頁按鈕及多檔案尋找的選擇資料夾按鈕提供螢幕閱讀器可讀的名稱。
 - 「在檔案中尋找」的訊息跟隨介面語言（結果摘要、略過檔案的原因與錯誤訊息先前一律為繁體中文）；開始新的搜尋時會停止仍在執行的上一次搜尋。
+- 結果顯示時按下「在檔案中尋找」的「清除」不再當機；清單、訊息與計數會在本幀繪製完成後統一清除，並可立即再次搜尋。
+- 位於長行深處（超過每筆結果字元上限）的符合項目，現在顯示以符合處為中心的片段並標示符合文字；先前這類結果可能導致當機，也看不到符合內容。點擊結果仍會選取原始欄位。
+- 尋找列開啟時，移動游標或「找下一個」不再為了即時計數重掃整份文件；搜尋樣式與逐行符合數會依文件版本快取，僅在編輯時失效，大型文件中的導航不再延遲。
 
 ## [0.6.7] - 2026-10-30
 

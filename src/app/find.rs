@@ -23,21 +23,50 @@ pub struct FindBar {
     pub hex: bool,
     pub focus: bool,
     pub info: Option<String>,
-    live: LiveSearch,
+    pub(crate) live: LiveSearch,
 }
 
-/// The find bar's live result for its query, options, document and selection, recomputed only
-/// when one of those changes.
+/// The find bar's live result: the regex and the per-line match counts belong to the pattern
+/// and the document version, so moving the selection or pressing Find Next only relocates
+/// `current` within the cached counts instead of rescanning the whole document.
 #[derive(Default)]
-struct LiveSearch {
-    key: u64,
+pub(crate) struct LiveSearch {
+    /// Changes with the document id, version and pattern; recomputes the counts when it does.
+    pub(crate) counts_key: u64,
     /// Changes with the query and its options only, so the editor's match cache survives edits.
-    pattern_id: u64,
-    regex: Option<Regex>,
-    total: usize,
+    pub(crate) pattern_id: u64,
+    /// Match count for every line; empty for hex documents, an empty query or a bad pattern.
+    pub(crate) counts: Vec<usize>,
+    /// Cached sum of `counts`.
+    pub(crate) total: usize,
     /// Which match (1-based) the selection covers exactly.
-    current: Option<usize>,
-    error: Option<String>,
+    pub(crate) current: Option<usize>,
+    /// The selection the cached `current` was computed for.
+    pub(crate) current_key: Option<u64>,
+    pub(crate) regex: Option<Regex>,
+    pub(crate) error: Option<String>,
+}
+
+/// Identity of the search pattern: the query, the hex flag, the three search options and the
+/// document encoding (hex queries are decoded through it).
+fn pattern_key(query: &str, hex: bool, opts: (bool, bool, bool), encoding: &str) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (query, hex, opts, encoding).hash(&mut h);
+    h.finish()
+}
+
+/// Identity of the per-line counts: one document version of one document under one pattern.
+fn counts_key(doc_id: u64, doc_version: u64, pattern_id: u64) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (doc_id, doc_version, pattern_id).hash(&mut h);
+    h.finish()
+}
+
+/// Identity of the selection endpoints.
+fn selection_key(s: TextPosition, e: TextPosition) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    ((s.line, s.col), (e.line, e.col)).hash(&mut h);
+    h.finish()
 }
 
 #[derive(Default)]
@@ -106,23 +135,28 @@ pub fn find_in_lines(
     None
 }
 
-/// The number of matches in the document, and which of them (1-based) the selection covers
-/// exactly, if any.
-pub fn count_matches(ed: &EditorState, re: &Regex) -> (usize, Option<usize>) {
-    let (s, e) = (ed.selection.start(), ed.selection.end());
-    let one_line = s.line == e.line && s != e;
-    let (sb, eb) = if one_line { (char_to_byte(&ed.lines[s.line], s.col), char_to_byte(&ed.lines[s.line], e.col)) } else { (0, 0) };
-    let mut total = 0;
-    let mut current = None;
-    for (li, line) in ed.lines.iter().enumerate() {
-        for m in re.find_iter(line).filter(|m| m.start() != m.end()) {
-            total += 1;
-            if one_line && li == s.line && m.start() == sb && m.end() == eb {
-                current = Some(total);
-            }
+/// Matches per line for the live count; summing gives the document total.
+fn count_matches_per_line(lines: &[String], re: &Regex) -> Vec<usize> {
+    lines.iter().map(|line| re.find_iter(line).filter(|m| m.start() != m.end()).count()).collect()
+}
+
+/// Which match (1-based) the selection covers exactly, if any. `counts` holds one entry per
+/// line, so only the selection's own line is scanned; the lines before it contribute their
+/// cached counts.
+fn selected_match_index(ed: &EditorState, counts: &[usize], re: Option<&Regex>, s: TextPosition, e: TextPosition) -> Option<usize> {
+    let re = re?;
+    if s.line != e.line || s == e || s.line >= counts.len() || s.line >= ed.lines.len() {
+        return None;
+    }
+    let line = &ed.lines[s.line];
+    let before: usize = counts[..s.line].iter().sum();
+    let (sb, eb) = (char_to_byte(line, s.col), char_to_byte(line, e.col));
+    for (rank, m) in re.find_iter(line).filter(|m| m.start() != m.end()).enumerate() {
+        if m.start() == sb && m.end() == eb {
+            return Some(before + rank + 1);
         }
     }
-    (total, current)
+    None
 }
 
 /// 全部取代（以行為單位），並維護書籤（取代文字含換行時，書籤隨行號位移）
@@ -304,31 +338,41 @@ impl App {
     }
 
     /// Brings `find.live` up to date. Hex-mode documents have no live count: their bytes are
-    /// searched only on Find Next.
+    /// searched only on Find Next. The regex and the per-line counts are recomputed only when
+    /// the pattern or the document version changes; a selection move (arrow keys, dragging,
+    /// Find Next) only relocates `current` within the cached counts.
     fn update_live_search(&mut self) {
         let doc = self.doc();
         let hex_doc = doc.mode == EditMode::Hex;
-        let sel = doc.editor.selection;
-        let mut h = std::collections::hash_map::DefaultHasher::new();
         let opts = (self.settings.search_match_case, self.settings.search_whole_word, self.settings.search_regex);
-        (&self.find.query, self.find.hex, opts, doc.encoding.name()).hash(&mut h);
-        let pattern_id = h.finish();
-        (doc.id, doc.version, hex_doc, (sel.start().line, sel.start().col), (sel.end().line, sel.end().col)).hash(&mut h);
-        let key = h.finish();
-        if key == self.find.live.key {
-            return;
-        }
-        let mut live = LiveSearch { key, pattern_id, ..Default::default() };
-        if !self.find.query.is_empty() && !hex_doc {
-            match self.text_regex() {
-                Ok(re) => {
-                    (live.total, live.current) = count_matches(&self.doc().editor, &re);
-                    live.regex = Some(re);
+        let pattern_id = pattern_key(&self.find.query, self.find.hex, opts, doc.encoding.name());
+        let counts_key = counts_key(doc.id, doc.version, pattern_id);
+        let query_empty = self.find.query.is_empty();
+        if self.find.live.counts_key != counts_key {
+            let mut live = LiveSearch { counts_key, pattern_id, ..Default::default() };
+            if !query_empty && !hex_doc {
+                match self.text_regex() {
+                    Ok(re) => {
+                        live.counts = count_matches_per_line(&self.doc().editor.lines, &re);
+                        live.total = live.counts.iter().sum();
+                        live.regex = Some(re);
+                    }
+                    Err(e) => live.error = Some(e),
                 }
-                Err(e) => live.error = Some(e),
             }
+            self.find.live = live;
         }
-        self.find.live = live;
+        // A selection change only relocates `current`: the per-line counts rank the match
+        // without rescanning the lines before the cursor.
+        let ed = self.doc();
+        let (s, e) = (ed.editor.selection.start(), ed.editor.selection.end());
+        let key = selection_key(s, e);
+        if self.find.live.current_key != Some(key) {
+            let re = self.find.live.regex.clone();
+            let current = selected_match_index(&ed.editor, &self.find.live.counts, re.as_ref(), s, e);
+            self.find.live.current_key = Some(key);
+            self.find.live.current = current;
+        }
     }
 
     /// 取代目前選取的符合文字，並找下一個
@@ -741,17 +785,29 @@ mod tests {
     }
 
     #[test]
-    fn test_count_matches_reports_the_selected_match() {
+    fn test_live_counts_and_keys_only_invalidate_what_changed() {
         let mut ed = EditorState::from_text("ab ab\n中ab");
         let re = Regex::new("ab").unwrap();
-        assert_eq!(count_matches(&ed, &re), (3, None));
+        let counts = count_matches_per_line(&ed.lines, &re);
+        assert_eq!(counts, vec![2, 1]);
+        let current = |ed: &EditorState| selected_match_index(ed, &counts, Some(&re), ed.selection.start(), ed.selection.end());
+        assert_eq!(current(&ed), None);
         // Columns are characters: the match after "中" starts at byte 3 but column 1.
         ed.select_range(TextPosition::new(1, 1), TextPosition::new(1, 3));
-        assert_eq!(count_matches(&ed, &re), (3, Some(3)));
+        assert_eq!(current(&ed), Some(3));
         ed.select_range(TextPosition::new(0, 5), TextPosition::new(0, 3));
-        assert_eq!(count_matches(&ed, &re), (3, Some(2)));
+        assert_eq!(current(&ed), Some(2));
         ed.select_range(TextPosition::new(0, 0), TextPosition::new(0, 1));
-        assert_eq!(count_matches(&ed, &re), (3, None));
+        assert_eq!(current(&ed), None);
+        // 移動游標（方向鍵、F3）只改變 selection key；pattern 與全文計數保持快取
+        let opts = (false, false, false);
+        let p = pattern_key("ab", false, opts, "UTF-8");
+        assert_ne!(selection_key(TextPosition::new(0, 0), TextPosition::new(0, 1)), selection_key(TextPosition::new(1, 1), TextPosition::new(1, 3)));
+        assert_eq!(counts_key(7, 3, p), counts_key(7, 3, p));
+        assert_ne!(counts_key(7, 3, p), counts_key(7, 4, p), "an edit must invalidate the counts");
+        assert_ne!(counts_key(7, 3, p), counts_key(8, 3, p), "another document must invalidate the counts");
+        assert_ne!(p, pattern_key("ab", false, (true, false, false), "UTF-8"), "an option change must invalidate the pattern");
+        assert_ne!(p, pattern_key("ab", false, opts, "BIG5"), "a different encoding must invalidate the pattern");
     }
 
     #[test]
