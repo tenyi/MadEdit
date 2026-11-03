@@ -11,6 +11,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Load custom `.sublime-syntax` definitions and `.tmTheme` themes from `syntaxes/` and `themes/` beside the settings file at startup. Custom extension matches take precedence over approximate language fallbacks; malformed files do not prevent other resources from loading.
 
 ### Changed
+- Replace the oversized agent handover/history with a concise, source-checked contributor guide covering safe branch/PR workflow, current architecture, verification tiers and platform limitations.
 - Mark ADR 0002's text-storage and mmap design as historical and partially superseded by ADR 0011, with links to the current text, hex and positioned-read implementations.
 - Split the custom text editor into layout, painting and input modules while preserving its public API and rendered output.
 - Dialogs have a more modern look and keyboard behaviour. Controls are taller and footer buttons wider. Text fields are outlined, so they no longer disappear on light-theme cards. Hint text is readable rather than small, list filters show a magnifier, empty lists say why they are empty, and keyboard shortcuts appear as key caps. Esc closes a dialog and Enter runs its main action. While a dialog is open, typing no longer reaches the document behind it, and focus returns to the editor when the dialog closes.
@@ -35,6 +36,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - 啟動時從設定檔旁的 `syntaxes/` 與 `themes/` 載入自訂 `.sublime-syntax` 定義和 `.tmTheme` 主題。自訂副檔名比對優先於近似語言回退，損壞的檔案也不會阻止其他資源載入。
 
 #### 變更
+- 將過長的代理交接與歷史紀錄精簡為經原始碼核對的協作指南，涵蓋安全的分支／PR 流程、現行架構、依變更範圍選擇的驗證方式及平台限制。
 - 將 ADR 0002 的文字儲存與 mmap 設計標記為歷史方案，說明其部分已由 ADR 0011 取代，並連結至現行文字、十六進位及定位讀取實作。
 - 將自繪文字編輯器拆分為版面計算、繪製與輸入模組，保留既有公開介面與畫面輸出。
 - 對話框外觀與鍵盤操作更現代：控制項加高、底部按鈕加寬；文字欄位加上外框，在淺色主題的卡片上不再隱形；說明文字改為易讀的大小，清單篩選欄加上放大鏡圖示，空清單會顯示說明，快捷鍵以鍵帽樣式呈現。按 Esc 關閉對話框、按 Enter 執行主要動作；對話框開啟時輸入不再傳到後方的文件，關閉後焦點回到編輯區。
