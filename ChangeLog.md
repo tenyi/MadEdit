@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.6.8] - 2026-11-03
+
 ### Added
 - The text editor renders syntax-defined bold and italic styles, including Markdown headings and emphasis, without changing caret, selection or wrapping metrics.
 - Load custom `.sublime-syntax` definitions and `.tmTheme` themes from `syntaxes/` and `themes/` beside the settings file at startup. Custom extension matches take precedence over approximate language fallbacks; malformed files do not prevent other resources from loading.
