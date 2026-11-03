@@ -205,7 +205,7 @@ impl App {
             shot_slot: Default::default(),
             pending: Vec::new(),
             focus_editor: true,
-            chinese_safe: true,
+            chinese_safe: false,
             preview: None,
         };
         app.load_icons(&cc.egui_ctx);

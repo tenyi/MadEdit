@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+- Simplified → Traditional Chinese conversion now matches phrases (longest first) to resolve ambiguous characters, e.g. 头发→頭髮 vs 开发→開發, 干净→乾淨 vs 干部→幹部, 面条→麵條, 关系→關係. Characters whose per-character default is usually wrong (面, 制, 干, 系, 只, …) are converted only inside known phrases. Safe mode still applies phrase matches. Traditional → Simplified keeps 乾坤/乾隆 intact. "Safe mode" is now off by default, so common characters such as 发, 后 and 于 are converted.
+
+### 繁體中文
+
+#### 變更
+- 簡轉繁改用詞組比對（最長優先）判斷歧義字，例如 头发→頭髮、开发→開發，干净→乾淨、干部→幹部，面条→麵條、关系→關係。「面、制、干、系、只」等逐字預設常出錯的字，只在已知詞組內轉換；安全模式仍會套用詞組比對。繁轉簡保留「乾坤」「乾隆」。「安全模式」預設改為關閉，因此「发、后、于」等常用字會被轉換。
+
 ## [0.6.8] - 2026-11-03
 
 ### Added
