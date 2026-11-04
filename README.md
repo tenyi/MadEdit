@@ -10,7 +10,7 @@ English | [繁體中文](README_zh-TW.md)
 
 The original C++ / wxWidgets **MadEdit** is a classic tool for many developers and data workers (column editing, hex view, and switching between many character encodings). Over time, its heavy C++ cross-platform dependencies and build chain became hard to maintain on modern Windows, macOS and Linux. The author once rebuilt macOS and Linux versions from the MadEdit-Mod source, but they were slow, many features did not work properly outside Windows, and font rendering in particular was inconsistent across platforms after modification. That is why the project was rewritten in Rust.
 
-**MadEdit** is rebuilt with **Rust (Edition 2024)** and the immediate-mode GUI framework **[egui / eframe](https://github.com/emilk/egui)**. It follows the **KISS (Keep It Simple, Stupid)** principle and reproduces the classic MadEdit interface and command set (165 commands, following the original command table) with zero C++ GUI system library dependencies.
+**MadEdit** is rebuilt with **Rust (Edition 2024)** and the immediate-mode GUI framework **[egui / eframe](https://github.com/emilk/egui)**. It follows the **KISS (Keep It Simple, Stupid)** principle and reproduces the classic MadEdit interface and command set (176 commands: the 165 of the original command table plus a few added since) with zero C++ GUI system library dependencies.
 
 > The UI was first built with Slint and rewritten in egui in 2026-10, to let users pick any system font (including proportional fonts) and to handle input methods more completely. See [ADR 0011](docs/adr/0011-egui-rewrite.md).
 
@@ -97,7 +97,7 @@ MadEdit/
 │   ├── app/                # egui UI layer (menus, toolbar, custom editor, Hex view, Markdown preview, dialogs, command table)
 │   └── core/               # UI-independent core logic (document, encoding, Piece Table, search, syntax, settings)
 ├── vendor/accesskit_macos/ # AccessKit with the Touch Bar quit-crash fix backported (see vendor/README.md)
-├── docs/                   # Architecture decision records (ADR), domain docs and macOS validation notes
+├── docs/                   # Architecture decision records (ADR), domain docs, feature and scope analyses and macOS validation notes
 ├── GLOSSARY.md             # Project domain glossary
 └── AGENTS.md               # Guide for AI collaboration and development
 ```
