@@ -10,7 +10,7 @@
 
 原版 C++ / wxWidgets 架構的 **MadEdit** 是許多開發者與資料處理人員心目中的經典工具（支援列塊編輯、Hex 檢視與多國語系編碼切換），但隨著時間推移，龐雜的 C++ 跨平台依賴與編譯鏈在現代 Windows、macOS 與 Linux 環境下日益難以維護。在下原本也由 MadEdit-Mod 的原始碼重新建置出 Mac 版本與 Linux 版本，但是速度慢，有許多功能在非Windows難以正常實現，尤其是字型顯示，修改後各平臺不一致，於是才使用 Rust 重製。
 
-**MadEdit** 以 **Rust (Edition 2024)** 與即時模式 GUI 框架 **[egui / eframe](https://github.com/emilk/egui)** 重新打造，遵循 **KISS (Keep It Simple, Stupid)** 設計原則，在零 C++ GUI 系統庫依賴的前提下，重現原版 MadEdit 的經典介面與命令集（依原版命令表實作 165 個命令）。
+**MadEdit** 以 **Rust (Edition 2024)** 與即時模式 GUI 框架 **[egui / eframe](https://github.com/emilk/egui)** 重新打造，遵循 **KISS (Keep It Simple, Stupid)** 設計原則，在零 C++ GUI 系統庫依賴的前提下，重現原版 MadEdit 的經典介面與命令集（共 176 個命令：原版命令表的 165 個，加上後續新增的命令）。
 
 > 介面曾以 Slint 實作，2026-10 改寫為 egui，以支援使用者任選系統字型（含比例字型）與更完整的輸入法處理，詳見 [ADR 0011](docs/adr/0011-egui-rewrite.md)。
 
@@ -97,7 +97,7 @@ MadEdit/
 │   ├── app/                # egui 介面層（選單、工具列、自繪編輯區、Hex 檢視、Markdown 預覽、對話框、命令表）
 │   └── core/               # 與 UI 無關的核心邏輯（文件、編碼、Piece Table、搜尋、語法、設定）
 ├── vendor/accesskit_macos/ # 回補 Touch Bar 退出崩潰修正的 AccessKit（見 vendor/README.md）
-├── docs/                   # 架構決策紀錄 (ADR)、領域文件與 macOS 驗證紀錄
+├── docs/                   # 架構決策紀錄 (ADR)、領域文件、功能與範圍分析，以及 macOS 驗證紀錄
 ├── GLOSSARY.md             # 專案領域詞彙表
 └── AGENTS.md               # AI 協作與開發指南
 ```
