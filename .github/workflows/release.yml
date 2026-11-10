@@ -147,10 +147,11 @@ jobs:
             $unpacked = Join-Path $env:RUNNER_TEMP $archive.BaseName
             Expand-Archive -LiteralPath $archive.FullName -DestinationPath $unpacked
             $exe = Join-Path $unpacked 'MadEdit.exe'
-            $imports = & cmd.exe /d /s /c "`"`"$vcvars`" $dumpbinArch >nul && dumpbin /nologo /dependents `"$exe`"`""
+            $imports = & cmd.exe /d /c "call `"$vcvars`" $dumpbinArch >nul && dumpbin /nologo /dependents `"$exe`""
             if ($LASTEXITCODE -ne 0) { throw "dumpbin failed for $($archive.Name)" }
-            if ($imports -match '(?i)\b(?:vcruntime|msvcp|msvcr|concrt)[\w-]*\.dll\b') {
-              throw "$($archive.Name) depends on an MSVC runtime DLL: $($Matches[0])"
+            $runtimeImports = @($imports | Where-Object { $_ -match '(?i)\b(?:vcruntime|msvcp|msvcr|concrt)[\w-]*\.dll\b' })
+            if ($runtimeImports.Count) {
+              throw "$($archive.Name) depends on MSVC runtime DLLs: $($runtimeImports -join ', ')"
             }
             Write-Host "$($archive.Name): no dynamic MSVC runtime dependency"
           }
