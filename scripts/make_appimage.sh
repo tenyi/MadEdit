@@ -34,6 +34,9 @@ esac
 mkdir -p "${OUT_DIR}"
 OUT_DIR="$(cd "${OUT_DIR}" && pwd)"
 NAME="${APP_NAME}-${VERSION}-linux-${ARCH}"
+if [[ "${MADEDIT_WITH_FORMATTER:-0}" == "1" ]]; then
+    NAME="${NAME}-dprint"
+fi
 STAGE="${OUT_DIR}/${NAME}"
 
 echo "準備 ${NAME} 發行目錄..."
