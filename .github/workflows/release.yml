@@ -132,6 +132,29 @@ jobs:
       - name: 打包「帶 DPRINT」變體
         shell: pwsh
         run: ./scripts/make_windows_dist.ps1 -Arch ${{ matrix.arch }} -WithFormatter
+      - name: Verify packaged MSVC runtime dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'Visual Studio C++ tools not found' }
+          $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvarsall.bat'
+          $dumpbinArch = if ('${{ matrix.arch }}' -eq 'aarch64') { 'arm64' } else { 'x64' }
+          $archives = @(Get-ChildItem dist/*.zip)
+          if ($archives.Count -ne 2) { throw "Expected two Windows packages, found $($archives.Count)" }
+          foreach ($archive in $archives) {
+            $unpacked = Join-Path $env:RUNNER_TEMP $archive.BaseName
+            Expand-Archive -LiteralPath $archive.FullName -DestinationPath $unpacked
+            $exe = Join-Path $unpacked 'MadEdit.exe'
+            $imports = & cmd.exe /d /c "call `"$vcvars`" $dumpbinArch >nul && dumpbin /nologo /dependents `"$exe`""
+            if ($LASTEXITCODE -ne 0) { throw "dumpbin failed for $($archive.Name)" }
+            $runtimeImports = @($imports | Where-Object { $_ -match '(?i)\b(?:vcruntime|msvcp|msvcr|concrt)[\w-]*\.dll\b' })
+            if ($runtimeImports.Count) {
+              throw "$($archive.Name) depends on MSVC runtime DLLs: $($runtimeImports -join ', ')"
+            }
+            Write-Host "$($archive.Name): no dynamic MSVC runtime dependency"
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-${{ matrix.arch }}
