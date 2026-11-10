@@ -6,11 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.6.9] - 2026-11-10
+
 ### Changed
 - Simplified → Traditional Chinese conversion now matches phrases (longest first) to resolve ambiguous characters, e.g. 头发→頭髮 vs 开发→開發, 干净→乾淨 vs 干部→幹部, 面条→麵條, 关系→關係. Characters whose per-character default is usually wrong (面, 制, 干, 系, 只, …) are converted only inside known phrases. Safe mode still applies phrase matches. Traditional → Simplified keeps 乾坤/乾隆 intact. "Safe mode" is now off by default, so common characters such as 发, 后 and 于 are converted.
 
 ### Fixed
 - Windows MSVC builds statically link the C runtime, so MadEdit.exe does not require a separate Visual C++ Redistributable.
+- Linux AppImage packages use distinct clean and dprint filenames and include the requested formatter bundle.
 
 ### 繁體中文
 
@@ -19,6 +22,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 #### 修正
 - Windows MSVC 版本改為靜態連結 C 執行階段，執行 MadEdit.exe 不再需要另行安裝 Visual C++ 可轉散發套件。
+- Linux AppImage 的一般版及 dprint 版使用不同檔名，並正確包含選用的格式化工具。
 
 ## [0.6.8] - 2026-11-03
 
@@ -295,7 +299,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Added
 - Initial project. The Slint version implemented encoding support, a custom-drawn editor, a large-file engine, rectangular selection, find and replace, syntax highlighting, go-to-line, line endings, bookmarks, external change monitoring and the classic UI.
 
-[Unreleased]: https://github.com/tenyi/MadEdit/compare/v0.6.7...HEAD
+[Unreleased]: https://github.com/tenyi/MadEdit/compare/v0.6.9...HEAD
+[0.6.9]: https://github.com/tenyi/MadEdit/compare/v0.6.8...v0.6.9
+[0.6.8]: https://github.com/tenyi/MadEdit/compare/v0.6.7...v0.6.8
 [0.6.7]: https://github.com/tenyi/MadEdit/compare/v0.6.6...v0.6.7
 [0.6.6]: https://github.com/tenyi/MadEdit/compare/v0.6.5...v0.6.6
 [0.6.5]: https://github.com/tenyi/MadEdit/compare/v0.6.4...v0.6.5
