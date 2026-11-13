@@ -936,7 +936,7 @@ mod tests {
 
     #[test]
     fn test_edit_contract_allows_empty_document_and_boundary_insertions() {
-        let mut doc = Document::default();
+        let mut doc = Document::new_untitled(encoding_rs::UTF_8, false, NewLineFormat::Unix, syntax::PLAIN_TEXT);
         doc.editor.set_text("a\nb\nc");
         doc.edit(EditKind::Other, 1..1, |ed| ed.lines.insert(1, "middle".into()));
         doc.edit(EditKind::Other, 4..4, |ed| ed.lines.push("end".into()));
