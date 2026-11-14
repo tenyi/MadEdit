@@ -2617,6 +2617,69 @@ fn test_ini_file_opens_with_the_bundled_syntax() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 運行腳本：直譯器輸出串流到底部面板，並顯示退出碼。
+/// 直譯器用系統必備的 cmd（僅 Windows 測試），不依賴 ZSSQConsole/python 是否安裝。
+#[cfg(windows)]
+#[test]
+fn test_run_script_streams_output_to_the_panel() {
+    let dir = std::env::temp_dir().join(format!("madedit-run-script-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("sample.nut");
+    std::fs::write(&file, "print(1)").unwrap();
+
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(2);
+    // 直接驅動 runner；測試用系統必備的 cmd，不依賴 ZSSQConsole/python 是否安裝
+    let runner = &mut h.state_mut().runner;
+    runner.show = true;
+    let launched = runner
+        .start_process("cmd", &["/C".into(), "type".into(), file.display().to_string()], Some(dir.as_path()))
+        .is_ok();
+    assert!(launched, "cmd must be available on Windows");
+    for _ in 0..200 {
+        h.state_mut().runner.poll(&eframe::egui::Context::default());
+        h.run_steps(1);
+        if !h.state().runner.running {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let lines = h.state_mut().runner.lines.join("\n");
+    assert!(lines.contains("print(1)"), "面板應顯示檔案內容：{lines}");
+    assert_eq!(h.state_mut().runner.exit, Some(Ok(0)));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 無法識別的副檔名提示，不啟動程序。
+#[test]
+fn test_run_script_rejects_unknown_extensions() {
+    let mut h = harness();
+    h.state_mut().pending.push(C::RunScript);
+    h.run_steps(3);
+    assert!(h.state_mut().runner.exit.is_none());
+    assert!(!h.state().runner.running);
+}
+
+/// 運行輸出面板顯示既有輸出行與退出碼。
+#[test]
+fn test_output_panel_shows_lines_and_exit_code() {
+    let mut h = harness();
+    {
+        let runner = &mut h.state_mut().runner;
+        runner.show = true;
+        runner.lines.push("hello output".into());
+        runner.exit = Some(Ok(0));
+    }
+    h.run_steps(3);
+    assert!(h.query_by_label("hello output").is_some());
+    assert!(h.query_by(|n| n.role() == egui::accesskit::Role::Label && n.value().is_some_and(|v| v.contains("退出碼"))).is_some());
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("清除")).click();
+    h.run_steps(2);
+    assert!(h.state().runner.lines.is_empty());
+}
+
 /// 重新命名只改顯示名稱：群組名稱不可空白，檔案項目的空白名稱恢復預設顯示。
 #[test]
 fn test_favorite_rename_keeps_group_names_non_blank() {

@@ -618,6 +618,9 @@ impl App {
 
     fn tools_menu(&mut self, ui: &mut egui::Ui) {
         self.item(ui, C::Options);
+        ui.separator();
+        self.item(ui, C::RunScript);
+        ui.separator();
         self.item(ui, C::Highlighting);
         self.item(ui, C::FileAssociation);
         self.item(ui, C::SourceFormatter);

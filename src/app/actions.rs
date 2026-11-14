@@ -764,6 +764,7 @@ impl App {
 
             // ── 工具 ──
             C::Options => self.dialog = Some(Dialog::Options(Box::default())),
+            C::RunScript => self.run_script(),
             C::Highlighting => self.dialog = Some(Dialog::Highlighting),
             C::FileAssociation => self.message(
                 "檔案類型關聯",

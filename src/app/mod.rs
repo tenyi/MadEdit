@@ -18,6 +18,7 @@ mod mdmath;
 mod mdpreview;
 mod preview;
 mod print;
+mod runner;
 pub mod view;
 #[cfg(test)]
 mod visual_tests;
@@ -131,6 +132,8 @@ pub struct App {
     spell: Option<SpellChecker>,
     spell_error: Option<String>,
     fif: FindInFiles,
+    /// 腳本運行器（工具 → 運行腳本，輸出到底部面板）
+    runner: runner::ScriptRunner,
     bindings: Vec<(KeyboardShortcut, C)>,
     post_it: bool,
     /// Set each frame by the menu bar when it had room for the zoom / theme / quick-search
@@ -209,6 +212,7 @@ impl App {
             spell: None,
             spell_error: None,
             fif: FindInFiles::default(),
+            runner: runner::ScriptRunner::default(),
             bindings: Vec::new(),
             post_it: false,
             quick_in_menubar: false,
@@ -803,7 +807,7 @@ impl App {
             c,
             C::New | C::Open | C::Save | C::SaveAs | C::SaveAll | C::Close | C::Exit | C::Find | C::FindNext | C::FindPrevious
                 | C::Replace | C::QuickFind | C::FindInFiles | C::GoToLine | C::GoToPosition | C::NextWindow
-                | C::PreviousWindow | C::ToggleWindow | C::FullScreen | C::Print | C::RecentFilesList | C::SwitchTab1
+                | C::PreviousWindow | C::ToggleWindow | C::FullScreen | C::Print | C::RecentFilesList | C::RunScript | C::SwitchTab1
                 | C::SwitchTab2 | C::SwitchTab3 | C::SwitchTab4 | C::SwitchTab5 | C::SwitchTab6 | C::SwitchTab7
                 | C::SwitchTab8 | C::SwitchLastTab
         )
@@ -1513,6 +1517,9 @@ impl eframe::App for App {
         if self.fif.show_results {
             egui::Panel::bottom("fif-results").resizable(true).default_size(180.0).show(ui, |ui| self.find_results_panel(ui));
         }
+        if self.runner.show {
+            egui::Panel::bottom("script-output").resizable(true).default_size(180.0).show(ui, |ui| self.script_output_panel(ui));
+        }
         // 並排面板先分配空間；獨立預覽分頁則在中央區域繪製。
         if self.tabs.get(self.active).and_then(|tab| tab.md_preview.as_ref()).is_some_and(|pv| pv.docked()) {
             self.show_markdown_preview(ui);
@@ -1547,6 +1554,7 @@ impl eframe::App for App {
         self.show_print_preview(&ctx);
         self.show_confirm(&ctx);
         self.fif.poll(&ctx);
+        self.runner.poll(&ctx);
 
         // 測試用截圖
         if let Some((path, frames)) = self.screenshot.as_mut() {

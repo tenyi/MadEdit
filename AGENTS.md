@@ -20,6 +20,7 @@ Repository-wide instructions for coding agents. MadEdit is a Rust text, column/b
 | Commands, shortcuts, dispatch, menus and toolbar | [`commands.rs`](src/app/commands.rs), [`actions.rs`](src/app/actions.rs), [`menus.rs`](src/app/menus.rs) |
 | Text view: shared state, layout, paint, input | [`src/app/view/`](src/app/view/); keep the `view::*` public API stable during internal refactors |
 | Hex view, find/replace, multi-file search | [`hexview.rs`](src/app/hexview.rs), [`find.rs`](src/app/find.rs), [`findfiles.rs`](src/app/findfiles.rs) |
+| Script runner (Tools > Run Script, output panel) | [`runner.rs`](src/app/runner.rs) |
 | Dialogs, form widgets, localization and fonts | [`dialogs.rs`](src/app/dialogs.rs), [`form.rs`](src/app/form.rs), [`i18n.rs`](src/app/i18n.rs), [`fonts.rs`](src/app/fonts.rs) |
 | File View panel (favorites tree, recent files) | [`favorites.rs`](src/app/favorites.rs), [`favorites.rs`](src/core/favorites.rs) |
 | Markdown/Mermaid/math; print model and preview | [`mdpreview.rs`](src/app/mdpreview.rs), [`mdmath.rs`](src/app/mdmath.rs), [`print.rs`](src/app/print.rs), [`preview.rs`](src/app/preview.rs) |

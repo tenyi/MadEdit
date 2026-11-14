@@ -203,6 +203,7 @@ commands! {
 
     // ── 工具 ──
     Options => "menuOptions", "選項(&O)...", "";
+    RunScript => "menuRunScript", "運行腳本(&R)", "F5";
     Highlighting => "menuHighlighting", "語法突顯設定(&S)...", "";
     FileAssociation => "menuFileAssociation", "檔案類型關聯(&F)...", "";
     SourceFormatter => "menuSourceFormatter", "原始碼格式化設定(&S)...", "";
@@ -236,7 +237,7 @@ commands! {
 
     // ── 視窗 ──
     ToggleWindow => "menuToggleWindow", "切換視窗(&T)", "Ctrl+Tab";
-    PreviousWindow => "menuPreviousWindow", "上一個視窗(&P)", "F5";
+    PreviousWindow => "menuPreviousWindow", "上一個視窗(&P)", "F10";
     NextWindow => "menuNextWindow", "下一個視窗(&N)", "F6";
     WindowList => "menuWindowList", "視窗清單(&W)...", "";
     // 以下僅供快捷鍵使用，不放進選單（原版無此命令；第 9 個為最後一個分頁，同瀏覽器慣例）
@@ -366,6 +367,13 @@ mod tests {
         for s in ["Enter", "Backspace", "Tab", "Up", "Space", "A", "Shift+A", "Shift+Up", "Delete"] {
             assert!(!is_bindable(&parse_shortcut(s).unwrap()), "{s} 不應可綁定");
         }
+    }
+
+    #[test]
+    fn test_run_script_and_previous_window_shortcuts() {
+        // F5 讓給「運行腳本」，原「上一個視窗」改用 F10
+        assert_eq!(C::RunScript.default_keys(), "F5");
+        assert_eq!(C::PreviousWindow.default_keys(), "F10");
     }
 
     #[test]
