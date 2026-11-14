@@ -277,6 +277,127 @@ pub fn list_row(ui: &mut Ui, role: Role, selected: bool, text: &str, detail: &st
     response
 }
 
+/// Height of one flat tab; the strip reserves [`TAB_STRIP_HEIGHT`] including its top padding.
+pub const TAB_HEIGHT: f32 = 28.0;
+
+/// Height of a tab strip: the tab plus the 2 px gap above it.
+pub const TAB_STRIP_HEIGHT: f32 = TAB_HEIGHT + 2.0;
+
+/// Horizontal padding inside a tab, on each side of its label.
+const TAB_PAD: f32 = 12.0;
+const TAB_MIN_WIDTH: f32 = 72.0;
+const TAB_MAX_TEXT: f32 = 220.0;
+const TAB_CLOSE_SIZE: f32 = 16.0;
+const TAB_TOP_RADIUS: u8 = 6;
+
+/// Background of a tab strip, slightly darker than the panes so a selected tab (filled with
+/// the pane's own background) reads as part of the content below instead of a detached button.
+pub fn tab_strip_bg(ui: &Ui) -> Color32 {
+    if ui.visuals().dark_mode { Color32::from_gray(22) } else { Color32::from_gray(235) }
+}
+
+/// A flat tab attached to the pane below it, in the style of Windows 11 Explorer / UltraEdit:
+/// rounded top corners only, no bottom border, and the selected tab is filled with the pane's
+/// own background so it merges with the content.
+pub struct FlatTab {
+    pub rect: egui::Rect,
+    /// The clickable body of the tab (its close button is separate).
+    pub body: Response,
+    /// The close button, when `close_name` is given.
+    pub close: Option<Response>,
+}
+
+/// Draws one flat tab. `id_salt` must be unique among sibling tabs; `content_bg` is the fill of
+/// the pane below (the selected tab uses it); `close_name` both enables the close button and
+/// names it for screen readers.
+pub fn flat_tab(
+    ui: &mut Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    label: &str,
+    selected: bool,
+    content_bg: Color32,
+    close_name: Option<&str>,
+) -> FlatTab {
+    let visuals = ui.visuals().clone();
+    let font = TextStyle::Button.resolve(ui.style());
+    let color = if selected { visuals.strong_text_color() } else { visuals.text_color() };
+    let measured = ui.painter().layout_no_wrap(label.to_string(), font.clone(), color);
+    let close_space = if close_name.is_some() { TAB_CLOSE_SIZE + 6.0 } else { 0.0 };
+    let width = (measured.size().x.min(TAB_MAX_TEXT) + TAB_PAD * 2.0 + close_space).max(TAB_MIN_WIDTH);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, TAB_HEIGHT), Sense::hover());
+    let close_rect = close_name.map(|_| {
+        egui::Rect::from_center_size(
+            egui::pos2(rect.right() - TAB_CLOSE_SIZE / 2.0 - 6.0, rect.center().y),
+            egui::vec2(TAB_CLOSE_SIZE, TAB_CLOSE_SIZE),
+        )
+    });
+    let body_rect = close_rect.map_or(rect, |close| egui::Rect::from_min_max(rect.min, egui::pos2(close.left() - 2.0, rect.bottom())));
+    let tab_id = ui.scope_id().with(&id_salt);
+    let body = ui.interact(body_rect, tab_id, Sense::click());
+    body.widget_info(|| WidgetInfo::selected(Role::Tab, ui.is_enabled(), selected, label));
+    let close = close_rect.map(|close| {
+        let response = ui.interact(close, tab_id.with("close"), Sense::click());
+        if let Some(name) = close_name {
+            response.widget_info(|| WidgetInfo::labeled(Role::Button, ui.is_enabled(), name));
+        }
+        response
+    });
+
+    let radius = egui::CornerRadius { nw: TAB_TOP_RADIUS, ne: TAB_TOP_RADIUS, sw: 0, se: 0 };
+    let painter = ui.painter();
+    if selected {
+        painter.rect_filled(rect, radius, content_bg);
+        painter.rect_stroke(rect, radius, visuals.widgets.noninteractive.bg_stroke, egui::StrokeKind::Inside);
+        // Erase the bottom edge of the outline, so the tab continues into the pane.
+        painter.rect_filled(egui::Rect::from_min_max(egui::pos2(rect.left(), rect.bottom() - 1.5), rect.max), 0, content_bg);
+    } else if body.hovered() || body.has_focus() {
+        painter.rect_filled(rect, radius, visuals.widgets.hovered.weak_bg_fill);
+    }
+
+    let text_right = close_rect.map_or(rect.right() - TAB_PAD, |close| close.left() - 2.0);
+    let text_width = (text_right - rect.left() - TAB_PAD).max(0.0);
+    let mut job = egui::text::LayoutJob { wrap: egui::text::TextWrapping::truncate_at_width(text_width), ..Default::default() };
+    job.append(label, 0.0, egui::TextFormat::simple(font, color));
+    let galley = ui.painter().layout_job(job);
+    ui.painter().galley(egui::pos2(rect.left() + TAB_PAD, rect.center().y - galley.size().y / 2.0), galley, color);
+
+    if let Some(close) = &close {
+        let color = if close.hovered() {
+            visuals.strong_text_color()
+        } else if selected {
+            color.gamma_multiply(0.7)
+        } else {
+            visuals.weak_text_color()
+        };
+        if close.hovered() {
+            ui.painter().rect_filled(close.rect, 4.0, visuals.widgets.hovered.weak_bg_fill);
+        }
+        ui.painter().text(close.rect.center(), egui::Align2::CENTER_CENTER, "×", egui::FontId::proportional(14.0), color);
+    }
+    FlatTab { rect, body, close }
+}
+
+/// Draws the thin line under a tab strip, leaving a gap under the selected tab so it merges
+/// with the pane. `strip` is the strip's full-width rect; `active` is that tab's rect.
+pub fn tab_strip_baseline(ui: &Ui, strip: egui::Rect, active: Option<egui::Rect>) {
+    let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+    let y = strip.bottom() - 0.5;
+    let painter = ui.painter();
+    match active.map(|active| active.intersect(strip)).filter(|active| active.width() > 0.0) {
+        Some(active) => {
+            if active.left() > strip.left() {
+                painter.hline(strip.left()..=active.left(), y, stroke);
+            }
+            if active.right() < strip.right() {
+                painter.hline(active.right()..=strip.right(), y, stroke);
+            }
+        }
+        None => {
+            painter.hline(strip.x_range(), y, stroke);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::bare;

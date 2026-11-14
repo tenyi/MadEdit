@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use super::favorites::FavoriteGroup;
+
 /// 自動換行模式
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum WrapMode {
@@ -281,6 +283,18 @@ pub struct Settings {
     pub show_statusbar: bool,
     pub always_on_top: bool,
 
+    // ── 收藏 ──
+    /// 收藏群組；每個群組可放多個檔案，面板可一次開啟整組
+    pub favorites: Vec<FavoriteGroup>,
+    /// 面板上的檔案只顯示檔名，不顯示完整路徑
+    pub favorites_show_names_only: bool,
+    /// 「最近開啟的檔案」區塊是否展開
+    pub favorites_recent_expanded: bool,
+    /// 左側「文件視圖」面板是否顯示（檢視 → 文件視圖）
+    pub show_file_view: bool,
+    /// 文件視圖面板寬度（使用者拖曳分隔線後記住）
+    pub file_view_width: f32,
+
     // ── 一般 ──
     /// 新文件與「強制使用預設編碼」採用的編碼
     pub default_encoding: String,
@@ -293,6 +307,8 @@ pub struct Settings {
     pub max_search_result_chars: usize,
     pub reload_files_on_startup: bool,
     pub restore_caret_position: bool,
+    /// 檔案被其他程式修改時，沒有未儲存修改的文件直接重新載入（關閉時只顯示提示）
+    pub auto_reload_external: bool,
     pub auto_save: bool,
     pub auto_save_minutes: u32,
     pub auto_backup: bool,
@@ -382,6 +398,13 @@ impl Default for Settings {
             show_statusbar: true,
             always_on_top: false,
 
+            favorites: Vec::new(),
+            favorites_show_names_only: true,
+            favorites_recent_expanded: false,
+            // 預設關閉：面板是新的工作區，從「檢視 → 文件視圖」開啟
+            show_file_view: false,
+            file_view_width: 240.0,
+
             default_encoding: "UTF-8".into(),
             fallback_encoding: "Big5".into(),
             enforce_default_encoding: false,
@@ -390,6 +413,7 @@ impl Default for Settings {
             max_search_result_chars: 100,
             reload_files_on_startup: true,
             restore_caret_position: true,
+            auto_reload_external: false,
             auto_save: false,
             auto_save_minutes: 10,
             auto_backup: false,
@@ -641,6 +665,41 @@ mod tests {
         // Without a settings file the theme follows the system.
         assert_eq!(missing.theme, ThemeChoice::System);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_favorites_roundtrip_and_legacy_settings_without_the_field() {
+        let mut s = Settings::default();
+        let mut group = FavoriteGroup::new("工作");
+        group.add(PathBuf::from("/work/a.txt"));
+        group.add(PathBuf::from("/work/b.txt"));
+        s.favorites.push(group);
+        s.favorites_show_names_only = false;
+        s.show_file_view = true;
+        s.file_view_width = 320.0;
+        let json = serde_json::to_string(&s).unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.favorites, s.favorites);
+        assert!(!back.favorites_show_names_only);
+        assert!(back.show_file_view);
+        assert_eq!(back.file_view_width, 320.0);
+        // 舊版設定檔沒有收藏欄位：使用預設值（面板關閉、僅顯示名稱）
+        let legacy: Settings = serde_json::from_str(r#"{"tab_size": 8}"#).unwrap();
+        assert!(legacy.favorites.is_empty());
+        assert!(legacy.favorites_show_names_only);
+        assert!(!legacy.show_file_view);
+    }
+
+    #[test]
+    fn test_auto_reload_external_defaults_off_and_roundtrips() {
+        assert!(!Settings::default().auto_reload_external, "既有行為是顯示提示，不能預設自動覆蓋");
+        let mut s = Settings::default();
+        s.auto_reload_external = true;
+        let back: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert!(back.auto_reload_external);
+        // 舊版設定檔沒有這個欄位：維持提示流程
+        let legacy: Settings = serde_json::from_str(r#"{"tab_size": 8}"#).unwrap();
+        assert!(!legacy.auto_reload_external);
     }
 
     #[test]

@@ -37,6 +37,24 @@ macro_rules! commands {
                 match self { $(C::$name => $key),* }
             }
             pub fn from_id(id: &str) -> Option<C> { ALL.iter().copied().find(|c| c.id() == id) }
+
+            /// 沒有開啟任何文件時仍可執行的命令：開檔、結束、外觀設定與不需要文件內容的對話框。
+            /// 其餘命令由 `App::dispatch` 擋下並提示，避免操作不存在的文件。
+            pub fn works_without_document(self) -> bool {
+                matches!(
+                    self,
+                    C::New | C::Open | C::RecentFilesList | C::Exit
+                        | C::AlwaysOnTop | C::FullScreen | C::PostIt | C::SetFont | C::ZoomIn | C::ZoomOut
+                        | C::FixedWidthMode | C::NoWrap | C::WrapByWindow | C::WrapByColumn
+                        | C::DisplayLineNumber | C::DisplayBookmark | C::Display80ColHint | C::ShowRuler
+                        | C::ShowEndOfLine | C::ShowTabChar | C::ShowSpaceChar | C::ShowAllChar
+                        | C::RightToLeft | C::MarkActiveLine | C::MarkBracePair | C::SpellCheck | C::TypewriterMode
+                        | C::ToggleToolbar | C::ToggleMenubar | C::ToggleStatusbar | C::ToggleFileView | C::ToggleTheme
+                        | C::ShowFindInFilesResults | C::CollapseAllResults
+                        | C::Options | C::Highlighting | C::FileAssociation | C::SourceFormatter | C::PurgeHistories
+                        | C::WindowList | C::KeyboardShortcuts | C::About
+                )
+            }
         }
     };
 }
@@ -166,6 +184,7 @@ commands! {
     ToggleToolbar => "menuToolBarsToggleAll", "顯示/隱藏工具列", "";
     ToggleMenubar => "menuMenuBarToggle", "顯示/隱藏選單列", "Ctrl+F10";
     ToggleStatusbar => "menuStatusBarToggle", "顯示/隱藏狀態列", "";
+    ToggleFileView => "menuFileView", "文件視圖(&F)", "";
     ToggleTheme => "menuToggleTheme", "切換深色/淺色主題", "";
     TextMode => "menuTextMode", "文字模式(&T)", "Alt+1";
     ColumnMode => "menuColumnMode", "列塊模式(&C)", "Alt+2";

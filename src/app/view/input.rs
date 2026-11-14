@@ -704,7 +704,11 @@ pub(super) fn interact(
         doc.version,
         doc.editor.selection.head_vcol,
     );
-    if view.last_caret != Some(caret_key) || view.ensure_visible {
+    if view.skip_caret_scroll {
+        // 剛重新載入：沿用原本的捲動位置，只同步游標鍵，不把畫面拉回游標。
+        view.skip_caret_scroll = false;
+        view.last_caret = Some(caret_key);
+    } else if view.last_caret != Some(caret_key) || view.ensure_visible {
         if view.drag.is_none() || matches!(view.drag, Some(Drag::Select | Drag::Block)) {
             view.scroll_to_caret(
                 &doc.editor,

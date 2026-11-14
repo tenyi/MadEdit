@@ -6,6 +6,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+- A dockable File View panel (View > File View): its tabbed left panel has a Favorites tree for grouping files. Right-click the Favorites root to add a group, a folder's files, individual files, the active file or all open files, and to switch between names and full paths; right-click a group to rename or delete it, and double-click it to open every file in the group. Missing files are skipped with a status message. Its Open tab lists every editor tab, including preview tabs, for switching files when the tab bar is crowded. Recently opened files are listed below, and favorites persist in `settings.json` without touching the files on disk.
+- PowerShell scripts (`.ps1`, `.psm1`, `.psd1`) open with bundled syntax highlighting: comments, strings, variables, cmdlets, keywords and here-strings are colored without any external files or network access.
+- Options > General has "Automatically reload files changed by other programs". When enabled, a file that was changed on disk and has no unsaved edits is reloaded without the banner; files with unsaved edits still show the usual prompt.
+
+### Changed
+- Editor tabs and the File View panel's tab now use a flat, content-connected style with rounded top corners only (like Windows 11 Explorer), instead of detached rounded buttons, so the selected tab merges with the pane below it.
+- Closing the last tab leaves an empty workspace: MadEdit neither creates an untitled document nor exits, and the editor area offers New and Open.
+- Reloading a file (manually or automatically after an external change) keeps the current scroll position instead of jumping back to the caret or the top of the file.
+
+### 繁體中文
+
+#### 新增
+- 可停靠的「文件視圖」面板（檢視 > 文件視圖）：左側分頁面板中的「收藏」樹可將檔案分組。在「收藏」上按右鍵可新增群組、資料夾中的檔案、個別檔案、使用中的檔案或所有開啟的檔案，並切換顯示檔名／完整路徑；在群組上按右鍵可重新命名或刪除，連按兩下則開啟群組中的所有檔案，已不存在的檔案會略過並顯示訊息。「開啟」頁籤列出所有編輯器分頁（含預覽分頁），分頁列放不下時可切換檔案。下方另列最近開啟的檔案；收藏存於 `settings.json`，不會更動磁碟上的檔案。
+- PowerShell 腳本（`.ps1`、`.psm1`、`.psd1`）內建語法高亮：註解、字串、變數、Cmdlet、關鍵字與 here-string 都會著色，不需要外部檔案或網路。
+- 「工具 > 選項 > 一般」新增「其他程式修改時自動重新載入」：開啟後，磁碟上被修改且沒有未儲存編輯的檔案會直接重新載入，不再顯示提示；有未儲存編輯的檔案仍保留原本的提示流程。
+
+#### 變更
+- 編輯器分頁與「文件視圖」面板的分頁改為上緣圓角、下緣與內容相連的扁平樣式（類似 Windows 11 檔案總管），不再是有分離感的圓角按鈕；選取的分頁會與下方內容連成一體。
+- 關閉最後一個分頁後改為空白工作區：不再自動建立未命名文件，也不會結束程式；編輯區提供「新增」與「開啟」按鈕。
+- 重新載入檔案（手動或偵測到外部修改後自動載入）會保留目前的捲動位置，不再跳回游標或檔案開頭。
+
 ## [0.6.9] - 2026-11-10
 
 ### Changed

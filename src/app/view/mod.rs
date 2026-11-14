@@ -152,6 +152,8 @@ pub struct ViewState {
     pub visible_rows: usize,
     /// 強制捲動到游標（例如搜尋後）
     pub ensure_visible: bool,
+    /// 重新載入檔案後保留目前捲動位置：下一幀不要把畫面拉回游標
+    skip_caret_scroll: bool,
     /// 對應括號快取：(游標位置, 文件版本) → 括號配對
     brace_cache: Option<BraceCache>,
     spell_cache: HashMap<u64, Vec<(usize, usize)>>,
@@ -179,6 +181,7 @@ impl Default for ViewState {
             find_cache_id: 0,
             visible_rows: 30,
             ensure_visible: true,
+            skip_caret_scroll: false,
             brace_cache: None,
             spell_cache: HashMap::new(),
             spell_ctx: None,
@@ -186,6 +189,14 @@ impl Default for ViewState {
             text_rect: Rect::NOTHING,
             blink_start: 0.0,
         }
+    }
+}
+
+impl ViewState {
+    /// 檔案重新載入後保留目前的捲動位置；下一幀不因文件版本或游標改變而自動捲動。
+    pub fn keep_scroll_on_reload(&mut self) {
+        self.ensure_visible = false;
+        self.skip_caret_scroll = true;
     }
 }
 

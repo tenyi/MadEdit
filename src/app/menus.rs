@@ -437,6 +437,7 @@ impl App {
             self.check(ui, C::ToggleMenubar, s.show_menubar);
             self.check(ui, C::ToggleStatusbar, s.show_statusbar);
         });
+        self.check(ui, C::ToggleFileView, s.show_file_view);
         self.check(ui, C::FullScreen, self.fullscreen);
         self.check(ui, C::AlwaysOnTop, s.always_on_top);
         self.check(ui, C::PostIt, self.post_it);

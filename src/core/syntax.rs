@@ -114,14 +114,22 @@ fn resource_files(root: &Path, extension: &str) -> Vec<PathBuf> {
     files
 }
 
+/// 內建的 PowerShell 語法（syntect 預設集沒有）。使用者可在 `syntaxes/` 放同名定義覆寫；
+/// 授權與來源見 `assets/syntaxes/PowerShell.LICENSE.txt`。
+const POWERSHELL_SYNTAX: &str = include_str!("../../assets/syntaxes/PowerShell.sublime-syntax");
+
 fn load_syntaxes(config_dir: Option<&Path>) -> SyntaxSet {
     let defaults = SyntaxSet::load_defaults_newlines();
-    let Some(dir) = config_dir else { return defaults };
+    let mut builder = defaults.into_builder();
+    match SyntaxDefinition::load_from_str(POWERSHELL_SYNTAX, true, Some("PowerShell")) {
+        Ok(definition) => builder.add(definition),
+        Err(e) => eprintln!("MadEdit: cannot load bundled PowerShell syntax: {e}"),
+    }
+    let Some(dir) = config_dir else { return builder.build() };
     let files = resource_files(&dir.join("syntaxes"), "sublime-syntax");
     if files.is_empty() {
-        return defaults;
+        return builder.build();
     }
-    let mut builder = defaults.into_builder();
     for path in files {
         let loaded = std::fs::read_to_string(&path)
             .map_err(|e| e.to_string())
@@ -254,7 +262,7 @@ fn detect_syntax_in(ps: &SyntaxSet, path: &Path, first_line: &str) -> String {
 /// 行註解與區塊註解符號（供「註解／取消註解」使用）
 pub fn comment_tokens(syntax: &str) -> (Option<&'static str>, Option<(&'static str, &'static str)>) {
     let line = match syntax {
-        "Python" | "Ruby" | "Perl" | "YAML" | "TOML" | "R" | "Makefile" | "Shell"
+        "Python" | "Ruby" | "Perl" | "YAML" | "TOML" | "R" | "Makefile" | "Shell" | "PowerShell"
         | "Bourne Again Shell (bash)" | "Tcl" | "Ruby on Rails" | "Git Ignore" => Some("#"),
         "SQL" | "Lua" | "Haskell" | "Literate Haskell" => Some("--"),
         "Lisp" | "Clojure" => Some(";"),
@@ -265,6 +273,7 @@ pub fn comment_tokens(syntax: &str) -> (Option<&'static str>, Option<(&'static s
     };
     let block = match syntax {
         "HTML" | "XML" | "Markdown" => Some(("<!--", "-->")),
+        "PowerShell" => Some(("<#", "#>")),
         "CSS" | "C" | "C++" | "C#" | "Java" | "JavaScript" | "Rust" | "Go" | "Objective-C"
         | "Scala" | "PHP" | "D" | "Groovy" => Some(("/*", "*/")),
         _ => None,
@@ -867,6 +876,26 @@ contexts:
         let ops = parse.parse_line("# Heading\n", syntax_set()).unwrap();
         let spans = spans_of(&mut hl, &ops, "# Heading\n", &highlighter, (30, 40, 50));
         assert!(spans.iter().any(|s| s.bold && s.italic && s.text.contains("Heading")));
+    }
+
+    #[test]
+    fn test_bundled_powershell_syntax_loads_and_highlights() {
+        let ps = load_syntaxes(None);
+        for file in ["script.ps1", "module.psm1", "data.psd1"] {
+            assert_eq!(detect_syntax_in(&ps, Path::new(file), ""), "PowerShell", "{file}");
+        }
+        assert!(syntax_names().iter().any(|name| name == "PowerShell"), "the syntax menu must list PowerShell");
+        let syntax = ps.find_syntax_by_name("PowerShell").expect("bundled PowerShell syntax");
+        let pushes = |line: &str, needle: &str| {
+            let mut state = ParseState::new(syntax);
+            let ops = state.parse_line(line, &ps).unwrap();
+            ops.iter().any(|(_, op)| matches!(op, ScopeStackOp::Push(scope) if scope.to_string().contains(needle)))
+        };
+        assert!(pushes("# a comment\n", "comment.line"), "line comments must be recognized");
+        assert!(pushes("<# block\n", "comment.block"), "block comments must be recognized");
+        assert!(pushes("Get-ChildItem -Path $env:PATH\n", "support.function"), "cmdlets must be recognized");
+        assert!(pushes("$name = 'value'\n", "variable.other"), "variables must be recognized");
+        assert_eq!(comment_tokens("PowerShell"), (Some("#"), Some(("<#", "#>"))));
     }
 
     #[test]

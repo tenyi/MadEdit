@@ -4,6 +4,7 @@ mod chinese_tables;
 pub mod dprint;
 pub mod document;
 pub mod editor;
+pub mod favorites;
 pub mod encoding;
 pub mod hexbuf;
 pub mod model;

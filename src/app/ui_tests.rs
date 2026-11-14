@@ -6,7 +6,9 @@ use egui_kittest::kittest::Queryable;
 
 use super::commands::C;
 use super::dialogs::Dialog;
+use super::favorites::FavTarget;
 use super::{App, Confirm};
+use crate::core::favorites::{FavoriteGroup, FavoriteItem};
 
 fn harness() -> Harness<'static, App> {
     let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, Vec::new(), None));
@@ -1454,7 +1456,8 @@ fn test_markdown_preview_tab_layout_and_document_lifetime() {
     h.state_mut().close_now(second_id);
     h.run_steps(3);
     assert!(!h.state().is_preview_tab());
-    assert_eq!(h.state().tab_pages().len(), 1, "關閉來源必須移除它的預覽分頁");
+    assert!(h.state().tabs.is_empty(), "關閉最後一個來源後應留下空白工作區，而不是新的未命名文件");
+    assert_eq!(h.state().tab_pages().len(), 0, "關閉來源必須移除它的預覽分頁");
     assert!(h.state().tabs.iter().all(|t| t.md_preview.is_none()));
 }
 
@@ -1536,6 +1539,16 @@ fn dialogs_keep_their_buttons_inside(size: egui::Vec2) {
             assert!(screen.contains_rect(r), "{cmd:?} at {size:?}: {button} at {r:?} is off screen");
             assert!(windows.iter().any(|w| w.contains_rect(r)), "{cmd:?} at {size:?}: {button} at {r:?} is outside its window {windows:?}");
         }
+    }
+    // 收藏面板的命名對話框由面板操作開啟，沒有對應命令：直接設定狀態驗證擺放位置
+    h.state_mut().dialog = Some(Dialog::FavoriteName { target: FavTarget::NewGroup, value: String::new(), invalid: false });
+    h.run_steps(4);
+    let windows: Vec<egui::Rect> = h.query_all_by(|n| n.role() == Role::Window).map(|n| n.rect()).collect();
+    let rects: Vec<egui::Rect> = h.query_all_by(|n| n.role() == Role::Button && n.label().as_deref() == Some("確定")).map(|n| n.rect()).collect();
+    assert!(!rects.is_empty(), "FavoriteName at {size:?}: no 確定 button");
+    for r in rects {
+        assert!(screen.contains_rect(r), "FavoriteName at {size:?}: 確定 at {r:?} is off screen");
+        assert!(windows.iter().any(|w| w.contains_rect(r)), "FavoriteName at {size:?}: 確定 at {r:?} is outside its window");
     }
 }
 
@@ -2246,4 +2259,346 @@ fn test_find_bar_navigation_does_not_restart_the_full_text_count() {
     h.run_steps(2);
     assert_ne!(h.state_mut().find.live.counts_key, key, "an edit must recompute the counts");
     assert!(h.query_by_label("共 4 個符合").is_some());
+}
+
+/// 文件視圖的「列表」頁籤列出收藏根節點、群組與檔案；加入目前檔案時自動建立預設群組，
+/// 且同一檔案不重複。
+#[test]
+fn test_file_view_lists_groups_and_adds_the_active_file() {
+    let dir = std::env::temp_dir().join(format!("madedit-favorites-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("報價.txt");
+    std::fs::write(&file, "one").unwrap();
+
+    let mut h = harness();
+    h.state_mut().settings.show_file_view = true;
+    h.state_mut().open_path(&file);
+    h.state_mut().add_active_to_favorites(None);
+    h.run_steps(3);
+    {
+        let favorites = &h.state().settings.favorites;
+        assert_eq!(favorites.len(), 1);
+        assert_eq!(favorites[0].name, "常用");
+        assert_eq!(favorites[0].items.len(), 1);
+        assert_eq!(favorites[0].items[0].path.canonicalize().unwrap(), file.canonicalize().unwrap());
+        assert!(favorites[0].expanded, "a new group must be open so the added file is visible");
+    }
+    // 分頁標題和樹狀項目同名，先給項目一個不同的顯示名稱再查詢，才不會同時命中兩個節點。
+    h.state_mut().apply_favorite_name(FavTarget::Item(0, 0), "報價單");
+    h.run_steps(3);
+    assert!(h.query_by_label("列表").is_some(), "the file view should show its List tab");
+    assert!(h.query_by_label("收藏").is_some(), "the List tab should show the Favorites root node");
+    assert!(h.query_by_label("常用").is_some(), "the group should be listed under the root node");
+    assert!(h.query_by_label("報價單").is_some(), "the item should be listed under its group");
+
+    // 同一個檔案不重複加入，群組數量也不變
+    assert_eq!(h.state_mut().add_favorite_paths(None, [file.clone()]), 0);
+    assert_eq!(h.state_mut().settings.favorites[0].items.len(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 開啟整組收藏時，已不存在的檔案直接略過，不會逐一詢問是否建立新檔。
+#[test]
+fn test_opening_a_favorite_group_skips_missing_files_without_a_create_prompt() {
+    let dir = std::env::temp_dir().join(format!("madedit-favorites-open-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let first = dir.join("first.txt");
+    let second = dir.join("second.txt");
+    std::fs::write(&first, "first").unwrap();
+    std::fs::write(&second, "second").unwrap();
+
+    let mut h = harness();
+    {
+        let mut group = FavoriteGroup::new("工作");
+        group.add(first.clone());
+        group.add(dir.join("removed.txt"));
+        group.add(second.clone());
+        h.state_mut().settings.favorites.push(group);
+    }
+    h.state_mut().open_favorite_group(0);
+    h.run_steps(3);
+    assert!(h.state_mut().confirm.is_none(), "a missing favorite must not ask to create a file");
+    let open_paths: Vec<_> = h.state().tabs.iter().filter_map(|tab| tab.doc.path.clone()).collect();
+    assert!(open_paths.contains(&first.canonicalize().unwrap()));
+    assert!(open_paths.contains(&second.canonicalize().unwrap()));
+    assert_eq!(open_paths.len(), 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 在「收藏」根節點按右鍵，可用選單一次把所有開啟的檔案加入同一個群組。
+#[test]
+fn test_file_view_root_context_menu_adds_all_open_files() {
+    let dir = std::env::temp_dir().join(format!("madedit-file-view-menu-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let first = dir.join("one.txt");
+    let second = dir.join("two.txt");
+    std::fs::write(&first, "one").unwrap();
+    std::fs::write(&second, "two").unwrap();
+
+    let mut h = harness();
+    h.state_mut().settings.show_file_view = true;
+    h.state_mut().open_path(&first);
+    h.state_mut().open_path(&second);
+    h.run_steps(3);
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("收藏")).click_secondary();
+    h.run_steps(3);
+    h.get_by(|n| n.label().is_some_and(|l| l.contains("新增所有開啟的檔案"))).click();
+    h.run_steps(3);
+    {
+        let favorites = &h.state().settings.favorites;
+        assert_eq!(favorites.len(), 1, "adding from the root creates one group");
+        assert_eq!(favorites[0].name, "常用");
+        assert_eq!(favorites[0].items.len(), 2, "both open files should be added");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 關閉最後一個分頁後留下空白工作區：不自動開新檔、不結束程式，文件命令不會動作。
+#[test]
+fn test_closing_the_last_tab_leaves_an_empty_workspace_and_keeps_the_window_open() {
+    let mut h = harness();
+    assert_eq!(h.state().tabs.len(), 1);
+    h.state_mut().pending.push(C::Close);
+    h.run_steps(3);
+    assert!(h.state().tabs.is_empty(), "最後一個分頁關閉後不得自動建立未命名文件");
+    assert!(!h.state().allow_close, "關閉分頁不得結束程式");
+    assert!(h.state().confirm.is_none());
+    assert!(
+        h.query_all_by(|n| n.role() == egui::accesskit::Role::Label && n.value().as_deref() == Some("沒有開啟的檔案")).count() >= 1,
+        "the empty workspace should say that no file is open"
+    );
+    // 需要文件內容的命令不會開啟對話框或操作替代文件
+    h.state_mut().pending.push(C::WordCount);
+    h.run_steps(3);
+    assert!(h.state().dialog.is_none(), "文件命令在沒有文件時不得開啟對話框");
+    h.state_mut().pending.push(C::Find);
+    h.run_steps(3);
+    assert!(!h.state().find.visible, "沒有文件時不得開啟尋找列");
+    // 新增檔案可回到一般編輯
+    h.state_mut().pending.push(C::New);
+    h.run_steps(3);
+    assert_eq!(h.state().tabs.len(), 1);
+    assert!(h.query_all_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().is_some_and(|l| l.starts_with("未命名"))).count() >= 1);
+}
+
+/// 開啟 .ps1 時自動套用內建的 PowerShell 語法。
+#[test]
+fn test_powershell_script_opens_with_the_bundled_syntax() {
+    let dir = std::env::temp_dir().join(format!("madedit-powershell-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("script.ps1");
+    std::fs::write(&file, "# comment\nGet-ChildItem -Path $env:PATH\n").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    assert_eq!(h.state().doc().syntax, "PowerShell");
+    assert!(h.state().doc().path.is_some());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 文件視圖的「開啟」頁籤列出所有編輯器分頁，點選可切換目前文件。
+#[test]
+fn test_file_view_open_tab_switches_between_documents() {
+    let dir = std::env::temp_dir().join(format!("madedit-file-view-open-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let first = dir.join("one.txt");
+    let second = dir.join("two.txt");
+    std::fs::write(&first, "one").unwrap();
+    std::fs::write(&second, "two").unwrap();
+
+    let mut h = harness();
+    h.state_mut().settings.show_file_view = true;
+    h.state_mut().open_path(&first);
+    h.state_mut().open_path(&second);
+    h.run_steps(3);
+    let first_canon = first.canonicalize().unwrap();
+    let second_canon = second.canonicalize().unwrap();
+    assert_eq!(h.state().doc().path.as_deref(), Some(second_canon.as_path()));
+    // 切換到「開啟」頁籤，再點第一個檔案列。
+    h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some("開啟")).click();
+    h.run_steps(3);
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("one.txt")).click();
+    h.run_steps(3);
+    assert_eq!(h.state().doc().path.as_deref(), Some(first_canon.as_path()));
+    // 再點第二列切回另一份文件。
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("two.txt")).click();
+    h.run_steps(3);
+    assert_eq!(h.state().doc().path.as_deref(), Some(second_canon.as_path()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 開啟「其他程式修改時自動重新載入」後，沒有未存檔修改的文件會直接重讀。
+#[test]
+fn test_auto_reload_external_reloads_unmodified_files() {
+    let dir = std::env::temp_dir().join(format!("madedit-auto-reload-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("a.txt");
+    std::fs::write(&file, "one").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.state_mut().settings.auto_reload_external = true;
+    h.run_steps(2);
+    std::fs::write(&file, "two longer").unwrap();
+    h.state_mut().check_disk_changes();
+    h.run_steps(2);
+    assert_eq!(text(&mut h), "two longer");
+    assert!(!h.state().tabs[0].disk_changed, "自動載入後不應再顯示提示");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 關閉自動載入時保留原本的提示流程：只標記外部修改，不取代目前內容。
+#[test]
+fn test_external_changes_keep_the_prompt_when_auto_reload_is_off() {
+    let dir = std::env::temp_dir().join(format!("madedit-auto-off-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("a.txt");
+    std::fs::write(&file, "one").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(2);
+    assert!(!h.state().settings.auto_reload_external);
+    std::fs::write(&file, "two longer").unwrap();
+    h.state_mut().check_disk_changes();
+    h.run_steps(2);
+    assert!(h.state().tabs[0].disk_changed, "關閉自動載入時應顯示提示");
+    assert_eq!(text(&mut h), "one");
+    // 稍後才開啟選項：已經顯示提示且沒有未存檔修改的分頁也要自動載入。
+    h.state_mut().settings.auto_reload_external = true;
+    h.state_mut().check_disk_changes();
+    h.run_steps(2);
+    assert_eq!(text(&mut h), "two longer");
+    assert!(!h.state().tabs[0].disk_changed);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 自動載入不得覆蓋未存檔的編輯：仍保留外部修改提示。
+#[test]
+fn test_auto_reload_external_never_discards_unsaved_edits() {
+    let dir = std::env::temp_dir().join(format!("madedit-auto-dirty-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("a.txt");
+    std::fs::write(&file, "one").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.state_mut().settings.auto_reload_external = true;
+    h.run_steps(2);
+    h.state_mut().doc_mut().replace_all_text("local one");
+    assert!(h.state().doc().is_modified(), "editing must mark the document modified");
+    std::fs::write(&file, "two longer").unwrap();
+    assert!(h.state().doc().changed_on_disk(), "the external write must be detected");
+    h.state_mut().check_disk_changes();
+    h.run_steps(2);
+    assert!(h.state().tabs[0].disk_changed, "有未存檔修改時必須保留提示");
+    assert!(text(&mut h).contains("local"), "自動載入不得丟棄未存檔內容");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 自動重新載入保留目前的捲動列，不跳回游標或文件開頭。
+#[test]
+fn test_reload_keeps_the_visible_scroll_row() {
+    let dir = std::env::temp_dir().join(format!("madedit-reload-scroll-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("long.txt");
+    let content: String = (0..200).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(&file, &content).unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.state_mut().settings.auto_reload_external = true;
+    h.run_steps(3);
+    h.state_mut().tab_mut().view.top_row = 40;
+    h.state_mut().tab_mut().view.ensure_visible = false;
+    h.run_steps(1);
+    assert_eq!(h.state_mut().tab_mut().view.top_row, 40);
+    let changed: String = (0..200).map(|i| format!("changed {i}\n")).collect();
+    std::fs::write(&file, changed).unwrap();
+    h.state_mut().check_disk_changes();
+    h.run_steps(2);
+    assert!(text(&mut h).starts_with("changed 0"));
+    assert_eq!(h.state_mut().tab_mut().view.top_row, 40, "重新載入後應保留捲動列");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 連續兩次外部修改都自動載入後，點擊編輯區不應 panic，且版本必須持續前進。
+#[test]
+fn test_two_auto_reloads_then_a_click_do_not_panic() {
+    let dir = std::env::temp_dir().join(format!("madedit-reload-twice-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("twice.txt");
+    let content: String = (0..300).map(|i| format!("first {i}\n")).collect();
+    std::fs::write(&file, content).unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.state_mut().settings.auto_reload_external = true;
+    h.run_steps(3);
+    h.state_mut().tab_mut().view.top_row = 40;
+    h.state_mut().tab_mut().view.ensure_visible = false;
+    h.run_steps(1);
+    let v0 = h.state().doc().version;
+    let first: String = (0..300).map(|i| format!("second {i}\n")).collect();
+    std::fs::write(&file, first).unwrap();
+    h.state_mut().check_disk_changes();
+    h.run_steps(2);
+    let v1 = h.state().doc().version;
+    let second: String = (0..300).map(|i| format!("third {i}\n")).collect();
+    std::fs::write(&file, second).unwrap();
+    h.state_mut().check_disk_changes();
+    h.run_steps(2);
+    assert!(v1 > v0 && h.state().doc().version > v1, "每次重新載入都要更新版本");
+    assert!(text(&mut h).starts_with("third 0"));
+    let pos = egui::pos2(600.0, 350.0);
+    h.event(Event::PointerMoved(pos));
+    h.event(Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+    h.event(Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+    h.run_steps(3);
+    assert_eq!(h.state_mut().tab_mut().view.top_row, 40);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 切換到某個分頁時立即檢查它的外部修改，不必等輪詢。
+#[test]
+fn test_switching_to_a_tab_refreshes_its_external_change() {
+    let dir = std::env::temp_dir().join(format!("madedit-activate-reload-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let first = dir.join("first.txt");
+    let second = dir.join("second.txt");
+    std::fs::write(&first, "first").unwrap();
+    std::fs::write(&second, "second").unwrap();
+    let mut h = harness();
+    h.state_mut().settings.auto_reload_external = true;
+    h.state_mut().open_path(&first);
+    h.state_mut().open_path(&second);
+    h.run_steps(2);
+    std::fs::write(&first, "first changed elsewhere").unwrap();
+    h.state_mut().activate(0);
+    h.run_steps(2);
+    assert_eq!(text(&mut h), "first changed elsewhere");
+    assert!(!h.state().tabs[0].disk_changed);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 重新命名只改顯示名稱：群組名稱不可空白，檔案項目的空白名稱恢復預設顯示。
+#[test]
+fn test_favorite_rename_keeps_group_names_non_blank() {
+    let mut h = harness();
+    h.state_mut().settings.favorites.push(FavoriteGroup::new("舊群組"));
+    h.state_mut().settings.favorites[0].items.push(FavoriteItem::new(std::path::PathBuf::from("/work/a.txt")));
+    h.state_mut().apply_favorite_name(FavTarget::Group(0), "新群組");
+    assert_eq!(h.state().settings.favorites[0].name, "新群組");
+    h.state_mut().apply_favorite_name(FavTarget::Group(0), "   ");
+    assert_eq!(h.state().settings.favorites[0].name, "新群組", "空白群組名稱必須被忽略");
+    h.state_mut().apply_favorite_name(FavTarget::Item(0, 0), " 報價單 ");
+    assert_eq!(h.state().settings.favorites[0].items[0].label(true), "報價單");
+    h.state_mut().apply_favorite_name(FavTarget::Item(0, 0), "");
+    assert_eq!(h.state().settings.favorites[0].items[0].label(true), "a.txt");
 }

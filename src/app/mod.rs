@@ -6,6 +6,7 @@ pub mod commands;
 mod i18n;
 mod icons;
 mod dialogs;
+mod favorites;
 mod form;
 mod find;
 mod findfiles;
@@ -96,6 +97,10 @@ pub struct App {
     pub settings: Settings,
     pub tabs: Vec<Tab>,
     pub active: usize,
+    /// 沒有開啟任何分頁時，文件相關查詢（選單、工具列、對話框）使用的空白替代文件。
+    /// 它不會顯示、不會存檔，也不會進入工作階段；所有分頁關閉後視窗仍保持開啟。
+    /// 延後建立，才不會佔用第一個「未命名-N」的文件編號。
+    empty_tab: std::sync::OnceLock<Tab>,
     /// 預覽與來源共用文件，只另外記錄目前選取的是哪一種檢視。
     preview_tab_active: bool,
     prev_active: usize,
@@ -134,6 +139,10 @@ pub struct App {
     fullscreen: bool,
     last_autosave: f64,
     last_disk_check: f64,
+    /// 上一幀視窗是否有焦點；重新取得焦點時立即檢查外部修改，不必等下一個 1.5 秒週期。
+    was_focused: bool,
+    /// 上一幀「自動重新載入」是否已開啟；剛開啟時也處理已經顯示提示的分頁。
+    auto_reload_was_on: bool,
     allow_close: bool,
     clipboard: Option<arboard::Clipboard>,
     /// 測試用：啟動後截圖存檔並結束
@@ -145,6 +154,12 @@ pub struct App {
     focus_editor: bool,
     /// 簡繁轉換的安全模式（不轉換易誤轉的字）
     chinese_safe: bool,
+    /// 收藏面板中選取的群組（右鍵與「新增…」以此為目標）
+    fav_selected: Option<usize>,
+    /// 文件視圖目前顯示的頁籤；預留給「開啟」等新頁籤
+    file_view_tab: favorites::FileViewTab,
+    /// 收藏樹根節點是否展開（只在本次執行期間記住）
+    fav_root_open: bool,
     /// 開啟中的預覽列印視窗
     preview: Option<preview::PrintPreview>,
 }
@@ -165,12 +180,14 @@ impl App {
     fn with_settings(cc: &eframe::CreationContext, files: Vec<PathBuf>, screenshot: Option<PathBuf>, settings: Settings, settings_error: Option<SettingsLoadError>) -> Self {
         #[cfg(target_os = "macos")]
         crate::macos::attach_context(&cc.egui_ctx);
+        let auto_reload_was_on = settings.auto_reload_external;
         let mut app = Self {
             updates: updates::UpdateState::default(),
             instance: None,
             settings,
             tabs: Vec::new(),
             active: 0,
+            empty_tab: std::sync::OnceLock::new(),
             preview_tab_active: false,
             prev_active: 0,
             prev_preview_tab: false,
@@ -198,6 +215,8 @@ impl App {
             fullscreen: false,
             last_autosave: 0.0,
             last_disk_check: 0.0,
+            was_focused: true,
+            auto_reload_was_on,
             allow_close: false,
             // 測試時不連接系統剪貼簿，避免結果受使用者剪貼簿內容影響或覆寫它
             clipboard: if cfg!(test) { None } else { arboard::Clipboard::new().ok() },
@@ -206,6 +225,9 @@ impl App {
             pending: Vec::new(),
             focus_editor: true,
             chinese_safe: false,
+            fav_selected: None,
+            file_view_tab: favorites::FileViewTab::List,
+            fav_root_open: true,
             preview: None,
         };
         app.load_icons(&cc.egui_ctx);
@@ -259,16 +281,30 @@ impl App {
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
     }
 
+    /// 空白替代文件；第一次需要時才建立，避免佔用第一個「未命名-N」的編號。
+    fn empty_tab(&self) -> &Tab {
+        self.empty_tab.get_or_init(|| Tab::new(Document::new_untitled(encoding_rs::UTF_8, false, NewLineFormat::Unix, "Plain Text")))
+    }
+
+    fn empty_tab_mut(&mut self) -> &mut Tab {
+        if self.empty_tab.get().is_none() {
+            let _ = self.empty_tab.set(Tab::new(Document::new_untitled(encoding_rs::UTF_8, false, NewLineFormat::Unix, "Plain Text")));
+        }
+        self.empty_tab.get_mut().expect("empty_tab initialized above")
+    }
+
     pub fn doc(&self) -> &Document {
-        &self.tabs[self.active].doc
+        self.tabs.get(self.active).map(|tab| &tab.doc).unwrap_or(&self.empty_tab().doc)
     }
 
     pub fn doc_mut(&mut self) -> &mut Document {
-        &mut self.tabs[self.active].doc
+        let active = self.active;
+        if active < self.tabs.len() { &mut self.tabs[active].doc } else { &mut self.empty_tab_mut().doc }
     }
 
     pub fn tab_mut(&mut self) -> &mut Tab {
-        &mut self.tabs[self.active]
+        let active = self.active;
+        if active < self.tabs.len() { &mut self.tabs[active] } else { self.empty_tab_mut() }
     }
 
     fn index_of(&self, id: u64) -> Option<usize> {
@@ -339,11 +375,13 @@ impl App {
         self.active = idx;
         self.preview_tab_active = preview;
         self.focus_editor = !preview;
+        // 切換到這個分頁時立即檢查外部修改，背景分頁不必等下一個輪詢週期。
+        self.check_disk_changes();
     }
 
     fn is_preview_tab(&self) -> bool {
-        self.preview_tab_active && self.tabs[self.active].md_preview.as_ref()
-            .is_some_and(|pv| pv.placement == mdpreview::Placement::Tab)
+        self.preview_tab_active
+            && self.tabs.get(self.active).and_then(|tab| tab.md_preview.as_ref()).is_some_and(|pv| pv.placement == mdpreview::Placement::Tab)
     }
 
     fn tab_pages(&self) -> Vec<(usize, bool)> {
@@ -612,15 +650,20 @@ impl App {
         self.remember_caret(i);
         self.tabs.remove(i);
         if self.tabs.is_empty() {
-            self.new_document();
+            // 最後一個分頁關閉後進入空白工作區：不自動建立「未命名」，也不結束程式。
             self.active = 0;
+            self.prev_active = 0;
+            self.preview_tab_active = false;
+            self.focus_editor = false;
+            self.find.visible = false;
+            self.goto.visible = false;
         } else {
             if self.active >= self.tabs.len() || self.active > i {
                 self.active = self.active.saturating_sub(1).min(self.tabs.len() - 1);
             }
             self.prev_active = self.prev_active.min(self.tabs.len() - 1);
+            self.focus_editor = true;
         }
-        self.focus_editor = true;
     }
 
     fn remember_caret(&mut self, i: usize) {
@@ -633,10 +676,13 @@ impl App {
     fn reload_tab(&mut self, id: u64) {
         let Some(i) = self.index_of(id) else { return };
         let opts = self.open_options();
+        // 重新載入後保留目前可見的列，不跳回游標或文件開頭。
+        let top_row = self.tabs[i].view.top_row;
         match self.tabs[i].doc.reload(&opts) {
             Ok(()) => {
                 self.tabs[i].disk_changed = false;
-                self.tabs[i].view.ensure_visible = true;
+                self.tabs[i].view.top_row = top_row;
+                self.tabs[i].view.keep_scroll_on_reload();
                 self.set_status(self.t("msg.reloaded", "已重新載入"));
             }
             Err(e) => self.confirm = Some(Confirm::Message { title: self.t("msg.reload_fail", "重新載入失敗").to_string(), text: e.to_string() }),
@@ -853,15 +899,41 @@ impl App {
 
     // ── 定時工作 ────────────────────────────────────────────────
 
+    /// 檢查分頁在磁碟上是否被其他程式修改；開啟「自動重新載入」時，沒有未存檔修改的文件
+    /// 直接重讀。有未存檔修改或檔案已不存在時仍保留提示，避免默默丟失編輯內容。
+    fn check_disk_changes(&mut self) {
+        let just_enabled = self.settings.auto_reload_external && !self.auto_reload_was_on;
+        self.auto_reload_was_on = self.settings.auto_reload_external;
+        let mut changed = Vec::new();
+        for tab in &mut self.tabs {
+            if !tab.disk_changed && tab.doc.changed_on_disk() {
+                tab.disk_changed = true;
+                changed.push(tab.doc.id);
+            }
+        }
+        if !self.settings.auto_reload_external {
+            return;
+        }
+        if just_enabled {
+            // 剛開啟選項：也處理已經顯示提示、且沒有未存檔修改的分頁。
+            changed.extend(self.tabs.iter().filter(|tab| tab.disk_changed).map(|tab| tab.doc.id));
+            changed.sort_unstable();
+            changed.dedup();
+        }
+        for id in changed {
+            let Some(i) = self.index_of(id) else { continue };
+            let exists = self.tabs[i].doc.path.as_ref().is_some_and(|p| p.exists());
+            if exists && !self.tabs[i].doc.is_modified() {
+                self.reload_tab(id);
+            }
+        }
+    }
+
     fn periodic(&mut self, ctx: &egui::Context) {
         let now = ctx.input(|i| i.time);
         if now - self.last_disk_check > 1.5 {
             self.last_disk_check = now;
-            for t in &mut self.tabs {
-                if !t.disk_changed && t.doc.changed_on_disk() {
-                    t.disk_changed = true;
-                }
-            }
+            self.check_disk_changes();
         }
         if self.settings.auto_save && now - self.last_autosave > self.settings.auto_save_minutes.max(1) as f64 * 60.0 {
             self.last_autosave = now;
@@ -908,6 +980,8 @@ impl App {
     // ── 介面元件 ────────────────────────────────────────────────
 
     fn tab_bar(&mut self, ui: &mut egui::Ui) {
+        // 沒有分頁時仍保留標籤列高度，避免面板在開啟檔案前後跳動。
+        ui.set_min_height(form::TAB_HEIGHT);
         let mut activate = None;
         let mut close = None;
         let mut close_preview = None;
@@ -918,14 +992,21 @@ impl App {
         let close_tip = self.t("btn.close", "關閉").to_string();
         let close_preview_tip = self.t("md.close", "關閉預覽").to_string();
         let copy_path = self.t("tab.copy_path", "複製完整路徑").to_string();
-        // A thin outline groups each tab's name with its own close button.
-        let tab_frame = egui::Frame::new()
-            .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
-            .corner_radius(6.0)
-            .inner_margin(egui::Margin::symmetric(2, 1));
+        // 選取的分頁和下面的編輯區同色才會連成一體：文字模式用語法主題底色，十六進位模式用
+        // Hex 檢視的底色。
+        let dark = Self::is_dark(ui.ctx());
+        let content_bg = if self.doc().mode == EditMode::Hex {
+            ui.visuals().extreme_bg_color
+        } else {
+            let c = crate::core::syntax::theme_colors(&self.syntax_theme(dark), dark).background;
+            Color32::from_rgb(c.0, c.1, c.2)
+        };
+        let strip = ui.max_rect();
+        let mut active_rect = None;
         egui::ScrollArea::horizontal().id_salt("tabs").show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.add_space(8.0);
                 for (i, t) in self.tabs.iter().enumerate() {
                     let mut name = t.doc.display_name();
                     if t.doc.is_modified() {
@@ -935,57 +1016,60 @@ impl App {
                         name.push_str(" 🔒");
                     }
                     let selected = i == self.active && !preview_active;
-                    tab_frame.show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.x = 2.0;
-                        let resp = ui.add(egui::Button::selectable(selected, name)).on_hover_text(
-                            t.doc.path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| unsaved.clone()),
-                        );
-                        if resp.clicked() {
-                            activate = Some((i, false));
-                        }
-                        if resp.middle_clicked() {
-                            close = Some(t.doc.id);
-                        }
-                        resp.context_menu(|ui| {
-                            ui.set_min_width(menus::SUBMENU_MIN_WIDTH);
-                            for c in [C::Save, C::SaveAs, C::Reload, C::Close, C::CloseOthers, C::CloseLeft, C::CloseRight, C::CloseAll] {
-                                if ui.button(menus::check_label(false, &self.cmd_text(c))).clicked() {
-                                    menu_cmd = Some((i, c));
-                                    ui.close();
-                                }
-                            }
-                            if let Some(p) = &t.doc.path
-                                && ui.button(menus::check_label(false, &copy_path)).clicked()
-                            {
-                                ui.ctx().copy_text(p.display().to_string());
+                    let tooltip = t.doc.path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| unsaved.clone());
+                    let close_name = format!("{close_tip} {}", t.doc.display_name());
+                    let form::FlatTab { rect, body, close: close_btn } =
+                        form::flat_tab(ui, ("doc-tab", i), &name, selected, content_bg, Some(&close_name));
+                    if selected {
+                        active_rect = Some(rect);
+                    }
+                    let body = body.on_hover_text(tooltip);
+                    if body.clicked() {
+                        activate = Some((i, false));
+                    }
+                    if body.middle_clicked() {
+                        close = Some(t.doc.id);
+                    }
+                    body.context_menu(|ui| {
+                        ui.set_min_width(menus::SUBMENU_MIN_WIDTH);
+                        for c in [C::Save, C::SaveAs, C::Reload, C::Close, C::CloseOthers, C::CloseLeft, C::CloseRight, C::CloseAll] {
+                            if ui.button(menus::check_label(false, &self.cmd_text(c))).clicked() {
+                                menu_cmd = Some((i, c));
                                 ui.close();
                             }
-                        });
-                        // The tab name tells the close buttons apart for screen readers.
-                        let close_name = format!("{close_tip} {}", t.doc.display_name());
-                        if form::icon_button(ui, egui::Button::new("×").small().frame(false), &close_tip, &close_name).clicked() {
-                            close = Some(t.doc.id);
+                        }
+                        if let Some(p) = &t.doc.path
+                            && ui.button(menus::check_label(false, &copy_path)).clicked()
+                        {
+                            ui.ctx().copy_text(p.display().to_string());
+                            ui.close();
                         }
                     });
-                    // A document's Markdown preview tab follows it, outlined the same way.
+                    if close_btn.is_some_and(|btn| btn.clicked()) {
+                        close = Some(t.doc.id);
+                    }
+                    // A document's Markdown preview tab follows it, in the same flat style.
                     if t.md_preview.as_ref().is_some_and(|pv| pv.placement == mdpreview::Placement::Tab) {
                         let name = format!("{} — {preview_title}", t.doc.display_name());
-                        tab_frame.show(ui, |ui| {
-                            ui.spacing_mut().item_spacing.x = 2.0;
-                            let resp = ui.add(egui::Button::selectable(i == self.active && preview_active, name));
-                            if resp.clicked() {
-                                activate = Some((i, true));
-                            }
-                            let close_name = format!("{close_preview_tip} {}", t.doc.display_name());
-                            let close_btn = form::icon_button(ui, egui::Button::new("×").small().frame(false), &close_preview_tip, &close_name);
-                            if resp.middle_clicked() || close_btn.clicked() {
-                                close_preview = Some(i);
-                            }
-                        });
+                        let selected = i == self.active && preview_active;
+                        let close_name = format!("{close_preview_tip} {}", t.doc.display_name());
+                        let form::FlatTab { rect, body, close: close_btn } =
+                            form::flat_tab(ui, ("preview-tab", i), &name, selected, content_bg, Some(&close_name));
+                        if selected {
+                            active_rect = Some(rect);
+                        }
+                        if body.clicked() {
+                            activate = Some((i, true));
+                        }
+                        if body.middle_clicked() || close_btn.is_some_and(|btn| btn.clicked()) {
+                            close_preview = Some(i);
+                        }
                     }
                 }
+                ui.add_space(8.0);
             });
         });
+        form::tab_strip_baseline(ui, strip, active_rect);
         if let Some((i, preview)) = activate {
             self.activate_view(i, preview);
         }
@@ -1007,6 +1091,16 @@ impl App {
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
+        if self.tabs.is_empty() {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(self.t("st.no_document", "沒有開啟的檔案")).weak());
+                if let Some((msg, _)) = &self.status {
+                    ui.separator();
+                    ui.label(msg);
+                }
+            });
+            return;
+        }
         // 先把文件狀態抄出來，避免翻譯時同時借用文件
         let snap = {
             let doc = self.doc_mut();
@@ -1150,6 +1244,36 @@ impl App {
                     let t = &mut self.tabs[self.active];
                     t.doc.ignore_disk_change();
                     t.disk_changed = false;
+                }
+            });
+        });
+    }
+
+    /// 所有分頁關閉後的空白工作區：不自動建立新檔、不結束程式，只提示如何開始。
+    fn empty_workspace(&mut self, ui: &mut egui::Ui) {
+        let hint = self.t("empty.hint", "使用「檔案 → 新增」或「開啟舊檔」開始，也可以從左側「文件視圖」開啟檔案。");
+        let new_label = commands::plain_label(&self.cmd_text(C::New));
+        let open_label = commands::plain_label(&self.cmd_text(C::Open));
+        ui.vertical_centered(|ui| {
+            ui.add_space((ui.available_height() * 0.28).max(24.0));
+            ui.label(egui::RichText::new(self.t("st.no_document", "沒有開啟的檔案")).size(18.0).strong());
+            ui.add_space(6.0);
+            ui.add(egui::Label::new(egui::RichText::new(hint).weak()).wrap());
+            ui.add_space(14.0);
+            let button_pad = ui.spacing().button_padding.x * 2.0;
+            let spacing = ui.spacing().item_spacing.x;
+            let measure = |text: &str| {
+                ui.painter().layout_no_wrap(text.to_string(), egui::TextStyle::Button.resolve(ui.style()), ui.visuals().text_color()).size().x + button_pad
+            };
+            let row_width = measure(&new_label) + measure(&open_label) + spacing;
+            let left = ((ui.available_width() - row_width) / 2.0).max(0.0);
+            ui.horizontal(|ui| {
+                ui.add_space(left);
+                if ui.button(new_label).clicked() {
+                    self.pending.push(C::New);
+                }
+                if ui.button(open_label).clicked() {
+                    self.pending.push(C::Open);
                 }
             });
         });
@@ -1324,11 +1448,20 @@ impl eframe::App for App {
         // Ctrl/⌘ + 滾輪縮放字型
         let zoom = ctx.input(|i| if i.modifiers.command { i.smooth_scroll_delta().y } else { 0.0 });
         // 滑鼠在並排的 Markdown 預覽上時，Ctrl+滾輪交給預覽自己縮放
-        let over_preview = self.is_preview_tab() || self.tabs[self.active].md_preview.as_ref().is_some_and(|p| p.docked() && ui.rect_contains_pointer(p.rect));
+        let over_preview = self.is_preview_tab()
+            || self.tabs.get(self.active).and_then(|tab| tab.md_preview.as_ref()).is_some_and(|p| p.docked() && ui.rect_contains_pointer(p.rect));
         if zoom != 0.0 && ui.rect_contains_pointer(ui.max_rect()) && !over_preview {
             self.settings.font_size = (self.settings.font_size + zoom.signum()).clamp(6.0, 72.0);
             self.save_settings();
         }
+
+        // 視窗重新取得焦點時立即檢查外部修改：剛在其他程式存檔後切回來不必等下一個週期。
+        let focused = ctx.input(|i| i.focused);
+        if focused && !self.was_focused {
+            self.last_disk_check = ctx.input(|i| i.time);
+            self.check_disk_changes();
+        }
+        self.was_focused = focused;
 
         self.handle_shortcuts(&ctx);
         self.poll_macro(&ctx);
@@ -1347,23 +1480,46 @@ impl eframe::App for App {
         if self.settings.show_toolbar && show_bars {
             egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
         }
-        if show_bars {
-            egui::Panel::top("tabs").show(ui, |ui| self.tab_bar(ui));
-        }
+        // 狀態列先配置，才會橫跨整個視窗；文件視圖在其上方、緊接工具列底部，
+        // 接下來的分頁列與搜尋結果都只佔編輯區寬度，與編輯器左右並排。
         if self.settings.show_statusbar && show_bars {
             egui::Panel::bottom("statusbar").show(ui, |ui| self.status_bar(ui));
         }
         self.update_banner(ui);
+        if show_bars && self.settings.show_file_view {
+            // 寬度依視窗大小收斂，避免擠掉編輯區。
+            let want = self.settings.file_view_width.clamp(160.0, 420.0).min((ui.available_width() - 180.0).max(160.0));
+            let shown = egui::Panel::left("file-view")
+                .frame(egui::Frame::new())
+                .resizable(true)
+                .default_size(want)
+                .min_size(160.0)
+                .max_size(420.0)
+                .show(ui, |ui| self.file_view_panel(ui));
+            let width = shown.response.rect.width();
+            if (width - self.settings.file_view_width).abs() > 1.0 {
+                self.settings.file_view_width = width;
+                // 拖曳結束才寫回設定檔，不要每一幀都寫入。
+                if ui.ctx().input(|i| i.pointer.any_released()) {
+                    self.save_settings();
+                }
+            }
+        }
+        if show_bars {
+            let strip = form::tab_strip_bg(ui);
+            let frame = egui::Frame::new().fill(strip).inner_margin(egui::Margin { left: 0, right: 0, top: 2, bottom: 0 });
+            egui::Panel::top("tabs").show_separator_line(false).frame(frame).show(ui, |ui| self.tab_bar(ui));
+        }
         if self.fif.show_results {
             egui::Panel::bottom("fif-results").resizable(true).default_size(180.0).show(ui, |ui| self.find_results_panel(ui));
         }
         // 並排面板先分配空間；獨立預覽分頁則在中央區域繪製。
-        if self.tab_mut().md_preview.as_ref().is_some_and(|pv| pv.docked()) {
+        if self.tabs.get(self.active).and_then(|tab| tab.md_preview.as_ref()).is_some_and(|pv| pv.docked()) {
             self.show_markdown_preview(ui);
         }
         // 分隔線的拖曳範圍會跨入編輯區；留出抓取空間，避免稍後建立的捲軸搶走事件。
         let mut editor_margin = egui::Margin::ZERO;
-        if let Some(pv) = &self.tabs[self.active].md_preview {
+        if let Some(pv) = self.tabs.get(self.active).and_then(|tab| tab.md_preview.as_ref()) {
             let gap = ui.style().interaction.resize_grab_radius_side.ceil() as i8 + 1;
             match pv.placement {
                 mdpreview::Placement::Right => editor_margin.right = gap,
@@ -1375,7 +1531,9 @@ impl eframe::App for App {
         // window's clear color, which is dark even in light mode.
         let editor_frame = egui::Frame::new().inner_margin(editor_margin).fill(ui.visuals().panel_fill);
         egui::CentralPanel::default().frame(editor_frame).show(ui, |ui| {
-            if self.is_preview_tab() {
+            if self.tabs.is_empty() {
+                self.empty_workspace(ui);
+            } else if self.is_preview_tab() {
                 self.show_markdown_preview(ui);
             } else {
                 self.disk_banner(ui);

@@ -3,6 +3,7 @@
 use eframe::egui::{self, Key, RichText};
 
 use super::commands::{self, plain_label, C};
+use super::favorites::FavTarget;
 use super::form;
 use super::i18n::{self, Lang};
 use super::{App, Confirm};
@@ -158,6 +159,8 @@ pub enum Dialog {
     ConvertEncoding { encoding: String, bom: bool },
     WordCount(WordCount, bool),
     WindowList,
+    /// 收藏面板：新增群組、重新命名群組或檔案項目
+    FavoriteName { target: FavTarget, value: String, invalid: bool },
     /// `copied_at` is when "Copy info" was last clicked (egui time), for a short confirmation.
     About { copied_at: Option<f64> },
     /// Help > Keyboard Shortcuts: the current bindings grouped by menu, with a filter.
@@ -461,6 +464,52 @@ impl App {
                 if let Some(p) = chosen {
                     self.open_path(&p);
                     close = true;
+                }
+            }
+            Dialog::FavoriteName { target, value, invalid } => {
+                let title = match *target {
+                    FavTarget::NewGroup => self.t("dlg.fav_group", "新增收藏群組"),
+                    FavTarget::Group(_) => self.t("dlg.fav_rename_group", "重新命名收藏群組"),
+                    FavTarget::Item(..) => self.t("dlg.fav_rename_item", "重新命名收藏檔案"),
+                };
+                let l_name = self.t("fav.name", "名稱：");
+                let l_hint = self.t("fav.name_hint", "只會改變面板上顯示的名稱，不會更動磁碟上的檔案。");
+                let l_required = self.t("fav.name_required", "名稱不能空白。");
+                let (l_ok, l_cancel) = (self.t("btn.ok", "確定"), self.t("btn.cancel", "取消"));
+                // 空白名稱對檔案項目代表恢復預設顯示，只有群組名稱必填。
+                let is_item = matches!(*target, FavTarget::Item(..));
+                let mut ok = false;
+                let mut field = None;
+                dialog_window(ctx, title).open(&mut open).resizable(false).show(ctx, |ui| {
+                    begin_dialog(ui, dialog_width(ctx, 420.0));
+                    form::section(ui, form::bare(l_name), |s| {
+                        field = Some(s.body(|ui| ui.add(egui::TextEdit::singleline(value).desired_width(f32::INFINITY))));
+                    });
+                    if opened
+                        && let Some(field) = field
+                    {
+                        field.request_focus();
+                    }
+                    if is_item {
+                        hint(ui, l_hint);
+                    }
+                    if *invalid {
+                        ui.add(egui::Label::new(RichText::new(l_required).color(ui.visuals().error_fg_color)).wrap());
+                    }
+                    footer(ui, |ui| {
+                        ok = primary_button(ui, l_ok).clicked() || enter_pressed(ui, ignore_keys);
+                        if ui.button(l_cancel).clicked() {
+                            close = true;
+                        }
+                    });
+                });
+                if ok {
+                    if is_item || !value.trim().is_empty() {
+                        self.apply_favorite_name(*target, value.as_str());
+                        close = true;
+                    } else {
+                        *invalid = true;
+                    }
                 }
             }
             Dialog::Width { full } => {
@@ -1239,6 +1288,8 @@ impl App {
                         form::section(ui, self.t("opt.sec.session", "工作階段與存檔"), |s| {
                             s.toggle(self.t("opt.reload_startup", "啟動時重新開啟上次的檔案"), &mut draft.reload_files_on_startup);
                             s.toggle(self.t("opt.restore_caret", "開檔時還原上次的游標位置"), &mut draft.restore_caret_position);
+                            s.toggle(self.t("opt.auto_reload", "其他程式修改時自動重新載入"), &mut draft.auto_reload_external);
+                            s.note(self.t("opt.auto_reload_note", "僅在檔案沒有未儲存的修改時自動載入；有未儲存修改時仍會顯示提示。"));
                             s.toggle_with(self.t("opt.autosave_label", "自動儲存"), &mut draft.auto_save, |ui| {
                                 ui.add(egui::DragValue::new(&mut draft.auto_save_minutes).range(1..=120).prefix(every_before).suffix(every_after));
                             });

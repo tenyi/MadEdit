@@ -55,10 +55,12 @@ The original C++ / wxWidgets **MadEdit** is a classic tool for many developers a
 
 ### 6. The original MadEdit command set
 - **Single instance**: launching MadEdit again sends files to the existing window and brings it forward. Files open in tabs; reopening a file selects its existing tab. Launching without files restores the existing window. Instances using different `MADEDIT_CONFIG_DIR` directories remain independent.
-- **File**: multi-document tabs, save a copy, save all, recent files, read-only flag, printing and in-app print preview (A4 pages, paging, zoom), session persistence.
+- **File**: multi-document tabs, save a copy, save all, recent files, read-only flag, printing and in-app print preview (A4 pages, paging, zoom), session persistence. Closing the last tab leaves an empty workspace instead of creating an untitled file or exiting. Options > General can automatically reload files changed by other programs, but only when they have no unsaved edits.
 - **Edit**: bookmark line operations, hex string conversion, indent, comment, change case, full/half width, tabs to spaces and back, increment numbers, sort, column alignment.
 - **Search**: plain text / case / whole word / Regex / Hex find and replace, find and replace in multiple files, jump to matching bracket.
 - **View**: word wrap, line numbers, bookmark gutter, ruler, control characters, current line, column guide lines, System / Light / Dark theme, Markdown / HTML preview.
+- **File View panel**: "View > File View" docks a left panel with tabs (List and Open) holding a Favorites tree. Right-click the Favorites root to add a group, a folder's files, individual files, the active file or all open files, or to switch between names and full paths; right-click a group to rename or delete it, and double-click it to open every file in the group. The Open tab lists every editor tab, so files can be switched even when the tab bar is crowded. Recently opened files are listed below. Favorites live in `settings.json`; removing one never touches the file on disk.
+- **PowerShell**: `.ps1`, `.psm1` and `.psd1` files open with full syntax highlighting, bundled with the app and available offline; no extra configuration is needed.
 - **Custom syntax and themes**: place Sublime Text `.sublime-syntax` definitions in `syntaxes/` and TextMate `.tmTheme` files in `themes/`, beside `settings.json` (Help > About shows its path; `MADEDIT_CONFIG_DIR` can override the directory). Subfolders are supported; symlinks are skipped. Restart MadEdit after installing files.
   - Custom definitions take precedence over bundled extension matches and approximate language fallbacks. Choose them from View > Syntax; themes appear in the Syntax Highlighting dialog using the file name without `.tmTheme`. A matching name overrides a bundled resource.
   - Malformed files are skipped individually with a diagnostic on stderr; valid resources and built-ins remain available.
@@ -271,7 +273,7 @@ To try packaging without creating a Release, run the Release workflow manually f
 
 ## 🙏 Acknowledgements
 
-Thanks to Alston Chen, the author of the original **MadEdit**, to Minggang Li, the maintainer of **MadEdit-Mod**, and to all contributors. The icons, toolbar icons, Simplified/Traditional Chinese tables and spelling dictionaries in this project all come from the original. This rewrite would not exist without their years of work.
+Thanks to Alston Chen, the author of the original **MadEdit**, to Minggang Li, the maintainer of **MadEdit-Mod**, and to all contributors. The icons, toolbar icons, Simplified/Traditional Chinese tables and spelling dictionaries in this project all come from the original. PowerShell syntax highlighting uses the MIT-licensed [PowerShell package for Sublime Text](https://github.com/SublimeText/PowerShell). This rewrite would not exist without their years of work.
 
 ---
 

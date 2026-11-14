@@ -53,6 +53,7 @@ fn saves_view_preference(c: C) -> bool {
             | C::ToggleToolbar
             | C::ToggleMenubar
             | C::ToggleStatusbar
+            | C::ToggleFileView
     )
 }
 
@@ -220,6 +221,11 @@ impl App {
     }
 
     fn dispatch(&mut self, ctx: &egui::Context, c: C) {
+        // 關閉所有分頁後仍保留視窗；沒有文件時只放行開檔、外觀與設定類命令。
+        if self.tabs.is_empty() && !c.works_without_document() {
+            self.set_status(self.t("st.no_document", "沒有開啟的檔案"));
+            return;
+        }
         if self.macros.recording {
             self.macros.record_command(c);
         }
@@ -675,6 +681,7 @@ impl App {
                 }
             }
             C::ToggleStatusbar => self.settings.show_statusbar = !self.settings.show_statusbar,
+            C::ToggleFileView => self.settings.show_file_view = !self.settings.show_file_view,
             C::ToggleTheme => self.toggle_theme(ctx),
             C::TextMode | C::ColumnMode | C::HexMode => {
                 let mode = match c {
