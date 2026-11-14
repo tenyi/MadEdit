@@ -14,6 +14,7 @@ use std::time::Instant;
 use eframe::egui::{self, RichText};
 
 use super::{form, App};
+use crate::app::fonts::EDITOR_FAMILY;
 use crate::core::encoding;
 
 /// Runner 訊息：一行輸出，或子程序結束
@@ -333,6 +334,8 @@ impl App {
         ui.separator();
         let lines = self.runner.lines.clone();
         let running = self.runner.running;
+        // 輸出與編輯區使用相同字型與字級（含等寬/比例設定由編輯區字型決定）
+        let output_font = egui::FontId::new(self.settings.font_size, egui::FontFamily::Name(EDITOR_FAMILY.into()));
         egui::ScrollArea::both().id_salt("script-output").auto_shrink([false, false]).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             if lines.is_empty() && !running {
@@ -342,7 +345,10 @@ impl App {
             }
             for line in &lines {
                 // 長行不換行，交給水平捲動，與主控台觀感一致
-                ui.add(egui::Label::new(RichText::new(line).monospace()).wrap_mode(egui::TextWrapMode::Extend));
+                ui.add(
+                    egui::Label::new(RichText::new(line).font(output_font.clone()))
+                        .wrap_mode(egui::TextWrapMode::Extend),
+                );
             }
             if running {
                 // 提示長度給版面一點空間，避免空內容時面板收縮抖動
