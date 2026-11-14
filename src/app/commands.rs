@@ -191,6 +191,10 @@ commands! {
     HexMode => "menuHexMode", "十六進位模式(&H)", "Alt+3";
     PreviewMarkdown => "menuPreviewMarkdown", "以 Markdown 預覽", "";
     PreviewHtml => "menuPreviewHtml", "以 HTML 預覽", "";
+    FoldToggle => "menuFoldToggle", "折疊/展開(&F)", "Ctrl+Shift+OpenBracket";
+    FoldAll => "menuFoldAll", "全部折疊(&A)", "";
+    UnfoldAll => "menuUnfoldAll", "全部展開(&L)", "";
+    ToggleCodeFolding => "menuCodeFolding", "啟用代碼折疊", "";
 
     // ── 巨集 ──
     RunTempMacro => "menuRunTempMacro", "執行暫存巨集...", "";
@@ -374,6 +378,7 @@ mod tests {
         // F5 讓給「運行腳本」，原「上一個視窗」改用 F10
         assert_eq!(C::RunScript.default_keys(), "F5");
         assert_eq!(C::PreviousWindow.default_keys(), "F10");
+        assert_eq!(C::FoldToggle.default_keys(), "Ctrl+Shift+OpenBracket");
     }
 
     #[test]

@@ -430,6 +430,13 @@ impl App {
             self.item(ui, C::PreviewHtml);
         });
         ui.separator();
+        menu(ui, check_label(false, self.t("menu.fold", "代碼折疊")), |ui| {
+            self.check(ui, C::ToggleCodeFolding, s.code_folding);
+            ui.separator();
+            self.item(ui, C::FoldToggle);
+            self.item(ui, C::FoldAll);
+            self.item(ui, C::UnfoldAll);
+        });
         self.language_menu(ui);
         self.theme_menu(ui);
         menu(ui, check_label(false, self.t("menu.toolbars", "工具列")), |ui| {

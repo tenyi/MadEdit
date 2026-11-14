@@ -6,6 +6,7 @@ pub mod document;
 pub mod editor;
 pub mod favorites;
 pub mod encoding;
+pub mod fold;
 pub mod hexbuf;
 pub mod model;
 pub mod piece_table;

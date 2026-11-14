@@ -11,6 +11,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - PowerShell scripts (`.ps1`, `.psm1`, `.psd1`) open with bundled syntax highlighting: comments, strings, variables, cmdlets, keywords and here-strings are colored without any external files or network access.
 - Squirrel scripts (`.nut`, <https://squirrel-lang.org/>) open with bundled syntax highlighting: classes, functions, keywords, numbers, strings and `//`, `/* */` comments are colored offline.
 - The bundled Squirrel definition also covers the user's ADO database, Win32 and MFC keyword extensions (`ADOSQLCommand`, `ADODataset`, `AttachToDB`, `MB_OK`, `CString`, …); types, functions and constants use distinct colors in the light and dark themes.
+- Code folding (View > Code Folding): click the gutter triangles to collapse `{ }` blocks or multi-line comments (consecutive `//` lines, `/* … */`) in C-like files, indentation blocks in Python (plus `#` runs), and braces/comments in PowerShell (`#`, `<# … #>`, here-strings skipped), with `⋯ N lines` on the header, Fold / Unfold (Ctrl+Shift+`[`), Fold All / Unfold All, and automatic unfolding around the caret. Enabled by default.
 - INI files (`.ini`, `.cfg`, `.conf`) open with bundled highlighting for sections, keys, values and `;` comments.
 - Tools > Run Script (F5) runs the current file, or only the selection, and streams stdout/stderr into a resizable "Script Output" panel with exit code, elapsed time and a Stop button. `.nut` uses `ZSSQConsole.exe`, `.py` uses `python -u`, `.lua` uses `lua`; output is decoded as UTF-8 or GBK. F5 previously opened the previous window, which moved to F10.
 - A selection run writes the temporary file in the document's own encoding (a GBK script stays GBK), and the elapsed time stops counting after the run finishes.
@@ -29,6 +30,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - PowerShell 腳本（`.ps1`、`.psm1`、`.psd1`）內建語法高亮：註解、字串、變數、Cmdlet、關鍵字與 here-string 都會著色，不需要外部檔案或網路。
 - Squirrel 腳本（`.nut`，<https://squirrel-lang.org/>）內建語法高亮：類別、函式、關鍵字、數字、字串與 `//`、`/* */` 註解都會著色，可離線使用。
 - 內建 Squirrel 定義也涵蓋 ADO 資料庫、Win32 與 MFC 擴充關鍵字（`ADOSQLCommand`、`ADODataset`、`AttachToDB`、`MB_OK`、`CString` 等）；型別、函式與常數在淺色與深色主題各有不同顏色。
+- 代碼折疊（檢視 > 代碼折疊）：點行號右側小三角可折疊 C 系檔案的 `{ }` 區塊或多行註解（連續 `//` 行、`/* … */`）、Python 的縮排區塊（含 `#` 註解群組），以及 PowerShell 的 `{ }` 與 `#`、`<# … #>` 註解（here-string 會跳過），折疊行顯示「⋯ N 行」；另有折疊/展開（Ctrl+Shift+`[`）、全部折疊、全部展開，游標所在區塊會自動展開。預設開啟。
 - INI 檔案（`.ini`、`.cfg`、`.conf`）內建高亮：節區、鍵、值與 `;` 註解都會著色。
 - 「工具 > 執行腳本」（F5）可執行目前檔案或僅執行選取片段，並把 stdout/stderr 串流到可調整大小的「執行輸出」面板，顯示退出碼、耗時與「停止」按鈕。`.nut` 使用 `ZSSQConsole.exe`、`.py` 使用 `python -u`、`.lua` 使用 `lua`；輸出以 UTF-8 或 GBK 解碼。F5 原本是「上一個視窗」，該功能改到 F10。
 - 執行選取片段時，暫存檔沿用文件本身編碼（GBK 腳本仍是 GBK）；執行結束後耗時不再繼續增加。

@@ -854,8 +854,9 @@ impl App {
                 }
                 _ => true,
             });
-            if alt_fired {
-                // macOS 上 Option+按鍵會另外產生特殊字元的文字事件，觸發快捷鍵時一併丟棄
+            if alt_fired || !fired.is_empty() {
+                // macOS 上 Option+按鍵會另外產生特殊字元的文字事件；Windows 上 Ctrl+Shift+[ 等
+                // 組合鍵也會產生「{」的文字事件。快捷鍵觸發時一併丟棄同幀的文字輸入。
                 i.events.retain(|ev| !matches!(ev, Event::Text(_)));
             }
         });
@@ -1287,6 +1288,7 @@ impl App {
         let dark = Self::is_dark(ui.ctx());
         let theme = self.syntax_theme(dark);
         editor::set_tab_size(self.settings.tab_size);
+        let fold_label = self.t("fold.collapsed", "⋯ {n} 行");
         let idx = self.active;
         let mut out = ViewOutput::default();
         let tab = &mut self.tabs[idx];
@@ -1307,6 +1309,7 @@ impl App {
                 theme_name: &theme,
                 is_dark: dark,
                 editor_family: &family,
+                fold_label: &fold_label,
             };
             view::show(child, &mut tab.doc, &mut tab.view, &mut env, &mut out);
             if focus_now {

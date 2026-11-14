@@ -5,6 +5,7 @@ Repository-wide instructions for coding agents. MadEdit is a Rust text, column/b
 ## Working agreement
 
 - Work on a new `feat/<name>` branch based on the current `main`, not on `main` itself. Preserve unrelated changes and untracked files.
+- Never run `git commit` or `git push` on your own. Leave changes in the working tree, report what changed and how it was verified, and wait until the maintainer has verified the work and explicitly asks for a commit or a push.
 - Push the working branch to the contributor's fork and open a PR against `tenyi/MadEdit:main`. Do not push directly to upstream, merge a PR or create release tags unless explicitly requested. Check remote URLs before pushing; remote names alone are not authority.
 - Write this guide, new documentation, code comments, commit messages and PR titles/descriptions in **English**. Use Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, etc.). Reply to the maintainer in the language they use.
 - Leave existing Traditional Chinese comments alone unless changing the surrounding code. Runtime UI strings follow the localization rules below, not the documentation language rule.
@@ -19,6 +20,7 @@ Repository-wide instructions for coding agents. MadEdit is a Rust text, column/b
 | App state, tabs, save/close/quit, settings persistence | [`src/app/mod.rs`](src/app/mod.rs) |
 | Commands, shortcuts, dispatch, menus and toolbar | [`commands.rs`](src/app/commands.rs), [`actions.rs`](src/app/actions.rs), [`menus.rs`](src/app/menus.rs) |
 | Text view: shared state, layout, paint, input | [`src/app/view/`](src/app/view/); keep the `view::*` public API stable during internal refactors |
+| Code folding (self-contained module) | [`fold.rs`](src/core/fold.rs) (model/detection), [`foldmap.rs`](src/app/view/foldmap.rs) (display rows). Keep it out of paint/input beyond the gutter marker and the row-mapping delegations |
 | Hex view, find/replace, multi-file search | [`hexview.rs`](src/app/hexview.rs), [`find.rs`](src/app/find.rs), [`findfiles.rs`](src/app/findfiles.rs) |
 | Script runner (Tools > Run Script, output panel) | [`runner.rs`](src/app/runner.rs) |
 | Dialogs, form widgets, localization and fonts | [`dialogs.rs`](src/app/dialogs.rs), [`form.rs`](src/app/form.rs), [`i18n.rs`](src/app/i18n.rs), [`fonts.rs`](src/app/fonts.rs) |

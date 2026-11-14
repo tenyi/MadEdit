@@ -224,15 +224,23 @@ impl ViewState {
     }
 
     pub fn row_count(&self, ed: &EditorState) -> usize {
-        if self.wrapped() {
-            self.wrap.rows.len()
-        } else {
-            ed.lines.len()
-        }
+        let base = if self.wrapped() { self.wrap.rows.len() } else { ed.lines.len() };
+        self.fold_map.as_ref().map_or(base, |m| m.row_count())
+    }
+
+    /// 顯示列 → 換行列（被折疊隱藏的位置吸附到折疊頭）
+    pub(super) fn map_row(&self, row: usize) -> usize {
+        self.fold_map.as_ref().map_or(row, |m| m.to_wrap_row(row))
+    }
+
+    /// 換行列 → 顯示列（折疊區內吸附到折疊頭）
+    pub(super) fn display_row(&self, wrap_row: usize) -> usize {
+        self.fold_map.as_ref().map_or(wrap_row, |m| m.to_display_row(wrap_row))
     }
 
     /// 視覺列 → (行號, 起始字元, 結束字元)
     pub(super) fn row_info(&self, ed: &EditorState, row: usize) -> (usize, usize, usize) {
+        let row = self.map_row(row);
         if !self.wrapped() {
             return (row, 0, ed.line_char_count(row));
         }
@@ -256,34 +264,41 @@ impl ViewState {
             return (line, 0.0);
         }
         // 同一個邏輯行可佔多個視覺列；傳遞其進度，預覽才不會在長行內停住。
+        let raw_row = self.map_row(row);
         let first = self.wrap.line_first_row[line] as usize;
         let end = self
             .wrap
             .line_first_row
             .get(line + 1)
-            .map_or(rows, |r| *r as usize);
-        (line, (row - first) as f32 / (end - first).max(1) as f32)
+            .map_or(self.wrap.rows.len(), |r| *r as usize);
+        (line, (raw_row.saturating_sub(first)) as f32 / (end - first).max(1) as f32)
     }
 
     /// 預覽反向同步只改變可視範圍，保留游標與選取；換行時取最接近的視覺列。
     pub fn scroll_to_source(&mut self, ed: &EditorState, line: usize, fraction: f32) {
         let line = line.min(ed.lines.len().saturating_sub(1));
-        self.top_row = if self.wrapped() {
+        let raw = if self.wrapped() {
             let first = self.wrap.line_first_row[line] as usize;
             let end = self
                 .wrap
                 .line_first_row
                 .get(line + 1)
-                .map_or(self.row_count(ed), |r| *r as usize);
+                .map_or(self.wrap.rows.len(), |r| *r as usize);
             (first + (fraction.clamp(0.0, 1.0) * (end - first) as f32).round() as usize)
                 .min(end.saturating_sub(1))
         } else {
             line
         };
+        self.top_row = self.display_row(raw);
     }
 
-    /// 文字位置所在的視覺列
+    /// 文字位置所在的視覺列（已套用折疊）
     pub(super) fn row_of(&self, pos: TextPosition) -> usize {
+        self.display_row(self.raw_row_of(pos))
+    }
+
+    /// 文字位置在換行列座標中的列（未套用折疊）
+    fn raw_row_of(&self, pos: TextPosition) -> usize {
         if !self.wrapped() {
             return pos.line;
         }
@@ -360,6 +375,7 @@ impl ViewState {
 
     /// 視覺列所屬的邏輯行
     pub(super) fn row_line(&self, ed: &EditorState, row: usize) -> usize {
+        let row = self.map_row(row);
         if !self.wrapped() {
             row.min(ed.lines.len().saturating_sub(1))
         } else {
@@ -369,6 +385,7 @@ impl ViewState {
 
     /// 視覺列在行內的起始字元
     pub(super) fn row_start(&self, _ed: &EditorState, row: usize) -> usize {
+        let row = self.map_row(row);
         if !self.wrapped() {
             0
         } else {
@@ -386,9 +403,10 @@ impl ViewState {
         widths: &CharWidths,
     ) -> TextPosition {
         let row = row.min(self.row_count(ed).saturating_sub(1));
+        let raw_row = self.map_row(row);
         let line = self.row_line(ed, row);
         let start = self.row_start(ed, row);
-        let end = match self.wrap.rows.get(row + 1) {
+        let end = match self.wrap.rows.get(raw_row + 1) {
             Some(&(l, s)) if self.wrapped() && l as usize == line => s as usize,
             _ => ed.line_char_count(line),
         };

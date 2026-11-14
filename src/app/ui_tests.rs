@@ -2683,6 +2683,209 @@ fn test_output_panel_shows_lines_and_exit_code() {
     assert!(h.state().runner.lines.is_empty());
 }
 
+/// 代碼折疊：全部折疊縮短顯示列、游標所在區塊自動展開、全部展開還原。
+#[test]
+fn test_code_folding_commands_shrink_and_restore_rows() {
+    let dir = std::env::temp_dir().join(format!("madedit-fold-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("blocks.nut");
+    std::fs::write(&file, "func a() {\n    step();\n}\n\nfunc b() {\n}\n").unwrap();
+    let mut h = harness();
+    h.state_mut().settings.code_folding = true;
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    let rows = |h: &Harness<'static, App>| {
+        let state = h.state();
+        state.tabs[state.active].view.row_count(&state.doc().editor)
+    };
+    assert_eq!(rows(&h), 7);
+    h.state_mut().pending.push(C::FoldAll);
+    h.run_steps(3);
+    assert!(h.state().tabs[h.state().active].view.has_folds());
+    assert_eq!(rows(&h), 4, "both brace blocks collapse");
+    // 游標進入折疊區時該區塊自動展開，游標不會停在隱藏行
+    h.state_mut().doc_mut().editor.move_caret_to(crate::core::editor::TextPosition::new(1, 0), false);
+    h.run_steps(3);
+    assert_eq!(rows(&h), 6, "the folded block holding the caret unfolds");
+    assert!(h.state().tabs[h.state().active].view.has_folds(), "the other block stays folded");
+    h.state_mut().pending.push(C::UnfoldAll);
+    h.run_steps(3);
+    assert_eq!(rows(&h), 7);
+    assert!(!h.state().tabs[h.state().active].view.has_folds());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Ctrl+Shift+[ 折疊游標所在區塊（預設快捷鍵）。
+#[test]
+fn test_fold_toggle_shortcut_folds_the_caret_block() {
+    let dir = std::env::temp_dir().join(format!("madedit-fold-key-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("key.nut");
+    std::fs::write(&file, "func a() {\n    one();\n    two();\n}\n").unwrap();
+    let mut h = harness();
+    h.state_mut().settings.code_folding = true;
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    let rows = |h: &Harness<'static, App>| {
+        let state = h.state();
+        state.tabs[state.active].view.row_count(&state.doc().editor)
+    };
+    let before = rows(&h);
+    // 真實鍵盤上 Ctrl+Shift+[ 會同時送出「{」文字事件；快捷鍵處理後不可把字打進文件
+    h.event(Event::Text("{".into()));
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::OpenBracket);
+    h.run_steps(3);
+    assert_eq!(rows(&h), before - 3, "the caret block collapses");
+    assert!(text(&mut h).contains("func a() {\n    one();"), "the shortcut must not type a brace");
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::OpenBracket);
+    h.run_steps(3);
+    assert_eq!(rows(&h), before, "pressing again expands it");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 游標在區塊內時，Ctrl+Shift+[ 折疊包住游標的最內層區塊並把游標移到起點。
+#[test]
+fn test_fold_toggle_inside_a_block_folds_the_enclosing_block() {
+    let dir = std::env::temp_dir().join(format!("madedit-fold-inside-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("inside.nut");
+    std::fs::write(&file, "func outer() {\n    step();\n}\n").unwrap();
+    let mut h = harness();
+    h.state_mut().settings.code_folding = true;
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    h.state_mut().doc_mut().editor.move_caret_to(crate::core::editor::TextPosition::new(1, 4), false);
+    h.run_steps(2);
+    let rows_before = {
+        let state = h.state();
+        state.tabs[state.active].view.row_count(&state.doc().editor)
+    };
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::OpenBracket);
+    h.run_steps(3);
+    assert!(
+        h.state().tabs[h.state().active].view.has_folds(),
+        "the block around the caret collapses"
+    );
+    assert_eq!(h.state().doc().editor.selection.head.line, 0, "the caret moves to the block header");
+    let rows_after = {
+        let state = h.state();
+        state.tabs[state.active].view.row_count(&state.doc().editor)
+    };
+    assert_eq!(rows_after, rows_before - 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 點行號右側的折疊手柄：游標原本在區塊內也能折疊（游標移到折疊頭），再點一次展開。
+#[test]
+fn test_gutter_click_folds_and_unfolds_with_caret_inside() {
+    let dir = std::env::temp_dir().join(format!("madedit-fold-click-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("click.nut");
+    std::fs::write(&file, "func a() {\n    one();\n    two();\n}\n").unwrap();
+    let mut h = harness();
+    h.state_mut().settings.code_folding = true;
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    // 游標先放進區塊內（真實使用時游標常停在這裡）
+    h.state_mut().doc_mut().editor.move_caret_to(crate::core::editor::TextPosition::new(2, 4), false);
+    h.run_steps(2);
+    let (text_rect, visible_rows) = {
+        let state = h.state();
+        (state.tabs[state.active].view.text_rect, state.tabs[state.active].view.visible_rows)
+    };
+    let row_h = text_rect.height() / visible_rows.max(1) as f32;
+    let click = egui::pos2(text_rect.left() - 12.0, text_rect.top() + row_h * 0.5);
+    for pressed in [true, false] {
+        h.event(Event::PointerButton { pos: click, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+    }
+    h.run_steps(3);
+    let state = h.state();
+    let tab = &state.tabs[state.active];
+    assert!(tab.view.has_folds(), "clicking the gutter handle folds the block");
+    assert_eq!(tab.doc.editor.selection.head.line, 0, "the caret moves to the header so the fold stays");
+    let folded_rows = tab.view.row_count(&tab.doc.editor);
+    assert!(folded_rows < tab.doc.editor.lines.len(), "hidden lines are gone from the display");
+    for pressed in [true, false] {
+        h.event(Event::PointerButton { pos: click, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+    }
+    h.run_steps(3);
+    let state = h.state();
+    let tab = &state.tabs[state.active];
+    assert!(!tab.view.has_folds(), "a second click expands the block");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// .py 依縮排折疊、.ps1 依大括號折疊；兩者都由語法偵測自動啟用。
+#[test]
+fn test_python_and_powershell_files_fold() {
+    let dir = std::env::temp_dir().join(format!("madedit-fold-lang-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let py = dir.join("sample.py");
+    std::fs::write(&py, "def outer(a):\n    if a:\n        print(a)\n    return a\n\nx = 1\n").unwrap();
+    let ps = dir.join("sample.ps1");
+    std::fs::write(&ps, "function Test {\n    # { note\n    Write-Host \"ok\"\n}\n").unwrap();
+    let mut h = harness();
+    h.state_mut().settings.code_folding = true;
+    h.state_mut().open_path(&py);
+    h.run_steps(3);
+    assert_eq!(h.state().doc().syntax, "Python");
+    h.state_mut().pending.push(C::FoldAll);
+    h.run_steps(3);
+    {
+        let state = h.state();
+        let tab = &state.tabs[state.active];
+        assert!(tab.view.has_folds(), "Python indentation blocks fold");
+        assert!(
+            tab.view.row_count(&tab.doc.editor) < tab.doc.editor.lines.len(),
+            "folded Python rows are hidden"
+        );
+    }
+    h.state_mut().pending.push(C::UnfoldAll);
+    h.run_steps(2);
+    h.state_mut().open_path(&ps);
+    h.run_steps(3);
+    assert_eq!(h.state().doc().syntax, "PowerShell");
+    h.state_mut().pending.push(C::FoldAll);
+    h.run_steps(3);
+    {
+        let state = h.state();
+        let tab = &state.tabs[state.active];
+        assert!(tab.view.has_folds(), "PowerShell brace blocks fold");
+        assert!(tab.doc.editor.lines.iter().any(|l| l.starts_with("function Test")));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 關閉代碼折疊時命令只提示、不改變顯示。
+#[test]
+fn test_code_folding_disabled_command_does_nothing() {
+    let dir = std::env::temp_dir().join(format!("madedit-fold-off-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("plain.nut");
+    std::fs::write(&file, "func a() {\n}\n").unwrap();
+    let mut h = harness();
+    h.state_mut().settings.code_folding = false;
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    let lines = h.state().doc().editor.lines.len();
+    let rows = {
+        let state = h.state();
+        state.tabs[state.active].view.row_count(&state.doc().editor)
+    };
+    assert_eq!(rows, lines, "folding off keeps one row per line");
+    h.state_mut().pending.push(C::FoldAll);
+    h.run_steps(3);
+    assert!(!h.state().tabs[h.state().active].view.has_folds());
+    assert!(h.query_by_label_contains("代碼折疊已停用").is_some());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 重新命名只改顯示名稱：群組名稱不可空白，檔案項目的空白名稱恢復預設顯示。
 #[test]
 fn test_favorite_rename_keeps_group_names_non_blank() {

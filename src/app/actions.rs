@@ -50,6 +50,7 @@ fn saves_view_preference(c: C) -> bool {
             | C::MarkBracePair
             | C::SpellCheck
             | C::TypewriterMode
+            | C::ToggleCodeFolding
             | C::ToggleToolbar
             | C::ToggleMenubar
             | C::ToggleStatusbar
@@ -220,8 +221,54 @@ impl App {
         }
     }
 
-    fn dispatch(&mut self, ctx: &egui::Context, c: C) {
-        // 關閉所有分頁後仍保留視窗；沒有文件時只放行開檔、外觀與設定類命令。
+    /// Toggle the fold starting at the caret line (View > Code Folding).
+    fn fold_toggle(&mut self) {
+        if !self.settings.code_folding {
+            self.set_status(self.t("fold.disabled", "代碼折疊已停用（檢視 > 代碼折疊）"));
+            return;
+        }
+        let line = self.doc().editor.selection.head.line;
+        let i = self.active;
+        let handled = {
+            let tab = &mut self.tabs[i];
+            tab.view.ensure_fold_candidates(&tab.doc);
+            if tab.view.toggle_fold_at(line).is_some() {
+                true
+            } else if let Some(header) = tab.view.enclosing_fold_header(line) {
+                // 游標在區塊內：折疊包住游標的最內層區塊，並把游標移到它的起點
+                tab.view.toggle_fold_at(header);
+                tab.doc.editor.move_caret_to(TextPosition::new(header, 0), false);
+                true
+            } else {
+                false
+            }
+        };
+        if !handled {
+            self.set_status(self.t("fold.no_block", "此行沒有可折疊的成對大括號"));
+        }
+    }
+
+    fn fold_all_command(&mut self) {
+        if !self.settings.code_folding {
+            self.set_status(self.t("fold.disabled", "代碼折疊已停用（檢視 > 代碼折疊）"));
+            return;
+        }
+        let i = self.active;
+        let tab = &mut self.tabs[i];
+        tab.view.ensure_fold_candidates(&tab.doc);
+        tab.view.fold_all();
+        // 游標在折疊區內時移到折疊頭，否則下一幀會自動展開那一塊
+        if let Some(header) = tab.view.fold_header_for_line(tab.doc.editor.selection.head.line) {
+            tab.doc.editor.move_caret_to(TextPosition::new(header, 0), false);
+        }
+    }
+
+    fn unfold_all_command(&mut self) {
+        let i = self.active;
+        self.tabs[i].view.unfold_all();
+    }
+
+    fn dispatch(&mut self, ctx: &egui::Context, c: C) {        // 關閉所有分頁後仍保留視窗；沒有文件時只放行開檔、外觀與設定類命令。
         if self.tabs.is_empty() && !c.works_without_document() {
             self.set_status(self.t("st.no_document", "沒有開啟的檔案"));
             return;
@@ -682,6 +729,17 @@ impl App {
             }
             C::ToggleStatusbar => self.settings.show_statusbar = !self.settings.show_statusbar,
             C::ToggleFileView => self.settings.show_file_view = !self.settings.show_file_view,
+            C::ToggleCodeFolding => {
+                self.settings.code_folding = !self.settings.code_folding;
+                if !self.settings.code_folding {
+                    for tab in &mut self.tabs {
+                        tab.view.clear_folds();
+                    }
+                }
+            }
+            C::FoldToggle => self.fold_toggle(),
+            C::FoldAll => self.fold_all_command(),
+            C::UnfoldAll => self.unfold_all_command(),
             C::ToggleTheme => self.toggle_theme(ctx),
             C::TextMode | C::ColumnMode | C::HexMode => {
                 let mode = match c {

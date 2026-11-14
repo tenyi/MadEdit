@@ -261,6 +261,8 @@ pub struct Settings {
     pub wrap_column: usize,
     pub show_line_numbers: bool,
     pub show_bookmarks: bool,
+    /// 代碼折疊：左側 gutter 顯示折疊三角，支援折疊/展開大括號區塊
+    pub code_folding: bool,
     pub show_col_hint: bool,
     pub col_hint_position: usize,
     pub show_ruler: bool,
@@ -377,6 +379,7 @@ impl Default for Settings {
             wrap_column: 80,
             show_line_numbers: true,
             show_bookmarks: true,
+            code_folding: true,
             show_col_hint: false,
             col_hint_position: 80,
             show_ruler: true,

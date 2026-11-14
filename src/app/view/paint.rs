@@ -65,6 +65,7 @@ pub(super) fn text(
     let text_rect = frame.text_rect;
     let mark_w = frame.mark_w;
     let num_w = frame.num_w;
+    let fold_w = frame.fold_w;
     let ruler_h = frame.ruler_h;
     let total_rows = view.row_count(&doc.editor);
     let vis = view.visible_rows;
@@ -502,6 +503,22 @@ pub(super) fn text(
                 );
             }
 
+            // 折疊提示：折疊行末尾標出被隱藏的行數
+            if start == 0
+                && let Some(marker) = view.fold_marker(line)
+                && marker.folded
+            {
+                let label = env.fold_label.replace("{n}", &marker.hidden.to_string());
+                let chip_x = sx(row_w + widths.cell_w, 0.0);
+                text_painter.text(
+                    Pos2::new(chip_x, text_y),
+                    Align2::LEFT_TOP,
+                    label,
+                    FontId::monospace(widths.text_h * 0.85),
+                    faint,
+                );
+            }
+
             // 拼字錯誤底線
             for &(a, b) in &spell_ranges {
                 {
@@ -529,7 +546,8 @@ pub(super) fn text(
                 }
             }
 
-            // 行號與書籤（只畫在每行第一個視覺列）
+            // 行號、書籤與折疊手柄（只畫在每行第一個視覺列）
+            // 版面由左至右：書籤欄、行號、折疊手柄（緊貼文字）。
             if start == 0 {
                 if settings.show_line_numbers {
                     let num_color = if line == sel.head.line { fg } else { faint };
@@ -547,6 +565,30 @@ pub(super) fn text(
                         (lay.row_h * 0.22).min(5.0),
                         Color32::from_rgb(60, 120, 230),
                     );
+                }
+                if fold_w > 0.0
+                    && let Some(marker) = view.fold_marker(line)
+                {
+                    // 折疊三角：▼ 展開中、▶ 已折疊
+                    let cx = full.left() + mark_w + num_w + fold_w / 2.0;
+                    let cy = y + lay.row_h / 2.0;
+                    // 比照 UltraEdit 的小方塊：放大到約 5–7 px 並用較深的前景色
+                    let s = (lay.row_h * 0.26).clamp(4.5, 7.0);
+                    let marker_color = fg.gamma_multiply(0.55);
+                    let points = if marker.folded {
+                        vec![
+                            Pos2::new(cx - s * 0.45, cy - s),
+                            Pos2::new(cx + s * 0.75, cy),
+                            Pos2::new(cx - s * 0.45, cy + s),
+                        ]
+                    } else {
+                        vec![
+                            Pos2::new(cx - s, cy - s * 0.55),
+                            Pos2::new(cx + s * 0.7, cy - s * 0.55),
+                            Pos2::new(cx, cy + s * 0.85),
+                        ]
+                    };
+                    painter.add(egui::Shape::convex_polygon(points, marker_color, Stroke::NONE));
                 }
             }
 
@@ -588,8 +630,9 @@ pub(super) fn text(
                     // 列塊矩形選取時，於每一行畫出游標
                     if let Some(b) = block_bounds.filter(|b| b.min_vcol == b.max_vcol) {
                         for l in b.min_line..=b.max_line {
-                            if l >= first_line && l <= last_line {
-                                let ry = text_rect.top() + (l - first_row) as f32 * lay.row_h;
+                            let row = view.row_of(crate::core::editor::TextPosition::new(l, 0));
+                            if row >= first_row && row < last_row {
+                                let ry = text_rect.top() + (row - first_row) as f32 * lay.row_h;
                                 text_painter.rect_filled(
                                     Rect::from_min_size(
                                         Pos2::new(caret_rect.left(), ry),

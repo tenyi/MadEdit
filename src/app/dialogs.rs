@@ -1311,6 +1311,7 @@ impl App {
                             s.row(self.t("opt.spacing", "行距（%）："), |ui| ui.add(egui::DragValue::new(&mut draft.line_spacing).range(100..=250)));
                             s.toggle(self.t("opt.fixed", "等寬模式"), &mut draft.fixed_width);
                             s.toggle(self.t("opt.typewriter", "打字機模式（游標保持在畫面中央）"), &mut draft.typewriter_mode);
+                            s.toggle(self.t("opt.code_folding", "啟用代碼折疊（C/C++、Java、JS、Squirrel 等的 { } 區塊）"), &mut draft.code_folding);
                         });
                         form::section(ui, self.t("opt.sec.typing", "輸入"), |s| {
                             s.toggle(self.t("opt.auto_pair", "自動補全成對字元（括號、引號）"), &mut draft.auto_complete_pair);
