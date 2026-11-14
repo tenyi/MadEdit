@@ -1,0 +1,19 @@
+Squirrel.sublime-syntax
+=======================
+
+A Squirrel (https://squirrel-lang.org/) syntax definition for `.nut` scripts,
+bundled with MadEdit because syntect's default set does not include one.
+
+It is a `.sublime-syntax` (syntect-supported YAML) rewrite of the rules from
+the micheg/sublime_squirrel TextMate package:
+
+    https://github.com/micheg/sublime_squirrel
+
+That repository carries no explicit license file (preliminary Sublime Text 2
+package, based on an old TextMate bundle). This rewrite covers the same
+constructs: classes with `extends`, functions and constructors, control-flow
+keywords, `local`/`const`/`enum`/`static`, `base`/`this`, `::global`,
+hex/float numbers, single/double-quoted strings with escapes, verbatim
+`@"..."` strings, and `//`, `/* */`, `/** */` comments. Replace this file with
+an upstream definition if the Squirrel project publishes one under a specific
+license.

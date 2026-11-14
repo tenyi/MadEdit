@@ -118,12 +118,19 @@ fn resource_files(root: &Path, extension: &str) -> Vec<PathBuf> {
 /// 授權與來源見 `assets/syntaxes/PowerShell.LICENSE.txt`。
 const POWERSHELL_SYNTAX: &str = include_str!("../../assets/syntaxes/PowerShell.sublime-syntax");
 
+/// 內建的 Squirrel（`.nut`）語法。上游只有 TextMate plist 格式，沒有 `.sublime-syntax`；
+/// MadEdit 隨附的是自行撰寫的等效 YAML 定義，內容對應上游規則，來源見
+/// `assets/syntaxes/Squirrel.README.txt`。
+const SQUIRREL_SYNTAX: &str = include_str!("../../assets/syntaxes/Squirrel.sublime-syntax");
+
 fn load_syntaxes(config_dir: Option<&Path>) -> SyntaxSet {
     let defaults = SyntaxSet::load_defaults_newlines();
     let mut builder = defaults.into_builder();
-    match SyntaxDefinition::load_from_str(POWERSHELL_SYNTAX, true, Some("PowerShell")) {
-        Ok(definition) => builder.add(definition),
-        Err(e) => eprintln!("MadEdit: cannot load bundled PowerShell syntax: {e}"),
+    for (name, text) in [("PowerShell", POWERSHELL_SYNTAX), ("Squirrel", SQUIRREL_SYNTAX)] {
+        match SyntaxDefinition::load_from_str(text, true, Some(name)) {
+            Ok(definition) => builder.add(definition),
+            Err(e) => eprintln!("MadEdit: cannot load bundled {name} syntax: {e}"),
+        }
     }
     let Some(dir) = config_dir else { return builder.build() };
     let files = resource_files(&dir.join("syntaxes"), "sublime-syntax");
@@ -269,12 +276,13 @@ pub fn comment_tokens(syntax: &str) -> (Option<&'static str>, Option<(&'static s
         "LaTeX" | "TeX" | "Erlang" | "MATLAB" => Some("%"),
         "Batch File" => Some("REM "),
         "HTML" | "XML" | "Markdown" | "CSS" | "Plain Text" => None,
+        "Squirrel" => Some("//"),
         _ => Some("//"),
     };
     let block = match syntax {
         "HTML" | "XML" | "Markdown" => Some(("<!--", "-->")),
         "PowerShell" => Some(("<#", "#>")),
-        "CSS" | "C" | "C++" | "C#" | "Java" | "JavaScript" | "Rust" | "Go" | "Objective-C"
+        "Squirrel" | "CSS" | "C" | "C++" | "C#" | "Java" | "JavaScript" | "Rust" | "Go" | "Objective-C"
         | "Scala" | "PHP" | "D" | "Groovy" => Some(("/*", "*/")),
         _ => None,
     };
@@ -897,6 +905,24 @@ contexts:
         assert!(pushes("$name = 'value'\n", "variable.other"), "variables must be recognized");
         assert_eq!(comment_tokens("PowerShell"), (Some("#"), Some(("<#", "#>"))));
     }
+
+    #[test]
+    fn test_bundled_squirrel_syntax_loads_and_highlights() {
+        let ps = load_syntaxes(None);
+        assert_eq!(detect_syntax_in(&ps, Path::new("script.nut"), ""), "Squirrel");
+        assert!(syntax_names().iter().any(|name| name == "Squirrel"), "the syntax menu must list Squirrel");
+        let syntax = ps.find_syntax_by_name("Squirrel").expect("bundled Squirrel syntax");
+        let pushes = |line: &str, needle: &str| {
+            let mut state = ParseState::new(syntax);
+            let ops = state.parse_line(line, &ps).unwrap();
+            ops.iter().any(|(_, op)| matches!(op, ScopeStackOp::Push(scope) if scope.to_string().contains(needle)))
+        };
+        assert!(pushes("// a comment\n", "comment.line"), "line comments must be recognized");
+        assert!(pushes("/* block */\n", "comment.block"), "block comments must be recognized");
+        assert!(pushes("class Foo extends Bar\n", "entity.name.type"), "classes must be recognized");
+        assert!(pushes("local n = 0x1A;\n", "constant.numeric"), "numbers must be recognized");
+        assert!(pushes("local s = \"hi\";\n", "string.quoted"), "strings must be recognized");
+        assert_eq!(comment_tokens("Squirrel"), (Some("//"), Some(("/*", "*/"))));    }
 
     #[test]
     fn test_detect_syntax() {

@@ -1,0 +1,148 @@
+%YAML 1.2
+---
+# Squirrel 3.x 語法定義（https://squirrel-lang.org/），供 .nut 腳本使用。
+# 規則對應 micheg/sublime_squirrel 的 Squirrel.tmLanguage
+# （https://github.com/micheg/sublime_squirrel），以 syntect 支援的
+# sublime-syntax YAML 改寫；MadEdit 隨附此檔，來源說明見 Squirrel.README.txt。
+name: Squirrel
+scope: source.nut
+version: 2
+
+file_extensions:
+  - nut
+
+contexts:
+  prototype:
+    - include: comments
+
+  main:
+    - include: class-decl
+    - include: function-decl
+    - include: constructor-decl
+    - include: keywords
+    - include: storage
+    - include: constants
+    - include: language-variables
+    - include: numbers
+    - include: strings
+    - include: operators
+    - include: punctuation
+
+  class-decl:
+    - match: \b(class)\s+([A-Za-z_]\w*(?:\.\w+)*)(?:\s+(extends)\s+([A-Za-z_]\w*(?:\.\w+)*))?
+      scope: meta.class.squirrel
+      captures:
+        1: storage.type.class.squirrel
+        2: entity.name.type.class.squirrel
+        3: storage.modifier.extends.squirrel
+        4: entity.other.inherited-class.squirrel
+
+  function-decl:
+    - match: \b(function)\s+([A-Za-z0-9_:.]*)\s*(?=\()
+      scope: meta.function.squirrel
+      captures:
+        1: storage.type.function.squirrel
+        2: entity.name.function.squirrel
+
+  constructor-decl:
+    - match: \b(constructor)\s*(?=\()
+      scope: meta.function.constructor.squirrel
+      captures:
+        1: entity.name.function.constructor.squirrel
+
+  keywords:
+    - match: \b(?:if|else|while|do|switch|case|default|for|foreach|in|break|continue|return|yield|throw|try|catch|resume|delete|clone|instanceof|typeof|print)\b
+      scope: keyword.control.squirrel
+
+  storage:
+    - match: \b(?:local|class|function|constructor|enum|static|const|extends)\b
+      scope: storage.type.squirrel
+
+  constants:
+    - match: \b(?:true|false|null)\b
+      scope: constant.language.squirrel
+
+  language-variables:
+    - match: \b(?:base|this)\b
+      scope: variable.language.squirrel
+    - match: '::[A-Za-z_]\w*'
+      scope: variable.other.global.squirrel
+
+  numbers:
+    - match: \b0[xX][0-9a-fA-F]+\b
+      scope: constant.numeric.hex.squirrel
+    - match: \b\d+(\.\d+)?([eE][+-]?\d+)?\b
+      scope: constant.numeric.squirrel
+
+  strings:
+    - include: string-escape
+    - match: '"'
+      scope: punctuation.definition.string.begin.squirrel
+      push: double-quoted-body
+    - match: "'"
+      scope: punctuation.definition.string.begin.squirrel
+      push: single-quoted-body
+    - match: '@"'
+      scope: punctuation.definition.string.begin.squirrel
+      push: verbatim-body
+
+  string-escape:
+    - match: \\.
+      scope: constant.character.escape.squirrel
+
+  double-quoted-body:
+    - meta_scope: string.quoted.double.squirrel
+    - include: string-escape
+    - match: '"'
+      scope: punctuation.definition.string.end.squirrel
+      pop: true
+
+  single-quoted-body:
+    - meta_scope: string.quoted.single.squirrel
+    - match: "'"
+      scope: punctuation.definition.string.end.squirrel
+      pop: true
+
+  verbatim-body:
+    - meta_scope: string.quoted.other.squirrel
+    - match: '""'
+      scope: constant.character.escape.squirrel
+    - match: '"'
+      scope: punctuation.definition.string.end.squirrel
+      pop: true
+
+  operators:
+    - match: '<-|<=>|\+|-|\*|/|%|\+\+|--|==|!=|<=|>=|<|>|&&|\|\||!|\?|:|=|\+=|-=|\*=|/=|%=|>>>|<<|>>|&|\||\^|~'
+      scope: keyword.operator.squirrel
+
+  punctuation:
+    - match: '[{}()\[\];,.]'
+      scope: punctuation.terminal.squirrel
+
+  comments:
+    - include: comment-block
+    - include: comment-line
+
+  comment-block:
+    - match: /\*\*
+      scope: punctuation.definition.comment.squirrel
+      push: doc-block-body
+    - match: /\*
+      scope: punctuation.definition.comment.squirrel
+      push: block-body
+
+  doc-block-body:
+    - meta_scope: comment.block.documentation.squirrel
+    - match: \*/
+      scope: punctuation.definition.comment.squirrel
+      pop: true
+
+  block-body:
+    - meta_scope: comment.block.squirrel
+    - match: \*/
+      scope: punctuation.definition.comment.squirrel
+      pop: true
+
+  comment-line:
+    - match: //.*$
+      scope: comment.line.double-slash.squirrel

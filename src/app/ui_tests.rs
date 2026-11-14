@@ -2587,6 +2587,21 @@ fn test_switching_to_a_tab_refreshes_its_external_change() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 開啟 .nut 時自動套用內建的 Squirrel 語法。
+#[test]
+fn test_squirrel_script_opens_with_the_bundled_syntax() {
+    let dir = std::env::temp_dir().join(format!("madedit-squirrel-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("ai.nut");
+    std::fs::write(&file, "// enemy AI\nclass Enemy extends Entity {\n    function update() { return 1; }\n}\n").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    assert_eq!(h.state().doc().syntax, "Squirrel");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 重新命名只改顯示名稱：群組名稱不可空白，檔案項目的空白名稱恢復預設顯示。
 #[test]
 fn test_favorite_rename_keeps_group_names_non_blank() {
