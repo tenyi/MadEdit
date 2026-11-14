@@ -134,10 +134,10 @@ fn guess_utf16(sample: &[u8]) -> Option<&'static Encoding> {
 
 /// 自動偵測編碼並解碼
 ///
-/// 順序：BOM → （強制預設編碼）→ 無 BOM 的 UTF-16（含大量 NUL 的資料雖是合法 UTF-8，但幾乎不會是 UTF-8 文字）→ 嚴格 UTF-8 →
-/// fallback 編碼 → 預設編碼 → 常見東亞編碼中第一個可無誤解碼者 → fallback 編碼（含錯誤）。
+/// 順序：BOM → （強制預設編碼）→ 無 BOM 的 UTF-16 → 嚴格 UTF-8 → 內容偵測（Big5/GBK/
+/// Shift_JIS 等）→ fallback 編碼 → 預設編碼 → 常見東亞編碼中第一個可無誤解碼者 → fallback 編碼（含錯誤）。
 ///
-/// `default` 是新文件與「強制使用預設編碼」採用的編碼；`fallback` 只在內容不是合法 UTF-8 時才派上用場。
+/// `default` 是新文件與「強制使用預設編碼」採用的編碼；`fallback` 只在無法自動判斷時才派上用場。
 pub fn detect_and_decode(bytes: &[u8], default: &'static Encoding, fallback: &'static Encoding, enforce_default: bool) -> Decoded {
     if let Some((enc, _)) = Encoding::for_bom(bytes) {
         return decode_with(bytes, enc);
@@ -158,6 +158,17 @@ pub fn detect_and_decode(bytes: &[u8], default: &'static Encoding, fallback: &'s
             has_bom: false,
             had_errors: false,
         };
+    }
+    // 非 UTF-8：依內容猜測 GBK、Big5、Shift_JIS 等，避免先以錯誤的備援編碼解碼而亂碼。
+    let sample = &bytes[..bytes.len().min(64 * 1024)];
+    let mut detector = chardetng::EncodingDetector::new();
+    detector.feed(sample, true);
+    let guessed = detector.guess(None, false);
+    if guessed != encoding_rs::UTF_8 && guessed != encoding_rs::UTF_16LE && guessed != encoding_rs::UTF_16BE {
+        let d = decode_with(bytes, guessed);
+        if !d.had_errors {
+            return d;
+        }
     }
     let candidates = [
         fallback,
@@ -310,6 +321,16 @@ mod tests {
 
         let d = detect_and_decode("中文".as_bytes(), encoding_rs::UTF_8, encoding_rs::GBK, false);
         assert_eq!(d.encoding, encoding_rs::UTF_8);
+    }
+
+    #[test]
+    fn test_auto_detects_gbk_even_with_big5_fallback() {
+        // 之前 fallback（Big5）先解碼，GBK 檔案常被判成 Big5 而亂碼；內容偵測要選到 GBK。
+        let (gbk, _, _) = encoding_rs::GBK.encode("D:项目路径 简体中文测试");
+        let d = detect_and_decode(&gbk, encoding_rs::UTF_8, encoding_rs::BIG5, false);
+        assert_eq!(d.text, "D:项目路径 简体中文测试");
+        assert!(!d.had_errors);
+        assert!(d.encoding == encoding_rs::GBK || d.encoding == encoding_rs::GB18030, "detected {:?}", d.encoding.name());
     }
 
     #[test]

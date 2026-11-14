@@ -35,7 +35,7 @@ The original C++ / wxWidgets **MadEdit** is a classic tool for many developers a
 
 ### 3. Multi-encoding support and corruption protection
 - Built on `encoding_rs` plus a custom UTF-16 codec. Supports **UTF-8, UTF-8 BOM, UTF-16LE, UTF-16BE, Big5, GB18030, Shift_JIS, EUC-KR, windows-1252, ISO-8859-1** and more.
-- **Smart detection on open**: a BOM is recognized first; without a BOM, strict UTF-8 is tried, then it falls back to the configurable fallback encoding (Big5 by default). New documents use UTF-8 by default.
+- **Smart detection on open**: a BOM is recognized first; without a BOM, strict UTF-8 is tried, then the content is inspected to recognize Big5, GBK/GB18030, Shift_JIS, EUC-KR, EUC-JP and similar encodings, so a GBK `.ini` file opens as GBK instead of being decoded with the configured fallback. The fallback encoding (Big5 by default) is used only when detection cannot decide. New documents use UTF-8 by default.
 - **Lossless safeguard**: if a file contains bytes that cannot be decoded losslessly, the status bar warns and overwriting is refused. **Reinterpret** and **Convert Encoding** are available.
 
 ### 4. Large file engine

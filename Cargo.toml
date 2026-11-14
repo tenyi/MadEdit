@@ -11,6 +11,8 @@ semver = "1"
 arboard = "3"
 chrono = "0.4"
 dirs = "7"
+# 開啟檔案時自動判斷 Big5、GBK、Shift_JIS 等非 UTF-8 編碼（UTF-8/UTF-16 由 encoding_rs 處理）
+chardetng = "0.1.17"
 eframe = "0.37.0"
 # Only to turn on egui's bundled monochrome emoji fonts (about 1 MB): without them,
 # 🔒 on read-only tabs and the Markdown code-block copy button draw as empty boxes.
