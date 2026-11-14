@@ -85,7 +85,6 @@ impl App {
         let strip = egui::Rect::from_min_size(full.min, egui::vec2(full.width(), form::TAB_STRIP_HEIGHT));
         ui.painter().rect_filled(strip, 0, form::tab_strip_bg(ui));
 
-        let add_group = self.t("fav.add_group", "新增群組…").to_string();
         let tab_rect = egui::Rect::from_min_max(
             egui::pos2(full.left() + 8.0, strip.top() + 2.0),
             egui::pos2(full.right() - 8.0, strip.bottom()),
@@ -105,11 +104,6 @@ impl App {
                 active_rect = Some(item.rect);
             }
         }
-        tab_ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if form::icon_button(ui, egui::Button::new("＋").small(), &add_group, &add_group).clicked() {
-                action = Some(FavAction::NewGroup);
-            }
-        });
         form::tab_strip_baseline(ui, strip, active_rect);
 
         let content = egui::Rect::from_min_max(
@@ -154,7 +148,7 @@ impl App {
             if root_open {
                 if self.settings.favorites.is_empty() {
                     ui.add_space(4.0);
-                    let hint = self.t("fav.empty", "還沒有收藏。按右上角的 ＋ 或在此按右鍵新增群組。");
+                    let hint = self.t("fav.empty", "還沒有收藏。在此按右鍵即可新增群組。");
                     ui.horizontal(|ui| {
                         ui.add_space(GROUP_INDENT + 6.0);
                         ui.add(egui::Label::new(RichText::new(hint).weak()).wrap());
