@@ -82,6 +82,9 @@ contexts:
     - include: eol-pop
 
   mapping:
+    # Keys intentionally avoid `include: string`: unquoted keys would otherwise be scoped as
+    # strings on top of meta.mapping.key.ini and inherit the theme's string color, making keys
+    # and values look the same.
     - match: (?=\S)
       push:
         - meta_content_scope: meta.mapping.key.ini
@@ -96,7 +99,6 @@ contexts:
             3: punctuation.section.brackets.end.ini
         - match: \,
           scope: punctuation.separator.sequence.ini
-        - include: string
         - include: eol-pop
 
   mapping-separator:

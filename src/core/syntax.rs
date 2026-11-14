@@ -170,7 +170,53 @@ fn load_themes(config_dir: Option<&Path>) -> ThemeSet {
             }
         }
     }
+    for theme in themes.themes.values_mut() {
+        patch_ini_colors(theme);
+    }
     themes
+}
+
+/// INI 檔案的區段、鍵、等號與值套用不同顏色（接近 VSCode 的觀感），淺色與深色各一組。
+/// 內建主題原本只把整個檔案當普通文字，鍵與值幾乎同色。
+fn patch_ini_colors(theme: &mut Theme) {
+    use syntect::highlighting::{Color, FontStyle, StyleModifier, ThemeItem};
+    let dark = theme.settings.background.map(|c| (c.r as u16 + c.g as u16 + c.b as u16) < 384).unwrap_or(true);
+    let (section, brackets, key, separator, value, comment) = if dark {
+        (
+            Color { r: 0x6f, g: 0xb6, b: 0xfb, a: 255 }, // 節區名：亮藍
+            Color { r: 0x8a, g: 0x9a, b: 0xaf, a: 255 }, // 方括號：灰藍
+            Color { r: 0x8a, g: 0xc7, b: 0xd8, a: 255 }, // 鍵：淺藍綠
+            Color { r: 0x9d, g: 0x9d, b: 0x9d, a: 255 }, // 等號：灰
+            Color { r: 0xd8, g: 0xde, b: 0xe6, a: 255 }, // 值：接近前景的白
+            Color { r: 0x6a, g: 0x99, b: 0x55, a: 255 }, // 註解：綠
+        )
+    } else {
+        (
+            Color { r: 0x05, g: 0x50, b: 0x8d, a: 255 }, // 節區名：深藍
+            Color { r: 0x66, g: 0x66, b: 0x66, a: 255 }, // 方括號：灰
+            Color { r: 0x0f, g: 0x4c, b: 0x81, a: 255 }, // 鍵：深藍
+            Color { r: 0x66, g: 0x66, b: 0x66, a: 255 }, // 等號：灰
+            Color { r: 0x1f, g: 0x1f, b: 0x1f, a: 255 }, // 值：接近前景的黑
+            Color { r: 0x00, g: 0x80, b: 0x00, a: 255 }, // 註解：綠
+        )
+    };
+    let mut rule = |scope: &str, color: Color, style: FontStyle| {
+        if let Ok(selectors) = scope.parse() {
+            theme.scopes.push(ThemeItem {
+                scope: selectors,
+                style: StyleModifier { foreground: Some(color), background: None, font_style: Some(style) },
+            });
+        }
+    };
+    // 以「source.ini 前綴 + 完整範圍」的複合選擇器提高匹配分數，確保蓋過主題原有的泛用規則。
+    rule("source.ini meta.section.ini entity.name.section.ini", section, FontStyle::BOLD);
+    rule("source.ini punctuation.definition.section.ini", brackets, FontStyle::empty());
+    rule("source.ini meta.mapping.key.ini", key, FontStyle::empty());
+    rule("source.ini punctuation.separator.key-value.ini", separator, FontStyle::empty());
+    rule("source.ini meta.mapping.value.ini", value, FontStyle::empty());
+    rule("source.ini comment.line.semicolon.ini", comment, FontStyle::empty());
+    rule("source.ini comment.line.number-sign.ini", comment, FontStyle::empty());
+    rule("source.ini punctuation.definition.comment.ini", comment, FontStyle::empty());
 }
 
 /// 所有可選語法名稱（純文字在最前，其餘依字母排序）
@@ -949,6 +995,46 @@ contexts:
         assert!(pushes("[Section]\n", "entity.name"), "sections must be recognized");
         assert!(pushes("key=value\n", "meta.mapping"), "key-value pairs must be recognized");
         assert_eq!(comment_tokens("INI"), (Some(";"), None));
+    }
+
+    #[test]
+    fn test_ini_theme_colors_distinguish_key_value_and_section() {
+        use std::str::FromStr;
+        for name in [default_theme_name(false), default_theme_name(true)] {
+            let theme = theme_by_name(name, false);
+            let ps = load_syntaxes(None);
+            let color_of = |stack_text: &str| {
+                let stack = syntect::parsing::ScopeStack::from_str(stack_text).unwrap();
+                // 补丁规则附加在末尾且选择器最具体（得分最高），与高亮器一致取最后一个匹配项。
+                theme.scopes.iter().rev().find(|item| {
+                    item.scope.selectors.iter().any(|sel| sel.does_match(stack.as_slice()).is_some())
+                }).and_then(|item| item.style.foreground)
+            };
+            let key = color_of("source.ini meta.mapping.key.ini").expect("key rule");
+            let value = color_of("source.ini meta.mapping.value.ini").expect("value rule");
+            let section = color_of("source.ini meta.section.ini entity.name.section.ini").expect("section rule");
+            let separator = color_of("source.ini punctuation.separator.key-value.ini").expect("separator rule");
+            assert_ne!(key, value, "{name}: key and value must differ");
+            assert_ne!(section, key, "{name}: section and key must differ");
+            assert_ne!(separator, value, "{name}: separator and value must differ");
+            // 實際高亮一整行，確認最終樣式就是補上的顏色（不被主題原有規則蓋掉）
+            let highlight = |line: &str, scope_contains: &str| {
+                let syntax = ps.find_syntax_by_name("INI").unwrap();
+                let highlighter = Highlighter::new(theme);
+                let mut state = ParseState::new(syntax);
+                let ops = state.parse_line(line, &ps).unwrap();
+                let mut hl = HighlightState::new(&highlighter, ScopeStack::new());
+                HighlightIterator::new(&mut hl, &ops, line, &highlighter)
+                    .find(|(_, text)| text.contains(scope_contains))
+                    .map(|(style, _)| (style.foreground, style.font_style))
+            };
+            let (fg, _) = highlight("[Info]\n", "Info").expect("section text");
+            assert_eq!(fg, section, "{name}: rendered section color must be the patched one");
+            let (_, section_style) = highlight("[Info]\n", "Info").expect("section text");
+            assert!(section_style.contains(FontStyle::BOLD), "{name}: section name must be bold");
+            let (fg, _) = highlight("Num=1\n", "Num").expect("key text");
+            assert_eq!(fg, key, "{name}: rendered key color must be the patched one");
+        }
     }
 
     #[test]
