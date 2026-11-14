@@ -22,6 +22,10 @@ contexts:
     - include: keywords
     - include: storage
     - include: constants
+    - include: extended-types
+    - include: extended-constants
+    - include: extended-globals
+    - include: extended-calls
     - include: language-variables
     - include: numbers
     - include: strings
@@ -61,6 +65,32 @@ contexts:
   constants:
     - match: \b(?:true|false|null)\b
       scope: constant.language.squirrel
+
+  # ── 使用者擴充（ADO / MFC / 工具 API），關鍵字取自 SciTE 的 keywordclass.squirrel ──
+  extended-types:
+    - match: \b(?:ADOConnection|ADODataset|ADOSQLCommand|CString|CExcelInterface|CSYSGlobal|CWaitCursor)\b
+      scope: support.class.squirrel
+
+  extended-constants:
+    - match: \b(?:DB_DRIVER_TYPE_[A-Z]+|DB_OBJ_TYPE_[A-Z]+)\b
+      scope: constant.other.squirrel
+    - match: \b(?:IDOK|IDCANCEL|IDABORT|IDRETRY|IDIGNORE|IDYES|IDNO|PI|RAND_MAX)\b
+      scope: constant.other.squirrel
+    - match: \b(?:MB_[A-Z]+|SW_[A-Z]+)\b
+      scope: constant.other.squirrel
+    - match: \badCmd[A-Za-z]+\b
+      scope: constant.other.squirrel
+
+  extended-calls:
+    # 只在呼叫或成員存取時著色，避免把同名區域變數（open、left、type…）也標成函式
+    - match: \b(?:SetCommandConnection|ADOGetLastErrorText|ADOSetLastErrorText|AppendChunkFromFile|GetAllColumnContent|FindDBObjectByName|GetRecordsAffected|SetActiveSheetName|writeclosuretofile|GetAllObjectNames|GetConnectString|IsConnectionOpen|GetChunkIntoFile|GetAllColumnName|GetDatabaseName|GetDBDriverType|CreateDirectory|seterrorhandler|enabledebuginfo|openStoredProc|searchBackward|GetColumnCount|GetRecordCount|SetCommandText|SetCommandType|GetCommandText|GetCommandType|collectgarbage|searchForward|GetFieldValue|PutFieldValue|SetFieldEmpty|FindFieldName|MakeInsertSQL|CompareNoCase|SpanIncluding|SpanExcluding|getstackinfos|getconsttable|setconsttable|compilestring|MovePrevious|CancelUpdate|GetFieldSize|GetSQLSelect|GenerateGUID|setdebughook|getroottable|setroottable|openUnknown|CancelBatch|DettachToDB|UpdateBatch|MakeReverse|ReverseFind|DisableTask|SelectSheet|writestring|AttachToDB|SetTimeout|IPIsOnLine|SetVisible|MessageBox|readstring|openQuery|openBatch|openTable|MoveFirst|SaveAsXML|SetFilter|FindFirst|GetLength|MakeUpper|MakeLower|TrimRight|FindOneOf|DataInput|newthread|tointeger|getstatus|IsActive|MoveNext|MoveLast|FindNext|TrimLeft|BMP2JPEG|loadfile|tostring|SetSort|Execute|Compare|IsEmpty|Replace|SetCell|WinExec|capture|suspend|tofloat|tolower|toupper|weakref|IsOpen|Reopen|Delete|AddNew|Update|Remove|Insert|SaveAs|dofile|getenv|remove|rename|system|format|regexp|lstrip|search|assert|tochar|wakeup|IsEof|IsEOF|IsBOF|IsBof|Close|Empty|GetAt|SetAt|Right|clock|match|error|array|dummy|slice|log10|atan2|floor|srand|Open|Edit|Find|Left|date|time|type|find|call|sqrt|asin|acos|atan|ceil|rand|fabs|Mid|Add|len|sin|cos|log|tan|pow|exp|abs)\b(?=\s*\()
+      scope: support.function.squirrel
+    - match: (?<=\.)\s*\b(?:SetCommandConnection|ADOGetLastErrorText|ADOSetLastErrorText|AppendChunkFromFile|GetAllColumnContent|FindDBObjectByName|GetRecordsAffected|SetActiveSheetName|writeclosuretofile|GetAllObjectNames|GetConnectString|IsConnectionOpen|GetChunkIntoFile|GetAllColumnName|GetDatabaseName|GetDBDriverType|CreateDirectory|seterrorhandler|enabledebuginfo|openStoredProc|searchBackward|GetColumnCount|GetRecordCount|SetCommandText|SetCommandType|GetCommandText|GetCommandType|collectgarbage|searchForward|GetFieldValue|PutFieldValue|SetFieldEmpty|FindFieldName|MakeInsertSQL|CompareNoCase|SpanIncluding|SpanExcluding|getstackinfos|getconsttable|setconsttable|compilestring|MovePrevious|CancelUpdate|GetFieldSize|GetSQLSelect|GenerateGUID|setdebughook|getroottable|setroottable|openUnknown|CancelBatch|DettachToDB|UpdateBatch|MakeReverse|ReverseFind|DisableTask|SelectSheet|writestring|AttachToDB|SetTimeout|IPIsOnLine|SetVisible|MessageBox|readstring|openQuery|openBatch|openTable|MoveFirst|SaveAsXML|SetFilter|FindFirst|GetLength|MakeUpper|MakeLower|TrimRight|FindOneOf|DataInput|newthread|tointeger|getstatus|IsActive|MoveNext|MoveLast|FindNext|TrimLeft|BMP2JPEG|loadfile|tostring|SetSort|Execute|Compare|IsEmpty|Replace|SetCell|WinExec|capture|suspend|tofloat|tolower|toupper|weakref|IsOpen|Reopen|Delete|AddNew|Update|Remove|Insert|SaveAs|dofile|getenv|remove|rename|system|format|regexp|lstrip|search|assert|tochar|wakeup|IsEof|IsEOF|IsBOF|IsBof|Close|Empty|GetAt|SetAt|Right|clock|match|error|array|dummy|slice|log10|atan2|floor|srand|Open|Edit|Find|Left|date|time|type|find|call|sqrt|asin|acos|atan|ceil|rand|fabs|Mid|Add|len|sin|cos|log|tan|pow|exp|abs)\b
+      scope: support.function.squirrel
+
+  extended-globals:
+    - match: \btheApp\b
+      scope: variable.language.squirrel
 
   language-variables:
     - match: \b(?:base|this)\b

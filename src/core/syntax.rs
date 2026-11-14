@@ -172,8 +172,43 @@ fn load_themes(config_dir: Option<&Path>) -> ThemeSet {
     }
     for theme in themes.themes.values_mut() {
         patch_ini_colors(theme);
+        patch_squirrel_colors(theme);
     }
     themes
+}
+
+/// Squirrel 擴充關鍵字（ADO / Win32 / MFC）在內建主題缺少對應 scope 時補上顏色，
+/// 淺色與深色各一組：型別、函式、常數與全域變數分開。
+fn patch_squirrel_colors(theme: &mut Theme) {
+    use syntect::highlighting::{Color, FontStyle, StyleModifier, ThemeItem};
+    let dark = theme.settings.background.map(|c| (c.r as u16 + c.g as u16 + c.b as u16) < 384).unwrap_or(true);
+    let (class, function, constant, global) = if dark {
+        (
+            Color { r: 0xb4, g: 0x8e, b: 0xad, a: 255 }, // 型別：紫
+            Color { r: 0xeb, g: 0xcb, b: 0x8b, a: 255 }, // 函式：黃
+            Color { r: 0xd0, g: 0x87, b: 0x70, a: 255 }, // 常數：橙
+            Color { r: 0x96, g: 0xb5, b: 0xb4, a: 255 }, // 全域變數：青
+        )
+    } else {
+        (
+            Color { r: 0x7b, g: 0x2f, b: 0xbe, a: 255 }, // 型別：紫
+            Color { r: 0x79, g: 0x5e, b: 0x26, a: 255 }, // 函式：棕黃
+            Color { r: 0x09, g: 0x86, b: 0x58, a: 255 }, // 常數：綠
+            Color { r: 0x00, g: 0x10, b: 0x80, a: 255 }, // 全域變數：藍
+        )
+    };
+    let mut rule = |scope: &str, color: Color, style: FontStyle| {
+        if let Ok(selectors) = scope.parse() {
+            theme.scopes.push(ThemeItem {
+                scope: selectors,
+                style: StyleModifier { foreground: Some(color), background: None, font_style: Some(style) },
+            });
+        }
+    };
+    rule("source.nut support.class.squirrel", class, FontStyle::BOLD);
+    rule("source.nut support.function.squirrel", function, FontStyle::empty());
+    rule("source.nut constant.other.squirrel", constant, FontStyle::empty());
+    rule("source.nut variable.language.squirrel", global, FontStyle::empty());
 }
 
 /// INI 檔案的區段、鍵、等號與值套用不同顏色（接近 VSCode 的觀感），淺色與深色各一組。
@@ -976,6 +1011,16 @@ contexts:
         assert!(pushes("class Foo extends Bar\n", "entity.name.type"), "classes must be recognized");
         assert!(pushes("local n = 0x1A;\n", "constant.numeric"), "numbers must be recognized");
         assert!(pushes("local s = \"hi\";\n", "string.quoted"), "strings must be recognized");
+        // 使用者擴充（ADO / Win32 / MFC）：類別、常數與呼叫
+        assert!(pushes("local c = ADOSQLCommand();\n", "support.class"), "ADO classes must be recognized");
+        assert!(pushes("local ds = ADODataset();\n", "support.class"), "ADO dataset type must be recognized");
+        assert!(pushes("local r = MB_OK;\n", "constant.other"), "Win32 constants must be recognized");
+        assert!(pushes("local t = DB_DRIVER_TYPE_MSSQL;\n", "constant.other"), "ADO driver constants must be recognized");
+        assert!(pushes("AttachToDB(c, \"x\");\n", "support.function"), "extended functions must be recognized");
+        assert!(pushes("db.openQuery(\"select 1\");\n", "support.function"), "member calls must be recognized");
+        assert!(pushes("ds.MoveNext();\n", "support.function"), "dataset methods after a dot must be recognized");
+        // 同名區域變數不應被標成函式（open 不是呼叫）
+        assert!(!pushes("local open = 1;\n", "support.function"), "plain identifiers must stay unscoped");
         assert_eq!(comment_tokens("Squirrel"), (Some("//"), Some(("/*", "*/"))));    }
 
     #[test]
@@ -1034,6 +1079,35 @@ contexts:
             assert!(section_style.contains(FontStyle::BOLD), "{name}: section name must be bold");
             let (fg, _) = highlight("Num=1\n", "Num").expect("key text");
             assert_eq!(fg, key, "{name}: rendered key color must be the patched one");
+        }
+    }
+
+    #[test]
+    fn test_squirrel_extension_colors_are_distinct() {
+        let ps = load_syntaxes(None);
+        let syntax = ps.find_syntax_by_name("Squirrel").expect("bundled Squirrel syntax");
+        for name in [default_theme_name(false), default_theme_name(true)] {
+            let theme = theme_by_name(name, false);
+            let default_fg = theme.settings.foreground.unwrap_or(syntect::highlighting::Color::BLACK);
+            let highlight = |line: &str, needle: &str| {
+                let highlighter = Highlighter::new(theme);
+                let mut state = ParseState::new(syntax);
+                let ops = state.parse_line(line, &ps).unwrap();
+                let mut hl = HighlightState::new(&highlighter, ScopeStack::new());
+                HighlightIterator::new(&mut hl, &ops, line, &highlighter)
+                    .find(|(_, text)| text.contains(needle))
+                    .map(|(style, _)| (style.foreground, style.font_style))
+            };
+            let (class_fg, class_style) = highlight("local c = ADOSQLCommand();\n", "ADOSQLCommand").expect("class");
+            let (func_fg, _) = highlight("AttachToDB(db);\n", "AttachToDB").expect("function");
+            let (const_fg, _) = highlight("local m = MB_OK;\n", "MB_OK").expect("constant");
+            assert!(class_style.contains(FontStyle::BOLD), "{name}: classes must be bold");
+            assert_ne!(class_fg, default_fg, "{name}: class color must be themed");
+            assert_ne!(func_fg, default_fg, "{name}: function color must be themed");
+            assert_ne!(const_fg, default_fg, "{name}: constant color must be themed");
+            assert_ne!(class_fg, func_fg, "{name}: class and function colors must differ");
+            assert_ne!(func_fg, const_fg, "{name}: function and constant colors must differ");
+            assert_ne!(class_fg, const_fg, "{name}: class and constant colors must differ");
         }
     }
 

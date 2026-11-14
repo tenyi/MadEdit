@@ -14,6 +14,18 @@ package, based on an old TextMate bundle). This rewrite covers the same
 constructs: classes with `extends`, functions and constructors, control-flow
 keywords, `local`/`const`/`enum`/`static`, `base`/`this`, `::global`,
 hex/float numbers, single/double-quoted strings with escapes, verbatim
-`@"..."` strings, and `//`, `/* */`, `/** */` comments. Replace this file with
-an upstream definition if the Squirrel project publishes one under a specific
-license.
+`@"..."` strings, and `//`, `/* */`, `/** */` comments.
+
+On top of the upstream rules, this file also highlights the maintainer's own
+Squirrel extensions, collected from a SciTE `keywordclass.squirrel` list (ADO
+database access, Win32/MFC helpers and Squirrel standard-library functions):
+
+  ADOConnection / ADODataset / ADOSQLCommand / CString / CExcelInterface /
+  CSYSGlobal / CWaitCursor, DB_* and adCmd* constants, dataset methods such as
+  AttachToDB and GetRecordCount, MB_*/SW_*/ID* constants, and globals such as
+  `theApp`.
+
+Function names are only colored at call sites or after a dot, so a local
+variable that happens to share a name (`open`, `left`, `type`) stays plain.
+Replace this file with an upstream definition if the Squirrel project
+publishes one under a specific license.
