@@ -14,6 +14,7 @@ use std::time::Instant;
 use eframe::egui::{self, RichText};
 
 use super::{form, App};
+use crate::core::encoding;
 
 /// Runner 訊息：一行輸出，或子程序結束
 enum Msg {
@@ -30,6 +31,8 @@ pub struct ScriptRunner {
     /// 運行結束的結果：退出碼或啟動失敗訊息
     pub exit: Option<Result<i32, String>>,
     pub started: Option<Instant>,
+    /// 結束時凍結的耗時（秒）；運行中為 None，由 started 即時計算
+    pub elapsed: Option<f32>,
     rx: Option<Receiver<Msg>>,
     child: Option<Arc<Mutex<Child>>>,
     /// 等待子程序結束的執行緒（單位型 JoinHandle）
@@ -120,6 +123,7 @@ impl ScriptRunner {
         self.rx = Some(rx);
         self.running = true;
         self.started = Some(Instant::now());
+        self.elapsed = None;
         self.exit = None;
         self.stopped = false;
         Ok(())
@@ -134,6 +138,8 @@ impl ScriptRunner {
                 Ok(Msg::Done(result)) => {
                     self.running = false;
                     self.rx = None;
+                    // 凍結耗時：結束後面板不再繼續計時
+                    self.elapsed = self.started.map(|t| t.elapsed().as_secs_f32());
                     self.exit = Some(match result {
                         Ok(code) => Ok(code),
                         Err(e) => {
@@ -177,9 +183,10 @@ impl Drop for ScriptRunner {
 }
 
 /// 把選取片段寫入暫存檔（保留原副檔名，直譯器才知道語言）。
-pub fn write_selection_temp(name: &str, text: &str) -> std::io::Result<PathBuf> {
+/// 內容以呼叫端提供的位元組寫入，讓暫存檔沿用原檔編碼（例如 GBK）。
+pub fn write_selection_temp(name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
     let path = std::env::temp_dir().join(format!("madedit_run_{name}"));
-    std::fs::write(&path, text)?;
+    std::fs::write(&path, bytes)?;
     Ok(path)
 }
 
@@ -221,14 +228,27 @@ impl App {
             self.set_status(hint);
             return;
         };
-        let selection = {
-            let text = self.doc().editor.selected_text();
-            (!text.is_empty()).then_some(text)
+        let (selection, encoding, has_bom) = {
+            let doc = self.doc();
+            let text = doc.editor.selected_text();
+            let selection = (!text.is_empty()).then_some(text);
+            (selection, doc.encoding, doc.has_bom)
         };
         let file: PathBuf = match selection {
-            // 選中片段：寫入同副檔名的臨時檔案，只運行這一段
+            // 選中片段：寫入同副檔名的臨時檔案，只運行這一段。
+            // 內容沿用原檔編碼（例如 GBK），否則直譯器會把 UTF-8 位元組當成 ANSI 而亂碼。
             Some(text) => {
-                let tmp = match write_selection_temp(&self.doc().display_name(), &text) {
+                let encoded = match encoding::encode_text(&text, encoding, has_bom) {
+                    Ok(bytes) => bytes,
+                    Err(_) => {
+                        let hint = self
+                            .t("run.encode_fail", "選取內容無法以目前編碼（{q}）儲存")
+                            .replace("{q}", encoding.name());
+                        self.set_status(hint);
+                        return;
+                    }
+                };
+                let tmp = match write_selection_temp(&self.doc().display_name(), &encoded) {
                     Ok(tmp) => tmp,
                     Err(e) => {
                         let hint = self.t("run.temp_fail", "無法寫入臨時檔案：{q}").replace("{q}", &e.to_string());
@@ -272,7 +292,11 @@ impl App {
         let title = self.t("run.title", "運行輸出");
         let running = self.runner.running;
         let exit = self.runner.exit.clone();
-        let elapsed = self.runner.started.map(|t| t.elapsed().as_secs_f32());
+        let elapsed = if running {
+            self.runner.started.map(|t| t.elapsed().as_secs_f32())
+        } else {
+            self.runner.elapsed
+        };
         ui.horizontal(|ui| {
             ui.label(RichText::new(title).strong());
             if running {
@@ -348,9 +372,26 @@ mod tests {
 
     #[test]
     fn test_selection_temp_file_keeps_content_and_extension() {
-        let tmp = write_selection_temp("madedit_test_selection.nut", "print(\"hi\");\n").expect("write temp");
+        let bytes = "print(\"hi\");\n".as_bytes();
+        let tmp = write_selection_temp("madedit_test_selection.nut", bytes).expect("write temp");
         assert_eq!(tmp.extension().and_then(|e| e.to_str()), Some("nut"));
-        assert_eq!(std::fs::read_to_string(&tmp).unwrap(), "print(\"hi\");\n");
+        assert_eq!(std::fs::read(&tmp).unwrap(), bytes);
+        let _ = std::fs::remove_file(tmp);
+    }
+
+    #[test]
+    fn test_selection_temp_file_preserves_gbk_bytes() {
+        // 選取片段沿用原檔編碼：GBK 檔案寫出的暫存檔必須仍是 GBK 位元組，
+        // 否則 ZSSQConsole 之類的 ANSI 直譯器會把中文當成亂碼。
+        let text = "print(\"中文输出测试\");\n";
+        let bytes = encoding::encode_text(text, encoding_rs::GBK, false).expect("gbk encodable");
+        assert_ne!(bytes, text.as_bytes());
+        let tmp = write_selection_temp("madedit_test_gbk.nut", &bytes).expect("write temp");
+        let written = std::fs::read(&tmp).unwrap();
+        assert_eq!(written, bytes);
+        let (decoded, _, had_errors) = encoding_rs::GBK.decode(&written);
+        assert!(!had_errors);
+        assert_eq!(decoded, text);
         let _ = std::fs::remove_file(tmp);
     }
 }

@@ -2671,10 +2671,13 @@ fn test_output_panel_shows_lines_and_exit_code() {
         runner.show = true;
         runner.lines.push("hello output".into());
         runner.exit = Some(Ok(0));
+        runner.elapsed = Some(0.25);
     }
     h.run_steps(3);
     assert!(h.query_by_label("hello output").is_some());
     assert!(h.query_by(|n| n.role() == egui::accesskit::Role::Label && n.value().is_some_and(|v| v.contains("退出碼"))).is_some());
+    // 結束後耗時必須是凍結值，不能繼續增加
+    assert!(h.query_all_by(|n| n.role() == egui::accesskit::Role::Label && n.value().is_some_and(|v| v.contains("0.250"))).next().is_some());
     h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("清除")).click();
     h.run_steps(2);
     assert!(h.state().runner.lines.is_empty());
