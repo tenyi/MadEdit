@@ -426,8 +426,10 @@ impl App {
         ui.separator();
         menu(ui, check_label(false, self.t("menu.preview_as", "預覽為")), |ui| {
             let is_md = self.doc().is_markdown();
+            let is_svg = self.doc().path.as_ref().is_some_and(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")));
             self.item_enabled(ui, C::PreviewMarkdown, is_md);
             self.item(ui, C::PreviewHtml);
+            self.item_enabled(ui, C::PreviewSvg, is_svg);
         });
         ui.separator();
         menu(ui, check_label(false, self.t("menu.fold", "代碼折疊")), |ui| {

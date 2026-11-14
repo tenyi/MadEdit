@@ -108,8 +108,62 @@ impl App {
 
     /// 顯示 Markdown 預覽分頁或並排面板，內容隨文件版本與深淺色主題自動更新；
     /// 並排面板必須在 CentralPanel 之前呼叫
-    pub fn show_markdown_preview(&mut self, ui: &mut egui::Ui) {
+    /// 顯示 SVG 圖形預覽（檢視 > 預覽為 > 圖形），內容隨文件版本自動更新
+    pub fn show_svg_preview(&mut self, ui: &mut egui::Ui) {
         use super::mdpreview::Placement;
+        use super::svgpreview::SvgAction;
+        let ctx = ui.ctx().clone();
+        let lang = self.ui_lang();
+        let tab = self.tab_mut();
+        let Some(mut pv) = tab.svg_preview.take() else { return };
+        let bytes = tab.doc.text().into_bytes();
+        pv.refresh(&ctx, &bytes, tab.doc.version, Self::is_dark(&ctx));
+        let area = ui.available_rect_before_wrap();
+        let action = match pv.placement {
+            Placement::Tab => pv.ui(ui, lang),
+            placement => {
+                let (panel, half) = if placement == Placement::Right {
+                    (egui::Panel::right("svg-preview-right"), area.width() / 2.0)
+                } else {
+                    (egui::Panel::bottom("svg-preview-bottom"), area.height() / 2.0)
+                };
+                panel.resizable(true).default_size(half).min_size(120.0).show(ui, |ui| {
+                    let rect = ui.available_rect_before_wrap();
+                    let mut content = ui.new_child(egui::UiBuilder::new().id_salt("svg-preview-content").max_rect(rect));
+                    content.shrink_clip_rect(rect);
+                    pv.ui(&mut content, lang)
+                }).inner
+            }
+        };
+        if action == SvgAction::None {
+            self.preview_tab_active = pv.placement == Placement::Tab;
+            self.tab_mut().svg_preview = Some(pv);
+        } else {
+            self.preview_tab_active = false;
+            self.focus_editor = true;
+        }
+    }
+
+    /// 開啟／聚焦目前 .svg 文件的圖形預覽
+    fn preview_svg(&mut self) {
+        let is_svg = self.doc().path.as_ref().is_some_and(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")));
+        if !is_svg {
+            self.set_status(self.t("svg.not_svg", "圖形預覽僅支援 .svg 檔案"));
+            return;
+        }
+        {
+            let tab = self.tab_mut();
+            let pv = tab.svg_preview.get_or_insert_with(super::svgpreview::SvgPreview::default);
+            if pv.placement != super::mdpreview::Placement::Tab {
+                pv.set_placement(super::mdpreview::Placement::Tab);
+            }
+        }
+        self.svg_preview_tab_active = true;
+        self.preview_tab_active = false;
+        self.activate_view(self.active, false);
+    }
+
+    pub fn show_markdown_preview(&mut self, ui: &mut egui::Ui) {        use super::mdpreview::Placement;
         let ctx = ui.ctx().clone();
         let lang = self.ui_lang();
         let tab = self.tab_mut();
@@ -774,6 +828,7 @@ impl App {
                 }
                 self.activate_view(self.active, true);
             }
+            C::PreviewSvg => self.preview_svg(),
             C::PreviewHtml => {
                 let html = print::preview_html(self.doc(), false);
                 if let Err(e) = print::open_html(&format!("preview-{}", self.doc().display_name()), &html) {

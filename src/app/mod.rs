@@ -18,6 +18,7 @@ mod mdmath;
 mod mdpreview;
 mod preview;
 mod print;
+mod svgpreview;
 mod runner;
 pub mod view;
 #[cfg(test)]
@@ -55,11 +56,13 @@ pub struct Tab {
     pub disk_changed: bool,
     /// 此分頁的 Markdown 預覽；切換分頁時跟著切換
     pub md_preview: Option<mdpreview::MarkdownPreview>,
+    /// 此分頁的 SVG 圖形預覽（檢視 > 預覽為 > 圖形）
+    pub svg_preview: Option<svgpreview::SvgPreview>,
 }
 
 impl Tab {
     fn new(doc: Document) -> Self {
-        Self { doc, view: ViewState::default(), hex: HexViewState::default(), disk_changed: false, md_preview: None }
+        Self { doc, view: ViewState::default(), hex: HexViewState::default(), disk_changed: false, md_preview: None, svg_preview: None }
     }
 }
 
@@ -104,6 +107,8 @@ pub struct App {
     empty_tab: std::sync::OnceLock<Tab>,
     /// 預覽與來源共用文件，只另外記錄目前選取的是哪一種檢視。
     preview_tab_active: bool,
+    /// 目前選取的是 SVG 圖形預覽分頁（與 Markdown 預覽分頁互斥）
+    svg_preview_tab_active: bool,
     prev_active: usize,
     prev_preview_tab: bool,
     fonts: FontManager,
@@ -192,6 +197,7 @@ impl App {
             active: 0,
             empty_tab: std::sync::OnceLock::new(),
             preview_tab_active: false,
+            svg_preview_tab_active: false,
             prev_active: 0,
             prev_preview_tab: false,
             fonts: FontManager::new(),
@@ -388,10 +394,18 @@ impl App {
             && self.tabs.get(self.active).and_then(|tab| tab.md_preview.as_ref()).is_some_and(|pv| pv.placement == mdpreview::Placement::Tab)
     }
 
+    /// 目前是否顯示 SVG 圖形預覽分頁
+    pub(crate) fn is_svg_preview_tab(&self) -> bool {
+        self.svg_preview_tab_active && self.tabs.get(self.active).is_some_and(|tab| tab.svg_preview.is_some())
+    }
+
     fn tab_pages(&self) -> Vec<(usize, bool)> {
         self.tabs.iter().enumerate().flat_map(|(i, tab)| {
             let preview = tab.md_preview.as_ref().is_some_and(|pv| pv.placement == mdpreview::Placement::Tab);
-            std::iter::once((i, false)).chain(preview.then_some((i, true)))
+            let svg = tab.svg_preview.is_some();
+            std::iter::once((i, false))
+                .chain(preview.then_some((i, true)))
+                .chain(svg.then_some((i, false)))
         }).collect()
     }
 
@@ -1527,9 +1541,20 @@ impl eframe::App for App {
         if self.tabs.get(self.active).and_then(|tab| tab.md_preview.as_ref()).is_some_and(|pv| pv.docked()) {
             self.show_markdown_preview(ui);
         }
+        if self.tabs.get(self.active).and_then(|tab| tab.svg_preview.as_ref()).is_some_and(|pv| pv.docked()) {
+            self.show_svg_preview(ui);
+        }
         // 分隔線的拖曳範圍會跨入編輯區；留出抓取空間，避免稍後建立的捲軸搶走事件。
         let mut editor_margin = egui::Margin::ZERO;
         if let Some(pv) = self.tabs.get(self.active).and_then(|tab| tab.md_preview.as_ref()) {
+            let gap = ui.style().interaction.resize_grab_radius_side.ceil() as i8 + 1;
+            match pv.placement {
+                mdpreview::Placement::Right => editor_margin.right = gap,
+                mdpreview::Placement::Bottom => editor_margin.bottom = gap,
+                mdpreview::Placement::Tab => {}
+            }
+        }
+        if let Some(pv) = self.tabs.get(self.active).and_then(|tab| tab.svg_preview.as_ref()) {
             let gap = ui.style().interaction.resize_grab_radius_side.ceil() as i8 + 1;
             match pv.placement {
                 mdpreview::Placement::Right => editor_margin.right = gap,
@@ -1545,6 +1570,8 @@ impl eframe::App for App {
                 self.empty_workspace(ui);
             } else if self.is_preview_tab() {
                 self.show_markdown_preview(ui);
+            } else if self.is_svg_preview_tab() {
+                self.show_svg_preview(ui);
             } else {
                 self.disk_banner(ui);
                 self.find_bar(ui);

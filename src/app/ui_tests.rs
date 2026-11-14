@@ -2861,6 +2861,43 @@ fn test_python_and_powershell_files_fold() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 開啟 .svg 後可切換圖形預覽；預覽分頁與編輯分頁並存，Esc/關閉回到編輯。
+#[test]
+fn test_svg_preview_shows_and_closes() {
+    let dir = std::env::temp_dir().join(format!("madedit-svg-preview-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("demo.svg");
+    std::fs::write(&file, r##"<svg xmlns="http://www.w3.org/2000/svg" width="60" height="30"><rect width="60" height="30" fill="#336699"/></svg>"##).unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    assert!(h.state().tabs[h.state().active].svg_preview.is_none());
+    h.state_mut().pending.push(C::PreviewSvg);
+    h.run_steps(4);
+    let state = h.state();
+    let tab = &state.tabs[state.active];
+    assert!(tab.svg_preview.is_some(), "the preview exists after the command");
+    assert!(state.is_svg_preview_tab(), "the SVG preview tab is active");
+    let _ = &state;
+    // Esc 回到編輯區
+    h.key_press(Key::Escape);
+    h.run_steps(3);
+    let state = h.state();
+    let tab = &state.tabs[state.active];
+    assert!(!state.is_svg_preview_tab(), "Esc closes the preview tab");
+    assert!(tab.svg_preview.is_none(), "the preview state is dropped");
+    // 非 .svg 檔：命令只提示
+    let txt = dir.join("plain.txt");
+    std::fs::write(&txt, "hello").unwrap();
+    h.state_mut().open_path(&txt);
+    h.run_steps(3);
+    h.state_mut().pending.push(C::PreviewSvg);
+    h.run_steps(3);
+    assert!(h.query_by_label_contains("圖形預覽僅支援").is_some());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 關閉代碼折疊時命令只提示、不改變顯示。
 #[test]
 fn test_code_folding_disabled_command_does_nothing() {
