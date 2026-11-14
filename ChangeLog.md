@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - A dockable File View panel (View > File View): its tabbed left panel has a Favorites tree for grouping files. Right-click the Favorites root to add a group, a folder's files, individual files, the active file or all open files, and to switch between names and full paths; right-click a group to rename or delete it, and double-click it to open every file in the group. Missing files are skipped with a status message. Its Open tab lists every editor tab, including preview tabs, for switching files when the tab bar is crowded. Recently opened files are listed below, and favorites persist in `settings.json` without touching the files on disk.
 - PowerShell scripts (`.ps1`, `.psm1`, `.psd1`) open with bundled syntax highlighting: comments, strings, variables, cmdlets, keywords and here-strings are colored without any external files or network access.
 - Squirrel scripts (`.nut`, <https://squirrel-lang.org/>) open with bundled syntax highlighting: classes, functions, keywords, numbers, strings and `//`, `/* */` comments are colored offline.
+- INI files (`.ini`, `.cfg`, `.conf`) open with bundled highlighting for sections, keys, values and `;` comments.
 - Options > General has "Automatically reload files changed by other programs". When enabled, a file that was changed on disk and has no unsaved edits is reloaded without the banner; files with unsaved edits still show the usual prompt.
 - Opening a file now detects Big5, GBK/GB18030, Shift_JIS, EUC-KR, EUC-JP and similar encodings from its content (UTF-8 and BOMs are handled first). A GBK `.ini` file opens as GBK instead of being decoded with the Big5 fallback, so Chinese text is no longer garbled.
 
@@ -24,6 +25,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - 可停靠的「文件視圖」面板（檢視 > 文件視圖）：左側分頁面板中的「收藏」樹可將檔案分組。在「收藏」上按右鍵可新增群組、資料夾中的檔案、個別檔案、使用中的檔案或所有開啟的檔案，並切換顯示檔名／完整路徑；在群組上按右鍵可重新命名或刪除，連按兩下則開啟群組中的所有檔案，已不存在的檔案會略過並顯示訊息。「開啟」頁籤列出所有編輯器分頁（含預覽分頁），分頁列放不下時可切換檔案。下方另列最近開啟的檔案；收藏存於 `settings.json`，不會更動磁碟上的檔案。
 - PowerShell 腳本（`.ps1`、`.psm1`、`.psd1`）內建語法高亮：註解、字串、變數、Cmdlet、關鍵字與 here-string 都會著色，不需要外部檔案或網路。
 - Squirrel 腳本（`.nut`，<https://squirrel-lang.org/>）內建語法高亮：類別、函式、關鍵字、數字、字串與 `//`、`/* */` 註解都會著色，可離線使用。
+- INI 檔案（`.ini`、`.cfg`、`.conf`）內建高亮：節區、鍵、值與 `;` 註解都會著色。
 - 「工具 > 選項 > 一般」新增「其他程式修改時自動重新載入」：開啟後，磁碟上被修改且沒有未儲存編輯的檔案會直接重新載入，不再顯示提示；有未儲存編輯的檔案仍保留原本的提示流程。
 - 開檔時會依內容辨識 Big5、GBK/GB18030、Shift_JIS、EUC-KR、EUC-JP 等編碼（UTF-8 與 BOM 優先）。GBK 的 `.ini` 會以 GBK 開啟，不再被 Big5 備援編碼解成亂碼。
 

@@ -2602,6 +2602,21 @@ fn test_squirrel_script_opens_with_the_bundled_syntax() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 開啟 .ini 時自動套用內建的 INI 語法。
+#[test]
+fn test_ini_file_opens_with_the_bundled_syntax() {
+    let dir = std::env::temp_dir().join(format!("madedit-ini-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("config.ini");
+    std::fs::write(&file, "; settings\n[Info]\nNum=1\n").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    assert_eq!(h.state().doc().syntax, "INI");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 重新命名只改顯示名稱：群組名稱不可空白，檔案項目的空白名稱恢復預設顯示。
 #[test]
 fn test_favorite_rename_keeps_group_names_non_blank() {

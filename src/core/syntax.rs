@@ -123,10 +123,17 @@ const POWERSHELL_SYNTAX: &str = include_str!("../../assets/syntaxes/PowerShell.s
 /// `assets/syntaxes/Squirrel.README.txt`。
 const SQUIRREL_SYNTAX: &str = include_str!("../../assets/syntaxes/Squirrel.sublime-syntax");
 
+/// 內建的 INI 語法（Apache-2.0，jwortmann/ini-syntax）；授權全文見 `assets/syntaxes/INI.LICENSE.txt`。
+const INI_SYNTAX: &str = include_str!("../../assets/syntaxes/INI.sublime-syntax");
+
 fn load_syntaxes(config_dir: Option<&Path>) -> SyntaxSet {
     let defaults = SyntaxSet::load_defaults_newlines();
     let mut builder = defaults.into_builder();
-    for (name, text) in [("PowerShell", POWERSHELL_SYNTAX), ("Squirrel", SQUIRREL_SYNTAX)] {
+    for (name, text) in [
+        ("PowerShell", POWERSHELL_SYNTAX),
+        ("Squirrel", SQUIRREL_SYNTAX),
+        ("INI", INI_SYNTAX),
+    ] {
         match SyntaxDefinition::load_from_str(text, true, Some(name)) {
             Ok(definition) => builder.add(definition),
             Err(e) => eprintln!("MadEdit: cannot load bundled {name} syntax: {e}"),
@@ -275,6 +282,7 @@ pub fn comment_tokens(syntax: &str) -> (Option<&'static str>, Option<(&'static s
         "Lisp" | "Clojure" => Some(";"),
         "LaTeX" | "TeX" | "Erlang" | "MATLAB" => Some("%"),
         "Batch File" => Some("REM "),
+        "INI" => Some(";"),
         "HTML" | "XML" | "Markdown" | "CSS" | "Plain Text" => None,
         "Squirrel" => Some("//"),
         _ => Some("//"),
@@ -923,6 +931,25 @@ contexts:
         assert!(pushes("local n = 0x1A;\n", "constant.numeric"), "numbers must be recognized");
         assert!(pushes("local s = \"hi\";\n", "string.quoted"), "strings must be recognized");
         assert_eq!(comment_tokens("Squirrel"), (Some("//"), Some(("/*", "*/"))));    }
+
+    #[test]
+    fn test_bundled_ini_syntax_loads_and_highlights() {
+        let ps = load_syntaxes(None);
+        for file in ["config.ini", "settings.cfg", "app.conf"] {
+            assert_eq!(detect_syntax_in(&ps, Path::new(file), ""), "INI", "{file}");
+        }
+        assert!(syntax_names().iter().any(|name| name == "INI"), "the syntax menu must list INI");
+        let syntax = ps.find_syntax_by_name("INI").expect("bundled INI syntax");
+        let pushes = |line: &str, needle: &str| {
+            let mut state = ParseState::new(syntax);
+            let ops = state.parse_line(line, &ps).unwrap();
+            ops.iter().any(|(_, op)| matches!(op, ScopeStackOp::Push(scope) if scope.to_string().contains(needle)))
+        };
+        assert!(pushes("; note\n", "comment.line"), "semicolon comments must be recognized");
+        assert!(pushes("[Section]\n", "entity.name"), "sections must be recognized");
+        assert!(pushes("key=value\n", "meta.mapping"), "key-value pairs must be recognized");
+        assert_eq!(comment_tokens("INI"), (Some(";"), None));
+    }
 
     #[test]
     fn test_detect_syntax() {
