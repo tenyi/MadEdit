@@ -36,23 +36,49 @@ pub struct ScriptRunner {
     pub elapsed: Option<f32>,
     rx: Option<Receiver<Msg>>,
     child: Option<Arc<Mutex<Child>>>,
+    /// 子程序 PID：停止時按 PID 殺整棵程序樹（cmd → py → GUI 不留孤兒）
+    pid: Option<u32>,
     /// 等待子程序結束的執行緒（單位型 JoinHandle）
     worker: Option<JoinHandle<()>>,
     /// 選中片段的臨時檔案，運行結束後刪除
     temp_file: Option<PathBuf>,
     /// 使用者按下停止
-    stopped: bool,
+    pub stopped: bool,
 }
 
 impl ScriptRunner {
-    /// 停止目前子程序；程序結束後由 poll 收尾
+    /// 停止目前子程序：按 PID 殺掉整棵程序樹（cmd 與它啟動的子程序一起結束）。
+    ///
+    /// 不鎖 child 互斥鎖（等待執行緒輪詢時只短暫持鎖，但為避免任何 UI 卡頓，
+    /// Windows 直接用 taskkill 在背景執行緒殺樹）；程序結束後由 poll 收尾。
     pub fn stop(&mut self) {
+        self.stopped = true;
+        self.kill_tree();
+    }
+
+    /// 殺掉子程序樹；不在 UI 執行緒等待任何鎖或程序
+    fn kill_tree(&mut self) {
+        let Some(pid) = self.pid else { return };
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            let pid = pid.to_string();
+            let _ = Command::new("taskkill")
+                .args(["/F", "/T", "/PID", &pid])
+                .creation_flags(CREATE_NO_WINDOW)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+        }
+        #[cfg(not(windows))]
         if let Some(child) = &self.child {
+            // 等待執行緒只短暫持鎖輪詢，這裡可安全取得並 kill
             if let Ok(mut child) = child.lock() {
                 let _ = child.kill();
             }
         }
-        self.stopped = true;
+        let _ = pid;
     }
 
     /// 啟動子程序；stdout 與 stderr 各由一條執行緒逐行轉發
@@ -62,10 +88,18 @@ impl ScriptRunner {
             .args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // 輸出已重定向到面板：隱藏 cmd/powershell 等子程序自己彈出的主控台黑窗
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
         if let Some(cwd) = cwd {
             command.current_dir(cwd);
         }
         let mut child = command.spawn().map_err(|e| format!("{program}: {e}"))?;
+        let pid = child.id();
         let stdout = child.stdout.take().expect("stdout piped");
         let stderr = child.stderr.take().expect("stderr piped");
         let child = Arc::new(Mutex::new(child));
@@ -112,15 +146,22 @@ impl ScriptRunner {
         self.worker = Some({
             let child = Arc::clone(&child);
             std::thread::spawn(move || {
-                let result = child.lock().map(|mut c| c.wait().map(|s| s.code().unwrap_or(-1)).map_err(|e| e.to_string()));
-                let _ = tx.send(Msg::Done(match result {
-                    Ok(Ok(code)) => Ok(code),
-                    Ok(Err(e)) => Err(e),
-                    Err(_) => Err("wait failed".into()),
+                // 短鎖輪詢 try_wait：絕不持鎖阻塞，否則 UI 執行緒 stop() 會死鎖
+                let code = loop {
+                    let polled = child.lock().ok().and_then(|mut c| c.try_wait().ok()).flatten();
+                    match polled.map(|status| status.code().unwrap_or(-1)) {
+                        Some(code) => break Ok(code),
+                        None => std::thread::sleep(std::time::Duration::from_millis(100)),
+                    }
+                };
+                let _ = tx.send(Msg::Done(match code {
+                    Ok(code) => Ok(code),
+                    Err(e) => Err(e),
                 }));
             })
         });
         self.child = Some(child);
+        self.pid = Some(pid);
         self.rx = Some(rx);
         self.running = true;
         self.started = Some(Instant::now());
@@ -155,6 +196,7 @@ impl ScriptRunner {
                         let _ = worker.join();
                     }
                     self.child = None;
+                    self.pid = None;
                     ctx.request_repaint();
                     break;
                 }
@@ -173,12 +215,10 @@ impl ScriptRunner {
 }
 
 impl Drop for ScriptRunner {
-    /// 結束程式時不要留下執行中的子程序
+    /// 結束程式時不要留下執行中的子程序（連同它啟動的子程序一起結束）
     fn drop(&mut self) {
-        if let Some(child) = &self.child {
-            if let Ok(mut child) = child.lock() {
-                let _ = child.kill();
-            }
+        if self.pid.is_some() {
+            self.kill_tree();
         }
     }
 }
@@ -206,6 +246,10 @@ pub fn interpreter_for(ext: &str) -> Option<(String, Vec<String>)> {
         }
         ".py" => Some(("python".into(), vec!["-u".into()])),
         ".lua" => Some(("lua".into(), Vec::new())),
+        // Windows PowerShell：-NoProfile 加速啟動、Bypass 允許本地腳本、File 指定腳本路徑
+        ".ps1" => Some(("powershell".into(), vec!["-NoLogo".into(), "-NoProfile".into(), "-ExecutionPolicy".into(), "Bypass".into(), "-File".into()])),
+        // Windows 批處理：交給 cmd /c 執行（工作目錄由呼叫端設為 .bat 所在資料夾）
+        ".bat" | ".cmd" => Some(("cmd".into(), vec!["/c".into()])),
         _ => None,
     }
 }
@@ -274,6 +318,8 @@ impl App {
                 path
             }
         };
+        // cmd 等外部程式不認得 `\\?\` verbatim 路徑（cd /d "%~dp0" 會失敗），先清掉前綴
+        let file = crate::core::favorites::clean_path(file);
         args.push(file.display().to_string());
         let cwd = file.parent().map(|p| p.to_path_buf());
         self.runner.show = true;
@@ -372,6 +418,14 @@ mod tests {
         assert_eq!(py, "python");
         assert_eq!(py_args, vec!["-u".to_string()]);
         assert_eq!(interpreter_for(".lua").expect("lua").0, "lua");
+        // Windows 批處理交給 cmd /c，工作目錄已是 .bat 所在資料夾
+        let (bat, bat_args) = interpreter_for(".bat").expect("bat");
+        assert_eq!(bat, "cmd");
+        assert_eq!(bat_args, vec!["/c".to_string()]);
+        assert_eq!(interpreter_for(".cmd").expect("cmd").0, "cmd");
+        let (ps1, ps1_args) = interpreter_for(".ps1").expect("ps1");
+        assert_eq!(ps1, "powershell");
+        assert_eq!(ps1_args, vec!["-NoLogo".to_string(), "-NoProfile".to_string(), "-ExecutionPolicy".to_string(), "Bypass".to_string(), "-File".to_string()]);
         assert!(interpreter_for(".txt").is_none());
         assert!(interpreter_for("").is_none());
     }

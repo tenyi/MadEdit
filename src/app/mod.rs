@@ -1061,6 +1061,22 @@ impl App {
                                 ui.close();
                             }
                         }
+                        // 預覽為：Markdown／HTML／圖形（僅對應類型的檔案可用）
+                        let is_md = t.doc.is_markdown();
+                        let is_svg = t.doc.path.as_ref().is_some_and(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")));
+                        if is_md || is_svg || t.doc.path.is_some() {
+                            ui.separator();
+                            ui.label(egui::RichText::new(self.t("menu.preview_as", "預覽為")).weak());
+                            for (c, enabled) in [(C::PreviewMarkdown, is_md), (C::PreviewHtml, true), (C::PreviewSvg, is_svg)] {
+                                if ui
+                                    .add_enabled(enabled, egui::Button::new(menus::check_label(false, &self.cmd_text(c))))
+                                    .clicked()
+                                {
+                                    menu_cmd = Some((i, c));
+                                    ui.close();
+                                }
+                            }
+                        }
                         if let Some(p) = &t.doc.path
                             && ui.button(menus::check_label(false, &copy_path)).clicked()
                         {

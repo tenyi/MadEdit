@@ -51,7 +51,8 @@ pub struct FavoriteGroup {
 
 /// Windows 的 canonicalize 會加上 `\\?\` 前綴；收藏顯示與儲存時去掉，仍然指向同一個檔案。
 /// UNC 路徑的 `\\?\UNC\server\share` 還原成 `\\server\share`。
-fn clean_path(path: PathBuf) -> PathBuf {
+/// 去除 Windows 的 verbatim 前綴（`\\?\`、`\\?\UNC\`）；cmd 等外部程式不認得這種路徑
+pub(crate) fn clean_path(path: PathBuf) -> PathBuf {
     #[cfg(windows)]
     if let Some(s) = path.to_str() {
         if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {

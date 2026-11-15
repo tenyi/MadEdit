@@ -2652,6 +2652,43 @@ fn test_run_script_streams_output_to_the_panel() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// F5 運行 .bat：cmd 以 .bat 所在資料夾為當前目錄（%CD% 即為證明）。
+#[cfg(windows)]
+#[test]
+fn test_run_script_bat_uses_its_folder_as_cwd() {
+    let dir = std::env::temp_dir().join(format!("madedit-run-bat-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("show-cwd.bat");
+    std::fs::write(&file, "@echo off\r\necho %CD%\r\n").unwrap();
+
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(2);
+    // 與 run_script 相同的組裝路徑：interpreter_for(".bat") → cmd /c <檔案>，cwd = 所在資料夾
+    let (program, mut args) = super::runner::interpreter_for(".bat").expect(".bat must map to an interpreter");
+    args.push(file.display().to_string());
+    let runner = &mut h.state_mut().runner;
+    runner.show = true;
+    assert!(runner.start_process(&program, &args, Some(dir.as_path())).is_ok());
+    for _ in 0..200 {
+        h.state_mut().runner.poll(&eframe::egui::Context::default());
+        h.run_steps(1);
+        if !h.state().runner.running {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let lines = h.state_mut().runner.lines.join("\n");
+    let dir_norm = dir.to_string_lossy().trim_end_matches('\\').to_lowercase();
+    assert!(
+        lines.to_lowercase().contains(&dir_norm),
+        "輸出應包含 .bat 所在資料夾（%CD%）: {lines}"
+    );
+    assert_eq!(h.state_mut().runner.exit, Some(Ok(0)));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 無法識別的副檔名提示，不啟動程序。
 #[test]
 fn test_run_script_rejects_unknown_extensions() {
@@ -2896,6 +2933,146 @@ fn test_svg_preview_shows_and_closes() {
     h.run_steps(3);
     assert!(h.query_by_label_contains("圖形預覽僅支援").is_some());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 編輯器分頁右鍵選單有「預覽為」項目：Markdown 檔可用 Markdown/HTML，.svg 可用圖形，其他檔只有 HTML。
+#[test]
+fn test_tab_context_menu_has_preview_entries() {
+    let dir = std::env::temp_dir().join(format!("madedit-tab-menu-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let md = dir.join("doc.md");
+    std::fs::write(&md, "# hello").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&md);
+    h.run_steps(3);
+    // 開啟分頁右鍵選單（點擊分頁標題的 context menu；分頁本體是 Role::Tab）
+    let tab_label = h.state().doc().display_name();
+    h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some(tab_label.as_str()))
+        .click_secondary();
+    h.run_steps(3);
+    assert!(h.query_by_label_contains("預覽為").is_some(), "menu shows a preview section");
+    // Markdown 檔：以 Markdown 預覽可用（加粗按鈕仍在，無 disabled 標記即可點）
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("以 Markdown 預覽")).click();
+    h.run_steps(4);
+    assert!(h.state().tabs[h.state().active].md_preview.is_some(), "Markdown preview opens from the tab menu");
+    // 開啟 .svg：圖形預覽項目可用
+    let svg = dir.join("pic.svg");
+    std::fs::write(&svg, r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="#336699"/></svg>"##).unwrap();
+    h.state_mut().open_path(&svg);
+    h.run_steps(3);
+    let svg_label = h.state().doc().display_name();
+    h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some(svg_label.as_str()))
+        .click_secondary();
+    h.run_steps(3);
+    assert!(h.query_by_label_contains("以圖形預覽（SVG）").is_some(), "SVG preview entry is in the tab menu");
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().is_some_and(|l| l.contains("以圖形預覽"))).click();
+    h.run_steps(4);
+    assert!(h.state().tabs[h.state().active].svg_preview.is_some(), "SVG preview opens from the tab menu");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// F5 運行 .ps1：powershell -File 執行，輸出串流到面板。
+#[cfg(windows)]
+#[test]
+fn test_run_script_ps1_streams_output() {
+    let dir = std::env::temp_dir().join(format!("madedit-run-ps1-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("sample.ps1");
+    std::fs::write(&file, "Write-Output 'hello from ps1'\r\n").unwrap();
+
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(2);
+    let (program, mut args) = super::runner::interpreter_for(".ps1").expect(".ps1 must map to an interpreter");
+    args.push(file.display().to_string());
+    let runner = &mut h.state_mut().runner;
+    runner.show = true;
+    assert!(runner.start_process(&program, &args, Some(dir.as_path())).is_ok());
+    for _ in 0..200 {
+        h.state_mut().runner.poll(&eframe::egui::Context::default());
+        h.run_steps(1);
+        if !h.state().runner.running {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(30));
+    }
+    let lines = h.state_mut().runner.lines.join("\n");
+    assert!(lines.contains("hello from ps1"), "面板應顯示 ps1 輸出：{lines}");
+    assert_eq!(h.state_mut().runner.exit, Some(Ok(0)));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// doc.path 帶 `\\?\` verbatim 前綴（canonicalize 產生）時，run_script 會先清掉前綴：
+/// cmd 不認得 verbatim 路徑，否則 `cd /d "%~dp0"` 會報「系統找不到指定的路徑」。
+#[cfg(windows)]
+#[test]
+fn test_run_script_strips_verbatim_path_prefix() {
+    let dir = std::env::temp_dir().join(format!("madedit-run-verbatim-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("show-cwd.bat");
+    std::fs::write(&file, "@echo off\r\necho %CD%\r\necho %~dp0\r\n").unwrap();
+
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(2);
+    // 模擬 canonicalize 產生的 verbatim 路徑（真實開檔流程會出現）
+    let verbatim = std::path::PathBuf::from(format!(r"\\?\{}", file.display()));
+    h.state_mut().doc_mut().path = Some(verbatim);
+    h.run_steps(2);
+    h.state_mut().pending.push(C::RunScript);
+    for _ in 0..200 {
+        h.state_mut().runner.poll(&eframe::egui::Context::default());
+        h.run_steps(1);
+        if !h.state().runner.running {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let lines = h.state_mut().runner.lines.join("\n");
+    let dir_norm = dir.to_string_lossy().trim_end_matches('\\').to_lowercase();
+    assert!(
+        lines.to_lowercase().contains(&dir_norm),
+        "verbatim prefix must be stripped so cmd finds the path: {lines}"
+    );
+    assert!(!lines.contains("找不到指定的路徑"), "{lines}");
+    assert_eq!(h.state_mut().runner.exit, Some(Ok(0)));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 停止按鈕不得死鎖：殺樹後 poll 應在短時間內收尾（回歸：等待執行緒持鎖 wait 造成 UI 卡死）。
+#[cfg(windows)]
+#[test]
+fn test_stop_kills_running_process_without_blocking() {
+    use std::time::{Duration, Instant};
+    let mut h = harness();
+    {
+        let runner = &mut h.state_mut().runner;
+        runner.show = true;
+        assert!(
+            runner.start_process("cmd", &["/C".into(), "ping".into(), "-n".into(), "30".into(), "127.0.0.1".into()], None).is_ok()
+        );
+    }
+    h.run_steps(2);
+    assert!(h.state().runner.running);
+    let start = Instant::now();
+    h.state_mut().runner.stop();
+    // stop() 本身不得阻塞；poll 在殺樹後迅速收尾
+    for _ in 0..150 {
+        h.state_mut().runner.poll(&eframe::egui::Context::default());
+        h.run_steps(1);
+        if !h.state().runner.running {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    let state = h.state();
+    assert!(!state.runner.running, "the process must stop quickly");
+    assert!(state.runner.stopped);
+    assert!(start.elapsed() < Duration::from_secs(10), "stop must not deadlock");
+    assert!(state.runner.exit.is_some());
 }
 
 /// 關閉代碼折疊時命令只提示、不改變顯示。

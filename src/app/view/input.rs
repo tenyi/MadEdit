@@ -850,6 +850,23 @@ pub(super) fn context_menu(
                 ui.close();
             }
         }
+        // 預覽為：Markdown／HTML／圖形（僅對應類型的檔案可用）
+        let is_md = doc.is_markdown();
+        let is_svg = doc.path.as_ref().is_some_and(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")));
+        if is_md || is_svg || doc.path.is_some() {
+            ui.separator();
+            let preview_label = i18n::translate(lang, "menu.preview_as", "預覽為");
+            ui.label(egui::RichText::new(preview_label).weak());
+            for (c, enabled) in [(C::PreviewMarkdown, is_md), (C::PreviewHtml, true), (C::PreviewSvg, is_svg)] {
+                if ui
+                    .add_enabled(enabled, egui::Button::new(menus::check_label(false, &i18n::command_text(lang, c))))
+                    .clicked()
+                {
+                    out.commands.push(c);
+                    ui.close();
+                }
+            }
+        }
     });
     if let Some((line, s, e, word)) = replace_word {
         let hint = line..line + 1;
