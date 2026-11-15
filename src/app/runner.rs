@@ -11,10 +11,11 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
-use eframe::egui::{self, RichText};
+use eframe::egui::{self, Align2, RichText};
 
-use super::{form, App};
+use super::{form, menus, App};
 use crate::app::fonts::EDITOR_FAMILY;
+use crate::app::i18n;
 use crate::core::encoding;
 
 /// Runner 訊息：一行輸出，或子程序結束
@@ -24,11 +25,12 @@ enum Msg {
 }
 
 /// 一次運行的狀態與輸出
-#[derive(Default)]
 pub struct ScriptRunner {
     pub show: bool,
     pub running: bool,
     pub lines: Vec<String>,
+    /// 輸出全文（= lines 以換行相接）；供可選取的輸出文字框顯示與複製
+    pub text: String,
     /// 運行結束的結果：退出碼或啟動失敗訊息
     pub exit: Option<Result<i32, String>>,
     pub started: Option<Instant>,
@@ -44,9 +46,51 @@ pub struct ScriptRunner {
     temp_file: Option<PathBuf>,
     /// 使用者按下停止
     pub stopped: bool,
+    /// 最近一次有效的選取範圍（字元索引），供右鍵「複製」使用；
+    /// 文字框失焦時 egui 會收合選取，因此另行記住
+    sel: Option<(usize, usize)>,
+}
+
+impl Default for ScriptRunner {
+    fn default() -> Self {
+        Self {
+            show: false,
+            running: false,
+            lines: Vec::new(),
+            text: String::new(),
+            exit: None,
+            started: None,
+            elapsed: None,
+            rx: None,
+            child: None,
+            pid: None,
+            worker: None,
+            temp_file: None,
+            stopped: false,
+            sel: None,
+        }
+    }
 }
 
 impl ScriptRunner {
+    /// 新增一行輸出（同步維護可選取文字框用的全文）
+    fn push_line(&mut self, line: String) {
+        self.lines.push(line.clone());
+        if !self.text.is_empty() {
+            self.text.push('\n');
+        }
+        self.text.push_str(&line);
+    }
+
+    /// 清空輸出（面板按鈕與右鍵選單共用）
+    fn clear_output(&mut self) {
+        self.lines.clear();
+        self.text.clear();
+        self.exit = None;
+        self.stopped = false;
+        self.sel = None;
+    }
+
     /// 停止目前子程序：按 PID 殺掉整棵程序樹（cmd 與它啟動的子程序一起結束）。
     ///
     /// 不鎖 child 互斥鎖（等待執行緒輪詢時只短暫持鎖，但為避免任何 UI 卡頓，
@@ -173,19 +217,20 @@ impl ScriptRunner {
 
     /// 收取子程序輸出與結束事件；背景執行緒活著時安排重繪
     pub fn poll(&mut self, ctx: &egui::Context) {
-        let Some(rx) = &self.rx else { return };
+        // 先取出接收端，才能在同一輪迴圈裡同時收訊息與改動自身
+        let Some(rx) = self.rx.take() else { return };
+        let mut keep_rx = true;
         loop {
             match rx.try_recv() {
-                Ok(Msg::Line(line)) => self.lines.push(line),
+                Ok(Msg::Line(line)) => self.push_line(line),
                 Ok(Msg::Done(result)) => {
                     self.running = false;
-                    self.rx = None;
                     // 凍結耗時：結束後面板不再繼續計時
                     self.elapsed = self.started.map(|t| t.elapsed().as_secs_f32());
                     self.exit = Some(match result {
                         Ok(code) => Ok(code),
                         Err(e) => {
-                            self.lines.push(format!("{e}"));
+                            self.push_line(format!("{e}"));
                             Err(e)
                         }
                     });
@@ -198,6 +243,8 @@ impl ScriptRunner {
                     self.child = None;
                     self.pid = None;
                     ctx.request_repaint();
+                    // 結束後不再放回接收端
+                    keep_rx = false;
                     break;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {
@@ -206,10 +253,13 @@ impl ScriptRunner {
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     self.running = false;
-                    self.rx = None;
+                    keep_rx = false;
                     break;
                 }
             }
+        }
+        if keep_rx {
+            self.rx = Some(rx);
         }
     }
 }
@@ -324,18 +374,20 @@ impl App {
         let cwd = file.parent().map(|p| p.to_path_buf());
         self.runner.show = true;
         self.runner.lines.clear();
+        self.runner.text.clear();
         if let Err(e) = self.runner.start_process(&program, &args, cwd.as_deref()) {
             // 啟動失敗時不會有 Done 事件，立即清掉暫存檔
             if let Some(tmp) = self.runner.temp_file.take() {
                 let _ = std::fs::remove_file(tmp);
             }
             self.runner.exit = Some(Err(e.clone()));
-            self.runner.lines.push(e);
+            self.runner.push_line(e);
         }
     }
 
     /// 底部「運行輸出」面板
     pub fn script_output_panel(&mut self, ui: &mut egui::Ui) {
+        let lang = self.ui_lang();
         let title = self.t("run.title", "運行輸出");
         let running = self.runner.running;
         let exit = self.runner.exit.clone();
@@ -368,9 +420,7 @@ impl App {
                     self.runner.show = false;
                 }
                 if ui.button(self.t("opt.clear", "清除")).clicked() {
-                    self.runner.lines.clear();
-                    self.runner.exit = None;
-                    self.runner.stopped = false;
+                    self.runner.clear_output();
                 }
                 if running && ui.button(self.t("run.stop", "停止")).clicked() {
                     self.runner.stop();
@@ -378,31 +428,115 @@ impl App {
             });
         });
         ui.separator();
-        let lines = self.runner.lines.clone();
         let running = self.runner.running;
+        let has_output = !self.runner.text.is_empty();
         // 輸出與編輯區使用相同字型與字級（含等寬/比例設定由編輯區字型決定）
         let output_font = egui::FontId::new(self.settings.font_size, egui::FontFamily::Name(EDITOR_FAMILY.into()));
-        egui::ScrollArea::both().id_salt("script-output").auto_shrink([false, false]).show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            if lines.is_empty() && !running {
-                ui.add_space(12.0);
-                ui.vertical_centered(|ui| ui.label(RichText::new(self.t("run.empty", "（尚無輸出）")).weak()));
-                return;
+        let empty_center = ui.available_rect_before_wrap().center();
+        // 可選取的唯讀文字框：傳入 &str 讓文字框只可選取、複製而不能編輯；
+        // 外層捲動區保留長輸出的垂直捲動，右鍵選單掛在整個面板上（含空白處）
+        let mut menu = OutputMenu::default();
+        let mut state = None;
+        let mut text_id = None;
+        let mut selected = None;
+        let body = ui
+            .scope(|ui| {
+                egui::ScrollArea::vertical().id_salt("script-output").auto_shrink([false, false]).show(ui, |ui| {
+                    let mut text = self.runner.text.as_str();
+                    let output = egui::TextEdit::multiline(&mut text)
+                        .id_salt("script-output-text")
+                        .frame(egui::Frame::NONE)
+                        .font(output_font.clone())
+                        .desired_width(ui.available_width())
+                        .desired_rows(1)
+                        .show(ui);
+                    text_id = Some(output.response.id);
+                    if let Some(range) = output.cursor_range {
+                        let (a, b) = (range.primary.index.min(range.secondary.index).0, range.primary.index.max(range.secondary.index).0);
+                        if a < b {
+                            selected = Some((a, b));
+                        }
+                    }
+                    state = Some(output.state);
+                });
+            })
+            .response;
+        body.container_context_menu(|ui| output_menu(ui, lang, &mut menu));
+        if selected.is_some() {
+            self.runner.sel = selected;
+        }
+        if menu.copy {
+            let text = selected_or_all(&self.runner.text, self.runner.sel);
+            self.copy_to_system(&text);
+            self.set_status(self.t("run.copied", "已複製輸出到剪貼簿"));
+        }
+        if menu.clear {
+            self.runner.clear_output();
+        }
+        // 右鍵不清掉選取（Windows 習慣）：egui 把次要鍵按下列為重新定位游標，
+        // 會把選取收合成一個插入點，所以把先前記住的範圍寫回去，選取highlight仍留著
+        let keep = if menu.select_all {
+            Some((0, self.runner.text.chars().count()))
+        } else if body.container_secondary_clicked() {
+            self.runner.sel
+        } else {
+            None
+        };
+        if let Some((a, b)) = keep {
+            let len = self.runner.text.chars().count();
+            let (a, b) = (a.min(b).min(len), a.max(b).min(len));
+            if a < b {
+                if let (Some(mut state), Some(id)) = (state, text_id) {
+                    state.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(a), egui::text::CCursor::new(b))));
+                    state.store(ui.ctx(), id);
+                    ui.memory_mut(|mem| mem.request_focus(id));
+                }
             }
-            for line in &lines {
-                // 長行不換行，交給水平捲動，與主控台觀感一致
-                ui.add(
-                    egui::Label::new(RichText::new(line).font(output_font.clone()))
-                        .wrap_mode(egui::TextWrapMode::Extend),
-                );
-            }
-            if running {
-                // 提示長度給版面一點空間，避免空內容時面板收縮抖動
-                ui.add_space(ui.available_height().min(20.0));
-            }
-        });
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+        }
+        if !has_output && !running {
+            ui.painter().text(empty_center, Align2::CENTER_CENTER, self.t("run.empty", "（尚無輸出）"), output_font, ui.visuals().weak_text_color());
+        }
+        if running {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+        }
     }
+}
+
+/// 輸出面板右鍵選單的動作（全選／複製／清空）
+#[derive(Default)]
+struct OutputMenu {
+    select_all: bool,
+    copy: bool,
+    clear: bool,
+}
+
+/// 輸出面板右鍵選單；空白處與文字框共用同一份選單
+fn output_menu(ui: &mut egui::Ui, lang: i18n::Lang, menu: &mut OutputMenu) {
+    use crate::app::i18n::translate;
+    ui.set_min_width(menus::SUBMENU_MIN_WIDTH);
+    if ui.button(menus::check_label(false, translate(lang, "run.select_all", "全選"))).clicked() {
+        menu.select_all = true;
+        ui.close();
+    }
+    if ui.button(menus::check_label(false, translate(lang, "run.copy", "複製"))).clicked() {
+        menu.copy = true;
+        ui.close();
+    }
+    if ui.button(menus::check_label(false, translate(lang, "run.clear", "清空"))).clicked() {
+        menu.clear = true;
+        ui.close();
+    }
+}
+
+/// 取得要複製的文字：有選取範圍時取選中的字元區間，否則全文
+fn selected_or_all(text: &str, sel: Option<(usize, usize)>) -> String {
+    let Some((a, b)) = sel else { return text.to_string() };
+    let len = text.chars().count();
+    let (a, b) = (a.min(b).min(len), a.max(b).min(len));
+    if a >= b {
+        return text.to_string();
+    }
+    text.chars().skip(a).take(b - a).collect()
 }
 
 #[cfg(test)]
@@ -453,5 +587,19 @@ mod tests {
         assert!(!had_errors);
         assert_eq!(decoded, text);
         let _ = std::fs::remove_file(tmp);
+    }
+
+    #[test]
+    fn test_selected_or_all_prefers_selection() {
+        assert_eq!(selected_or_all("abc\ndef", None), "abc\ndef");
+        assert_eq!(selected_or_all("abc\ndef", Some((0, 3))), "abc");
+        assert_eq!(selected_or_all("abc\ndef", Some((4, 7))), "def");
+        // 反向範圍（游標在選取起點左側）仍取同一段
+        assert_eq!(selected_or_all("abc\ndef", Some((7, 4))), "def");
+        // 空範圍與越界範圍都退回全文
+        assert_eq!(selected_or_all("abc", Some((2, 2))), "abc");
+        assert_eq!(selected_or_all("abc", Some((0, 99))), "abc");
+        // 字元索引而非位元組索引
+        assert_eq!(selected_or_all("中文abc", Some((1, 3))), "文a");
     }
 }

@@ -18,6 +18,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - A selection run writes the temporary file in the document's own encoding (a GBK script stays GBK), and the elapsed time stops counting after the run finishes.
 - Options > General has "Automatically reload files changed by other programs". When enabled, a file that was changed on disk and has no unsaved edits is reloaded without the banner; files with unsaved edits still show the usual prompt.
 - Opening a file now detects Big5, GBK/GB18030, Shift_JIS, EUC-KR, EUC-JP and similar encodings from its content (UTF-8 and BOMs are handled first). A GBK `.ini` file opens as GBK instead of being decoded with the Big5 fallback, so Chinese text is no longer garbled.
+- The text in the Script Output panel can be selected and copied: drag to select, Ctrl+C to copy, and right-click for Select All, Copy and Clear. Long output still scrolls in the panel.
 
 ### Changed
 - Editor tabs and the File View panel's tab now use a flat, content-connected style with rounded top corners only (like Windows 11 Explorer), instead of detached rounded buttons, so the selected tab merges with the pane below it.
@@ -38,6 +39,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - 執行選取片段時，暫存檔沿用文件本身編碼（GBK 腳本仍是 GBK）；執行結束後耗時不再繼續增加。
 - 「工具 > 選項 > 一般」新增「其他程式修改時自動重新載入」：開啟後，磁碟上被修改且沒有未儲存編輯的檔案會直接重新載入，不再顯示提示；有未儲存編輯的檔案仍保留原本的提示流程。
 - 開檔時會依內容辨識 Big5、GBK/GB18030、Shift_JIS、EUC-KR、EUC-JP 等編碼（UTF-8 與 BOM 優先）。GBK 的 `.ini` 會以 GBK 開啟，不再被 Big5 備援編碼解成亂碼。
+- 「執行輸出」面板的文字可以選取與複製：拖曳選取、Ctrl+C 複製，右鍵選單提供「全選／複製／清空」；長輸出仍可在面板內捲動。
 
 #### 變更
 - 編輯器分頁與「文件視圖」面板的分頁改為上緣圓角、下緣與內容相連的扁平樣式（類似 Windows 11 檔案總管），不再是有分離感的圓角按鈕；選取的分頁會與下方內容連成一體。

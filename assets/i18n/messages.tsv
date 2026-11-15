@@ -653,3 +653,7 @@ menuPreviewSvg	Preview as Graphic (SVG)	以图形预览（SVG）	グラフィッ
 svg.not_svg	Graphic preview only supports .svg files	图形预览仅支持 .svg 文件	グラフィックプレビューは .svg のみ対応	그래픽 미리 보기는 .svg 파일만 지원	Grafikvorschau nur für .svg-Dateien	La vista previa gráfica solo admite archivos .svg	L’aperçu graphique ne prend en charge que les fichiers .svg	L’anteprima grafica supporta solo file .svg	A visualização gráfica só suporta arquivos .svg
 svg.bad_file	Cannot parse this SVG file	无法解析此 SVG 文件	この SVG ファイルを解析できません	이 SVG 파일을 구문 분석할 수 없습니다	Diese SVG-Datei kann nicht gelesen werden	No se puede analizar este archivo SVG	Impossible d’analyser ce fichier SVG	Impossibile analizzare questo file SVG	Não foi possível analisar este arquivo SVG
 md.preview_title	Preview	预览	プレビュー	미리 보기	Vorschau	Vista previa	Aperçu	Anteprima	Visualização
+run.select_all	Select All	全选	すべて選択	모두 선택	Alles auswählen	Seleccionar todo	Tout sélectionner	Seleziona tutto	Selecionar tudo
+run.copy	Copy	复制	コピー	복사	Kopieren	Copiar	Copier	Copia	Copiar
+run.copied	Output copied to clipboard	已复制输出到剪贴板	出力をクリップボードにコピーしました	출력을 클립보드에 복사했습니다	Ausgabe in die Zwischenablage kopiert	Salida copiada al portapapeles	Sortie copiée dans le presse-papiers	Output copiato negli appunti	Saída copiada para a área de transferência
+run.clear	Clear	清空	クリア	지우기	Leeren	Borrar	Effacer	Pulisci	Limpar

@@ -2646,7 +2646,7 @@ fn test_run_script_streams_output_to_the_panel() {
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    let lines = h.state_mut().runner.lines.join("\n");
+    let lines = h.state_mut().runner.text.clone();
     assert!(lines.contains("print(1)"), "面板應顯示檔案內容：{lines}");
     assert_eq!(h.state_mut().runner.exit, Some(Ok(0)));
     let _ = std::fs::remove_dir_all(&dir);
@@ -2679,7 +2679,7 @@ fn test_run_script_bat_uses_its_folder_as_cwd() {
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    let lines = h.state_mut().runner.lines.join("\n");
+    let lines = h.state_mut().runner.text.clone();
     let dir_norm = dir.to_string_lossy().trim_end_matches('\\').to_lowercase();
     assert!(
         lines.to_lowercase().contains(&dir_norm),
@@ -2699,7 +2699,7 @@ fn test_run_script_rejects_unknown_extensions() {
     assert!(!h.state().runner.running);
 }
 
-/// 運行輸出面板顯示既有輸出行與退出碼。
+/// 運行輸出面板顯示既有輸出與退出碼；右鍵選單可全選/複製/清空。
 #[test]
 fn test_output_panel_shows_lines_and_exit_code() {
     let mut h = harness();
@@ -2707,17 +2707,58 @@ fn test_output_panel_shows_lines_and_exit_code() {
         let runner = &mut h.state_mut().runner;
         runner.show = true;
         runner.lines.push("hello output".into());
+        runner.text = "hello output".into();
         runner.exit = Some(Ok(0));
         runner.elapsed = Some(0.25);
     }
     h.run_steps(3);
-    assert!(h.query_by_label("hello output").is_some());
-    assert!(h.query_by(|n| n.role() == egui::accesskit::Role::Label && n.value().is_some_and(|v| v.contains("退出碼"))).is_some());
+    // 只讀文字框內容包含輸出（可選取、可複製）
+    assert!(
+        h.query_all_by(|n| n.role() == egui::accesskit::Role::MultilineTextInput && n.value().is_some_and(|v| v.contains("hello output"))).next().is_some(),
+        "output text is shown in a selectable text box"
+    );
+    assert!(h.query_all_by(|n| n.role() == egui::accesskit::Role::Label && n.value().is_some_and(|v| v.contains("退出碼"))).next().is_some());
     // 結束後耗時必須是凍結值，不能繼續增加
     assert!(h.query_all_by(|n| n.role() == egui::accesskit::Role::Label && n.value().is_some_and(|v| v.contains("0.250"))).next().is_some());
-    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("清除")).click();
+    // 右鍵選單：全選／複製／清空（掛在整個面板上，空白處也能開）
+    let copies = |h: &Harness<'static, App>| h.query_all_by(|n| n.label().is_some_and(|l| l.contains("複製"))).count();
+    assert_eq!(copies(&h), 1, "only the toolbar has 複製 before the menu opens");
+    let open_menu = |h: &mut Harness<'static, App>, pos: egui::Pos2| {
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        h.run_steps(3);
+    };
+    // 輸出文字框（整塊面板都能叫出選單）
+    let output_rect = h.get_by(|n| n.role() == egui::accesskit::Role::MultilineTextInput).rect();
+    open_menu(&mut h, output_rect.center());
+    let select_all = |n: &egui_kittest::kittest::AccessKitNode<'_>| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("　 全選");
+    let menu_copy = |n: &egui_kittest::kittest::AccessKitNode<'_>| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("　 複製");
+    let menu_clear = |n: &egui_kittest::kittest::AccessKitNode<'_>| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("　 清空");
+    assert!(h.query_all_by(select_all).next().is_some(), "context menu shows select-all");
+    assert_eq!(copies(&h), 2, "context menu adds 複製");
+    assert!(h.query_all_by(menu_clear).next().is_some(), "context menu shows clear");
+    // 全選：文字框取得焦點，之後可直接 Ctrl+C
+    h.get_by(select_all).click();
+    h.run_steps(3);
+    assert!(h.get_by(|n| n.role() == egui::accesskit::Role::MultilineTextInput).is_focused(), "select-all focuses the output text box");
+    // 複製：未選取時複製全文，並在狀態列回報
+    open_menu(&mut h, output_rect.center());
+    h.get_by(menu_copy).click();
+    h.run_steps(3);
+    assert!(h.state().status.as_ref().is_some_and(|(m, _)| m.contains("已複製輸出到剪貼簿")), "copy reports in the status bar");
+    // 清空：輸出與結束狀態一起清除
+    open_menu(&mut h, output_rect.center());
+    h.get_by(menu_clear).click();
     h.run_steps(2);
+    assert!(h.state().runner.text.is_empty());
     assert!(h.state().runner.lines.is_empty());
+    assert!(h.state().runner.exit.is_none());
 }
 
 /// 代碼折疊：全部折疊縮短顯示列、游標所在區塊自動展開、全部展開還原。
@@ -2998,7 +3039,7 @@ fn test_run_script_ps1_streams_output() {
         }
         std::thread::sleep(std::time::Duration::from_millis(30));
     }
-    let lines = h.state_mut().runner.lines.join("\n");
+    let lines = h.state_mut().runner.text.clone();
     assert!(lines.contains("hello from ps1"), "面板應顯示 ps1 輸出：{lines}");
     assert_eq!(h.state_mut().runner.exit, Some(Ok(0)));
     let _ = std::fs::remove_dir_all(&dir);
@@ -3031,7 +3072,7 @@ fn test_run_script_strips_verbatim_path_prefix() {
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    let lines = h.state_mut().runner.lines.join("\n");
+    let lines = h.state_mut().runner.text.clone();
     let dir_norm = dir.to_string_lossy().trim_end_matches('\\').to_lowercase();
     assert!(
         lines.to_lowercase().contains(&dir_norm),
@@ -3073,6 +3114,41 @@ fn test_stop_kills_running_process_without_blocking() {
     assert!(state.runner.stopped);
     assert!(start.elapsed() < Duration::from_secs(10), "stop must not deadlock");
     assert!(state.runner.exit.is_some());
+}
+
+/// 串流輸出必須在程序仍在執行時就顯示（不能等結束才一次補上）。
+#[cfg(windows)]
+#[test]
+fn test_run_script_streams_output_before_exit() {
+    use std::time::Duration;
+    let mut h = harness();
+    h.state_mut().runner.show = true;
+    assert!(h
+        .state_mut()
+        .runner
+        .start_process("cmd", &["/C".into(), "echo ready & ping -n 30 127.0.0.1".into()], None)
+        .is_ok());
+    let mut streamed_while_running = false;
+    for _ in 0..200 {
+        h.state_mut().runner.poll(&eframe::egui::Context::default());
+        let state = h.state();
+        if state.runner.text.contains("ready") {
+            // ping 還在跑：輸出必須已經到手，而不是等 Done 才補
+            streamed_while_running = state.runner.running;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    h.state_mut().runner.stop();
+    for _ in 0..150 {
+        h.state_mut().runner.poll(&eframe::egui::Context::default());
+        if !h.state().runner.running {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    assert!(streamed_while_running, "output must appear while the process is still running");
+    assert!(!h.state().runner.running, "the process must stop after stop()");
 }
 
 /// 關閉代碼折疊時命令只提示、不改變顯示。
@@ -3166,4 +3242,49 @@ fn test_favorite_rename_keeps_group_names_non_blank() {
     assert_eq!(h.state().settings.favorites[0].items[0].label(true), "報價單");
     h.state_mut().apply_favorite_name(FavTarget::Item(0, 0), "");
     assert_eq!(h.state().settings.favorites[0].items[0].label(true), "a.txt");
+}
+
+/// 右鍵不應清掉選取（Windows 習慣）：點右鍵後選取範圍仍在，選單同時開出來。
+#[test]
+fn test_output_panel_right_click_keeps_selection() {
+    use egui_kittest::kittest::NodeT as _;
+    let mut h = harness();
+    {
+        let runner = &mut h.state_mut().runner;
+        runner.show = true;
+        runner.text = "hello\nworld\nthird".into();
+        runner.lines = vec!["hello".into(), "world".into(), "third".into()];
+        runner.exit = Some(Ok(0));
+    }
+    h.run_steps(3);
+    let is_text_box = |n: &egui_kittest::kittest::AccessKitNode<'_>| n.role() == egui::accesskit::Role::MultilineTextInput;
+    // 目前的自動化選取範圍（起點／終點字元索引）
+    let selection = |h: &Harness<'static, App>| {
+        h.get_by(is_text_box)
+            .accesskit_node()
+            .raw_text_selection()
+            .map(|s| (s.anchor.character_index, s.focus.character_index))
+    };
+    let rect = h.get_by(is_text_box).rect();
+    let inside = egui::pos2(rect.left() + 30.0, rect.center().y);
+    let click = |h: &mut Harness<'static, App>, button, pos| {
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton { pos, button, pressed, modifiers: egui::Modifiers::NONE });
+        }
+        h.run_steps(2);
+    };
+    // 主鍵點一下取得焦點，Ctrl+A 全選
+    click(&mut h, egui::PointerButton::Primary, inside);
+    for pressed in [true, false] {
+        h.event(egui::Event::Key { key: Key::A, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::COMMAND });
+    }
+    h.run_steps(2);
+    let before = selection(&h).expect("ctrl+A sets a selection");
+    assert_ne!(before.0, before.1, "ctrl+A must select all text: {before:?}");
+    // 右鍵：選單要開，選取不能消失
+    click(&mut h, egui::PointerButton::Secondary, inside);
+    assert!(h.query_all_by(|n| n.label().is_some_and(|l| l.contains("全選"))).next().is_some(), "right click opens the menu");
+    let after = selection(&h).expect("the selection survives the right click");
+    assert_ne!(after.0, after.1, "right click must keep the selection: {after:?}");
+    assert_eq!(after, before, "the kept selection is the same range");
 }
