@@ -1724,6 +1724,8 @@ impl App {
         } else if !keep && self.confirm.is_none() {
             // 確認視窗已關閉且沒有後續確認（取消、重新載入或存檔失敗）：中止暫存的關閉流程
             self.pending_close = None;
+            // 取消關閉流程時，收藏群組的「取代開啟」也不進行
+            self.pending_open_group = None;
             // 還有其他等待詢問是否建立的檔案時，繼續問下一個
             if let Some(next) = self.pending_create.first() {
                 self.confirm = Some(Confirm::CreateNew { path: next.clone() });

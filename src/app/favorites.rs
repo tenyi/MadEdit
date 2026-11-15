@@ -165,10 +165,10 @@ impl App {
                     } else if resp.clicked() {
                         *action = Some(FavAction::ToggleGroup(gi));
                     }
-                    let resp = resp.on_hover_text(self.t("fav.group_hint", "按兩下開啟群組中的所有檔案"));
+                    let resp = resp.on_hover_text(self.t("fav.group_hint", "按兩下開啟群組中的所有檔案（取代目前開啟的分頁）"));
                     resp.context_menu(|ui| {
                         ui.set_min_width(menus::SUBMENU_MIN_WIDTH);
-                        if ui.button(menus::check_label(false, self.t("fav.open_group", "開啟群組中的所有檔案"))).clicked() {
+                        if ui.button(menus::check_label(false, self.t("fav.open_group", "開啟群組中的所有檔案（取代目前開啟的分頁）"))).clicked() {
                             *action = Some(FavAction::OpenGroup(gi));
                             ui.close();
                         }
@@ -488,6 +488,24 @@ impl App {
             self.set_status(self.t("fav.empty_group", "群組中沒有檔案"));
             return;
         }
+        self.fav_selected = Some(gi);
+        // 取代開啟：先關閉目前所有分頁（有未存檔修改走既有的儲存確認流程），
+        // 流程結束後由 pending_open_group 接續開啟群組；使用者取消則不開啟。
+        self.pending_open_group = Some(gi);
+        let ids: Vec<u64> = self.tabs.iter().map(|t| t.doc.id).collect();
+        self.request_close(ids, false);
+        if self.confirm.is_none() && self.pending_close.is_none() {
+            self.pending_open_group = None;
+            self.open_group_now(gi);
+        }
+    }
+
+    /// 實際開啟群組中的所有檔案（取代開啟流程的第二步）
+    pub(super) fn open_group_now(&mut self, gi: usize) {
+        let paths: Option<Vec<PathBuf>> = self.settings.favorites.get(gi).map(|g| g.items.iter().map(|item| item.path.clone()).collect());
+        let Some(paths) = paths else {
+            return;
+        };
         self.fav_selected = Some(gi);
         let (mut opened, mut missing) = (0, 0);
         for path in paths {

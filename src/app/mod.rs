@@ -131,6 +131,9 @@ pub struct App {
     /// 關閉流程中「儲存」需要再確認（外部修改、解碼錯誤等）時暫存的待關閉分頁與是否結束程式，
     /// 存檔成功後由此接續關閉；再確認被取消時清除
     pending_close: Option<(Vec<u64>, bool)>,
+    /// 收藏群組「取代開啟」：關閉流程（含儲存確認）全部結束後接續開啟的群組索引；
+    /// 使用者取消關閉時一併清除，不會開啟群組
+    pending_open_group: Option<usize>,
     /// 等待使用者確認是否建立的檔案（開啟不存在的檔案時排隊）
     pending_create: Vec<PathBuf>,
     macros: MacroState,
@@ -213,6 +216,7 @@ impl App {
             shown_dialog: None,
             shown_confirm: None,
             pending_close: None,
+            pending_open_group: None,
             pending_create: Vec::new(),
             macros: MacroState::default(),
             spell: None,
@@ -1583,6 +1587,13 @@ impl eframe::App for App {
         self.show_dialogs(&ctx);
         self.show_print_preview(&ctx);
         self.show_confirm(&ctx);
+        // 收藏群組「取代開啟」：關閉流程（含儲存確認）全部結束後接續開啟群組
+        if self.confirm.is_none()
+            && self.pending_close.is_none()
+            && let Some(gi) = self.pending_open_group.take()
+        {
+            self.open_group_now(gi);
+        }
         self.fif.poll(&ctx);
         self.runner.poll(&ctx);
 

@@ -2923,6 +2923,58 @@ fn test_code_folding_disabled_command_does_nothing() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 雙擊收藏群組「取代開啟」：未存檔修改先經儲存確認，流程結束後僅開啟群組檔案。
+#[test]
+fn test_open_group_replaces_open_tabs_and_asks_to_save_dirty_ones() {
+    let dir = std::env::temp_dir().join(format!("madedit-open-group-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let dirty = dir.join("dirty.txt");
+    let keeper = dir.join("keeper.txt");
+    let g1 = dir.join("g1.txt");
+    let g2 = dir.join("g2.txt");
+    std::fs::write(&dirty, "old").unwrap();
+    std::fs::write(&keeper, "keep").unwrap();
+    std::fs::write(&g1, "group one").unwrap();
+    std::fs::write(&g2, "group two").unwrap();
+
+    let mut h = harness();
+    h.state_mut().settings.show_file_view = true;
+    h.state_mut().open_path(&dirty);
+    // 製造未存檔修改
+    h.state_mut().doc_mut().replace_all_text("edited");
+    h.state_mut().open_path(&keeper);
+    h.run_steps(3);
+    // 收藏群組包含 g1、g2
+    let mut group = FavoriteGroup::new("工作");
+    group.items.push(FavoriteItem::new(g1.clone()));
+    group.items.push(FavoriteItem::new(g2.clone()));
+    h.state_mut().settings.favorites.push(group);
+    h.run_steps(2);
+
+    let open_ids = |h: &Harness<'static, App>| h.state().tabs.iter().map(|t| t.doc.id).collect::<Vec<_>>();
+    let before = open_ids(&h);
+    assert_eq!(before.len(), 2);
+
+    // 觸發取代開啟：出現儲存確認（dirty 分頁）
+    h.state_mut().pending_open_group = Some(0);
+    h.state_mut().request_close(before.clone(), false);
+    h.run_steps(3);
+    assert!(h.query_by_label_contains("已修改").is_some(), "the dirty tab must ask to save");
+
+    // 選擇「儲存」
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("儲存")).click();
+    h.run_steps(6);
+    let state = h.state();
+    assert!(state.confirm.is_none(), "the close flow is finished");
+    assert_eq!(state.tabs.len(), 2, "only the group files remain open");
+    let names: Vec<String> = state.tabs.iter().map(|t| t.doc.display_name()).collect();
+    assert!(names.contains(&"g1.txt".to_string()) && names.contains(&"g2.txt".to_string()), "{names:?}");
+    let saved = std::fs::read_to_string(&dirty).unwrap();
+    assert_eq!(saved, "edited", "the dirty file was saved through the existing flow");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 重新命名只改顯示名稱：群組名稱不可空白，檔案項目的空白名稱恢復預設顯示。
 #[test]
 fn test_favorite_rename_keeps_group_names_non_blank() {
