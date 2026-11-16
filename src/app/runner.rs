@@ -24,6 +24,13 @@ enum Msg {
     Done(Result<i32, String>),
 }
 
+/// 面板保留的輸出行數上限。面板每次內容變動都要重新排版整段文字，行數無限成長會讓
+/// 整個 UI 越來越慢（實測 2 萬行約 45ms/幀、10 萬行約 230ms/幀），因此只保留尾段。
+pub(crate) const MAX_OUTPUT_LINES: usize = 5_000;
+
+/// 面板保留的輸出位元組上限（UTF-8 約等於排版成本；5 千行 × 40 字元 ≈ 200KB）。
+const MAX_OUTPUT_CHARS: usize = 200_000;
+
 /// 一次運行的狀態與輸出
 pub struct ScriptRunner {
     pub show: bool,
@@ -31,6 +38,8 @@ pub struct ScriptRunner {
     pub lines: Vec<String>,
     /// 輸出全文（= lines 以換行相接）；供可選取的輸出文字框顯示與複製
     pub text: String,
+    /// 因超過上限而被省略的行數（面板顯示提示用）
+    pub trimmed_lines: usize,
     /// 運行結束的結果：退出碼或啟動失敗訊息
     pub exit: Option<Result<i32, String>>,
     pub started: Option<Instant>,
@@ -58,6 +67,7 @@ impl Default for ScriptRunner {
             running: false,
             lines: Vec::new(),
             text: String::new(),
+            trimmed_lines: 0,
             exit: None,
             started: None,
             elapsed: None,
@@ -74,18 +84,60 @@ impl Default for ScriptRunner {
 
 impl ScriptRunner {
     /// 新增一行輸出（同步維護可選取文字框用的全文）
-    fn push_line(&mut self, line: String) {
+    pub(crate) fn push_line(&mut self, line: String) {
         self.lines.push(line.clone());
         if !self.text.is_empty() {
             self.text.push('\n');
         }
         self.text.push_str(&line);
+        self.trim_output();
+    }
+
+    /// 只保留最後一段輸出。面板每次內容變動都要重新排版整段文字，輸出無限成長會讓整個 UI
+    /// 越來越慢，所以超過 [`MAX_OUTPUT_LINES`]／[`MAX_OUTPUT_CHARS`] 時從最前面丟掉，
+    /// 並記下丟了幾行（面板顯示提示，免得讓人以為程式只印了這些）。
+    fn trim_output(&mut self) {
+        if self.lines.len() <= MAX_OUTPUT_LINES && self.text.len() <= MAX_OUTPUT_CHARS {
+            return;
+        }
+        // 一次砍到上限的九成，避免之後每一行都要重建一次字串
+        let keep_chars = MAX_OUTPUT_CHARS * 9 / 10;
+        let mut drop = 0;
+        let mut bytes = self.text.len();
+        let mut count = self.lines.len();
+        while drop + 1 < self.lines.len() && (count > MAX_OUTPUT_LINES || bytes > keep_chars) {
+            bytes -= self.lines[drop].len() + 1; // + 換行
+            count -= 1;
+            drop += 1;
+        }
+        if drop > 0 {
+            self.lines.drain(..drop);
+            self.trimmed_lines += drop;
+            // 選取是字元索引，內容一變就失效
+            self.sel = None;
+            self.text = self.lines.join("\n");
+        }
+        // 單行就可能超過預算（例如一次印出幾 MB 的 JSON）：只保留結尾，
+        // 否則排版成本無法收斂，面板會整個卡住
+        if self.text.len() > MAX_OUTPUT_CHARS
+            && let Some(last) = self.lines.last_mut()
+        {
+            let mut cut = last.len() - keep_chars;
+            while cut < last.len() && !last.is_char_boundary(cut) {
+                cut += 1;
+            }
+            *last = format!("…{}", &last[cut..]);
+            self.trimmed_lines += 1;
+            self.sel = None;
+            self.text = self.lines.join("\n");
+        }
     }
 
     /// 清空輸出（面板按鈕與右鍵選單共用）
     fn clear_output(&mut self) {
         self.lines.clear();
         self.text.clear();
+        self.trimmed_lines = 0;
         self.exit = None;
         self.stopped = false;
         self.sel = None;
@@ -375,6 +427,7 @@ impl App {
         self.runner.show = true;
         self.runner.lines.clear();
         self.runner.text.clear();
+        self.runner.trimmed_lines = 0;
         if let Err(e) = self.runner.start_process(&program, &args, cwd.as_deref()) {
             // 啟動失敗時不會有 Done 事件，立即清掉暫存檔
             if let Some(tmp) = self.runner.temp_file.take() {
@@ -430,6 +483,11 @@ impl App {
         ui.separator();
         let running = self.runner.running;
         let has_output = !self.runner.text.is_empty();
+        // 輸出被截斷時要講清楚，免得讓人以為程式只印了這些
+        if self.runner.trimmed_lines > 0 {
+            let hint = self.tf("run.trimmed", "（輸出過長，已省略較早的 {n} 行）", Some(self.runner.trimmed_lines), None);
+            ui.label(RichText::new(hint).weak());
+        }
         // 輸出與編輯區使用相同字型與字級（含等寬/比例設定由編輯區字型決定）
         let output_font = egui::FontId::new(self.settings.font_size, egui::FontFamily::Name(EDITOR_FAMILY.into()));
         let empty_center = ui.available_rect_before_wrap().center();
@@ -614,5 +672,51 @@ mod tests {
         assert_eq!(selected_or_all("abc", Some((0, 99))), "abc");
         // 字元索引而非位元組索引
         assert_eq!(selected_or_all("中文abc", Some((1, 3))), "文a");
+    }
+
+    /// 輸出超過行數上限時只保留尾段，並記下省略了幾行（面板據此提示）
+    #[test]
+    fn test_output_keeps_only_the_tail_beyond_the_line_limit() {
+        let mut runner = ScriptRunner::default();
+        for i in 0..(MAX_OUTPUT_LINES + 1_000) {
+            runner.push_line(format!("line {i}"));
+        }
+        assert!(runner.lines.len() <= MAX_OUTPUT_LINES, "kept {} lines", runner.lines.len());
+        assert!(runner.trimmed_lines >= 1_000, "trimmed {}", runner.trimmed_lines);
+        // 最後一行一定還在，最前面那批已經被丟掉
+        assert_eq!(runner.lines.last().map(String::as_str), Some(&*format!("line {}", MAX_OUTPUT_LINES + 999)));
+        assert!(!runner.lines.iter().any(|l| l == "line 0"), "the oldest lines are dropped");
+        // 全文與行清單必須一致（複製、選取都依賴這點）
+        assert_eq!(runner.text, runner.lines.join("\n"));
+    }
+
+    /// 位元組上限：幾行超長文字也會被裁到預算內；單行超長只保留結尾
+    #[test]
+    fn test_output_is_capped_by_bytes_even_for_one_huge_line() {
+        let mut runner = ScriptRunner::default();
+        let chunk = "x".repeat(MAX_OUTPUT_CHARS / 2 + 10);
+        runner.push_line(chunk.clone());
+        runner.push_line(chunk.clone());
+        assert!(runner.text.len() <= MAX_OUTPUT_CHARS, "text {} bytes", runner.text.len());
+        assert_eq!(runner.text, runner.lines.join("\n"));
+        // 單行本身超過預算：保留結尾並加省略標記
+        let mut one = ScriptRunner::default();
+        one.push_line("y".repeat(MAX_OUTPUT_CHARS * 2));
+        assert!(one.text.len() <= MAX_OUTPUT_CHARS, "one line {} bytes", one.text.len());
+        assert!(one.text.starts_with('…'), "the truncated head is marked");
+        assert_eq!(one.trimmed_lines, 1);
+    }
+
+    /// 清空輸出要一併清掉截斷提示
+    #[test]
+    fn test_clear_output_resets_the_trim_notice() {
+        let mut runner = ScriptRunner::default();
+        for i in 0..(MAX_OUTPUT_LINES + 1) {
+            runner.push_line(format!("line {i}"));
+        }
+        assert!(runner.trimmed_lines > 0);
+        runner.clear_output();
+        assert_eq!(runner.trimmed_lines, 0);
+        assert!(runner.text.is_empty() && runner.lines.is_empty());
     }
 }

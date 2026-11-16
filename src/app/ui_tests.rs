@@ -3396,3 +3396,39 @@ fn test_ui_font_change_reapplies_fonts() {
     h.run_steps(3);
     assert!(h.state().fonts.ui_family.is_empty(), "clearing the setting returns to automatic");
 }
+
+#[test]
+#[ignore]
+fn temp_bench_output_panel() {
+    use std::time::Instant;
+    for lines in [1_000usize, 5_000, 20_000, 100_000] {
+        let mut h = harness();
+        {
+            let runner = &mut h.state_mut().runner;
+            runner.show = true;
+            // 走正式路徑 push_line，超出上限的行會被截掉（與實際運行一致）
+            for i in 0..lines {
+                runner.push_line(format!("src/app/runner.rs:{i}: warning: something happened here"));
+            }
+            runner.exit = Some(Ok(0));
+        }
+        h.run_steps(2);
+        let t = Instant::now();
+        h.run_steps(2);
+        let frame = t.elapsed().as_secs_f64() / 2.0 * 1000.0;
+        // 串流：每幀新增一行
+        let t = Instant::now();
+        for i in 0..5 {
+            h.state_mut().runner.push_line(format!("+{i}"));
+            h.run_steps(1);
+        }
+        let append = t.elapsed().as_secs_f64() / 5.0 * 1000.0;
+        let state = h.state();
+        println!(
+            "pushed={lines} kept={} trimmed={} chars={} frame={frame:.1}ms append_frame={append:.1}ms",
+            state.runner.lines.len(),
+            state.runner.trimmed_lines,
+            state.runner.text.len(),
+        );
+    }
+}
