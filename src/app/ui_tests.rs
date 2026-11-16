@@ -3288,3 +3288,41 @@ fn test_output_panel_right_click_keeps_selection() {
     assert_ne!(after.0, after.1, "right click must keep the selection: {after:?}");
     assert_eq!(after, before, "the kept selection is the same range");
 }
+
+/// Options > General 的「介面字型」可從下拉選單挑選，確定後寫回設定（編輯區字型不變）。
+#[test]
+fn test_options_ui_font_row_sets_interface_font_only() {
+    use eframe::egui::accesskit::Role;
+    let mut h = harness();
+    let editor_font = h.state().settings.font_family.clone();
+    let ui_font = h.state().fonts.families.first().cloned().expect("a system font");
+    h.state_mut().pending.push(C::Options);
+    h.run_steps(3);
+    // 一般頁的外觀區有「介面字型」一列，預設顯示自動
+    let row = |h: &Harness<'static, App>| h.query_by(|n| n.role() == Role::Label && n.value().as_deref() == Some("介面字型")).is_some();
+    assert!(row(&h), "the General page shows an interface font row");
+    let combo = |h: &Harness<'static, App>| h.query_by(|n| n.role() == Role::ComboBox && n.value().as_deref() == Some("自動（預設）")).is_some();
+    assert!(combo(&h), "it defaults to automatic");
+    h.get_by(|n| n.role() == Role::ComboBox && n.value().as_deref() == Some("自動（預設）")).click();
+    h.run_steps(3);
+    h.get_by(|n| n.label().as_deref() == Some(ui_font.as_str())).click();
+    h.run_steps(3);
+    h.get_by_label("確定").click();
+    h.run_steps(3);
+    assert_eq!(h.state().settings.ui_font_family, ui_font, "the picked interface font is saved");
+    assert_eq!(h.state().settings.font_family, editor_font, "the editor font is untouched");
+}
+
+/// 介面字型設定改變時會重建 egui 字型（不必重開程式）。
+#[test]
+fn test_ui_font_change_reapplies_fonts() {
+    let mut h = harness();
+    let font = h.state().fonts.editor_family.clone();
+    assert!(!font.is_empty(), "the harness resolved an editor font");
+    h.state_mut().settings.ui_font_family = font.clone();
+    h.run_steps(3);
+    assert_eq!(h.state().fonts.ui_family, font, "the interface font is applied after the setting changes");
+    h.state_mut().settings.ui_font_family.clear();
+    h.run_steps(3);
+    assert!(h.state().fonts.ui_family.is_empty(), "clearing the setting returns to automatic");
+}

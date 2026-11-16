@@ -1222,6 +1222,8 @@ impl App {
         let (every_before, every_after) = self.t("opt.autosave_interval", "每 {n} 分鐘").split_once("{n}").unwrap_or(("", ""));
         let l_remove = self.t("btn.remove", "移除");
         let font_auto = self.tf("opt.font_auto", "自動（{q}）", None, Some(&self.fonts.editor_family));
+        let ui_font_auto = self.t("opt.ui_font_auto", "自動（預設）");
+        let ui_fonts = self.fonts.families.clone();
         // Fixed size: the window used to shrink and grow with each page's content.
         dialog_window(ctx, self.t("dlg.options", "選項")).open(open).resizable(false).show(ctx, |ui| {
             let size = fit_to_window(ui.ctx(), OPTIONS_SIZE, OPTIONS_CHROME_HEIGHT);
@@ -1264,6 +1266,16 @@ impl App {
                             s.row(self.t("opt.theme", "介面主題："), |ui| form::segmented(ui, &mut draft.theme, &themes));
                             let font = if draft.font_family.is_empty() { font_auto.as_str() } else { draft.font_family.as_str() };
                             s.row(self.t("opt.editor_font", "編輯區字型："), |ui| ui.label(RichText::new(font).weak()));
+                            // 介面字型：選單、對話框、分頁與狀態列；編輯區與「執行輸出」不受影響
+                            s.row(self.t("opt.ui_font", "介面字型："), |ui| {
+                                let current = if draft.ui_font_family.is_empty() { ui_font_auto.to_string() } else { draft.ui_font_family.clone() };
+                                egui::ComboBox::from_id_salt("ui-font").selected_text(current).width(200.0).show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut draft.ui_font_family, String::new(), ui_font_auto);
+                                    for name in &ui_fonts {
+                                        ui.selectable_value(&mut draft.ui_font_family, name.clone(), name);
+                                    }
+                                });
+                            });
                         });
                         form::section(ui, self.t("opt.sec.open", "開啟檔案"), |s| {
                             s.row(self.t("opt.default_enc", "預設編碼："), |ui| encoding_combo(ui, "def-enc", &mut draft.default_encoding));

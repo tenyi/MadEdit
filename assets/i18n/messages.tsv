@@ -356,6 +356,8 @@ opt.theme_system	Match System	跟随系统	システムに合わせる	시스템
 opt.theme_light	Light	浅色	ライト	밝게	Hell	Claro	Clair	Chiaro	Claro
 opt.theme_dark	Dark	深色	ダーク	어둡게	Dunkel	Oscuro	Sombre	Scuro	Escuro
 opt.editor_font	Editor font:	编辑区字体：	編集フォント：	편집기 글꼴:	Editor-Schriftart:	Fuente del editor:	Police de l'éditeur :	Carattere dell'editor:	Tipo de letra do editor:
+opt.ui_font	Interface font:	界面字体：	UI フォント：	인터페이스 글꼴:	Oberflächen-Schriftart:	Fuente de la interfaz:	Police de l'interface :	Carattere dell'interfaccia:	Tipo de letra da interface:
+opt.ui_font_auto	Automatic (default)	自动（默认）	自動（既定）	자동(기본)	Automatisch (Standard)	Automática (predeterminada)	Automatique (par défaut)	Automatico (predefinito)	Automático (padrão)
 opt.font_auto	Automatic ({q})	自动（{q}）	自動（{q}）	자동({q})	Automatisch ({q})	Automática ({q})	Automatique ({q})	Automatico ({q})	Automático ({q})
 opt.reload_startup	Reopen files from the last session	启动时重新打开上次的文件	起動時に前回のファイルを開く	시작할 때 지난 파일 다시 열기	Dateien der letzten Sitzung erneut öffnen	Reabrir los archivos de la última sesión	Rouvrir les fichiers de la dernière session	Riapri i file dell'ultima sessione	Reabrir os ficheiros da última sessão
 opt.restore_caret	Restore the caret position when opening	打开时还原上次的光标位置	開くときにカーソル位置を復元	열 때 커서 위치 복원	Cursorposition beim Öffnen wiederherstellen	Restaurar el cursor al abrir	Restaurer le curseur à l'ouverture	Ripristina il cursore all'apertura	Restaurar o cursor ao abrir

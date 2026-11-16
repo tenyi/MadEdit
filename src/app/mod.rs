@@ -112,7 +112,8 @@ pub struct App {
     prev_active: usize,
     prev_preview_tab: bool,
     fonts: FontManager,
-    font_applied: Option<String>,
+    /// 已套用的（編輯區字型、介面字型）設定值
+    font_applied: Option<(String, String)>,
     /// The editor font was replaced this frame; checked next frame, once the fonts are active.
     fonts_changed: bool,
     widths: CharWidths,
@@ -249,8 +250,9 @@ impl App {
         app.apply_theme(&cc.egui_ctx);
         // 第一幀繪製前就註冊編輯區字型家族（set_fonts 於下一幀才生效，延後註冊會 panic）
         let fam = app.settings.font_family.clone();
-        app.fonts.apply(&cc.egui_ctx, &fam);
-        app.font_applied = Some(fam);
+        let ui_fam = app.settings.ui_font_family.clone();
+        app.fonts.apply(&cc.egui_ctx, &fam, &ui_fam);
+        app.font_applied = Some((fam, ui_fam));
 
         if files.is_empty() && app.settings.reload_files_on_startup {
             let session = app.settings.session_files.clone();
@@ -1454,11 +1456,11 @@ impl eframe::App for App {
                 self.confirm = Some(Confirm::ProportionalFont);
             }
         }
-        // 字型：設定改變時重建
-        if self.font_applied.as_deref() != Some(self.settings.font_family.as_str()) {
-            let fam = self.settings.font_family.clone();
-            self.fonts.apply(&ctx, &fam);
-            self.font_applied = Some(fam);
+        // 字型：編輯區或介面字型設定改變時重建
+        let wanted_fonts = (self.settings.font_family.clone(), self.settings.ui_font_family.clone());
+        if self.font_applied.as_ref() != Some(&wanted_fonts) {
+            self.fonts.apply(&ctx, &wanted_fonts.0, &wanted_fonts.1);
+            self.font_applied = Some(wanted_fonts);
             self.fonts_changed = true;
         }
 

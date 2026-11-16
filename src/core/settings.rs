@@ -251,6 +251,9 @@ pub struct Settings {
     /// 編輯區字型（空字串表示自動挑選）
     pub font_family: String,
     pub font_size: f32,
+    /// 介面字型（選單、對話框、分頁等；空字串表示自動）。
+    /// 不影響編輯區與「執行輸出」面板，兩者固定使用編輯區字型
+    pub ui_font_family: String,
     /// 等寬模式：每個字元依固定格子寬度排列（關閉時依字型實際字寬排列）
     pub fixed_width: bool,
     pub tab_size: usize,
@@ -371,6 +374,7 @@ impl Default for Settings {
             skipped_update: String::new(),
             font_family: String::new(),
             font_size: 14.0,
+            ui_font_family: String::new(),
             fixed_width: false,
             tab_size: 4,
             indent_size: 4,
@@ -723,7 +727,7 @@ mod tests {
 
     #[test]
     fn test_settings_roundtrip_and_partial_json() {
-        let mut s = Settings { font_size: 18.0, ..Default::default() };
+        let mut s = Settings { font_size: 18.0, ui_font_family: "Segoe UI".into(), ..Default::default() };
         s.add_recent_file(PathBuf::from("/a"));
         s.add_recent_file(PathBuf::from("/b"));
         s.add_recent_file(PathBuf::from("/a"));
@@ -731,9 +735,11 @@ mod tests {
         let json = serde_json::to_string(&s).unwrap();
         let back: Settings = serde_json::from_str(&json).unwrap();
         assert_eq!(back.font_size, 18.0);
+        assert_eq!(back.ui_font_family, "Segoe UI");
         // 舊版設定檔缺少欄位時以預設值補上
         let partial: Settings = serde_json::from_str(r#"{"tab_size": 8}"#).unwrap();
         assert_eq!(partial.tab_size, 8);
         assert!(partial.show_line_numbers);
+        assert!(partial.ui_font_family.is_empty(), "missing ui_font_family means automatic");
     }
 }
