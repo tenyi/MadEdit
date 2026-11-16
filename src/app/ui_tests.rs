@@ -3359,6 +3359,54 @@ fn test_output_panel_long_right_press_still_opens_menu() {
     assert!(h.query_all_by(|n| n.label().is_some_and(|l| l.contains("全選"))).next().is_some(), "a long right press must still open the menu");
 }
 
+/// 右鍵選單的「輸出到檔案」勾選項：點一下開啟（狀態列回報路徑、檔案收得到輸出），
+/// 再點一下關閉；狀態存在 runner（不進 settings，重開程式回到預設關閉）。
+#[test]
+fn test_output_panel_log_to_file_toggle() {
+    let dir = std::env::temp_dir().join(format!("madedit-panel-log-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let log = dir.join("result.log");
+    let mut h = harness();
+    h.state_mut().runner.log_path = Some(log.clone());
+    {
+        let runner = &mut h.state_mut().runner;
+        runner.show = true;
+        runner.text = "hello".into();
+        runner.lines = vec!["hello".into()];
+        runner.exit = Some(Ok(0));
+    }
+    h.run_steps(3);
+    let output_rect = h.get_by(|n| n.role() == egui::accesskit::Role::MultilineTextInput).rect();
+    let open_menu = |h: &mut Harness<'static, App>| {
+        let pos = egui::pos2(output_rect.left() + 30.0, output_rect.center().y);
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Secondary, pressed, modifiers: egui::Modifiers::NONE });
+        }
+        h.run_steps(3);
+    };
+    let log_item = |checked: bool| {
+        let label = if checked { "✔ 輸出到檔案（result.log）" } else { "　 輸出到檔案（result.log）" };
+        move |n: &egui_kittest::kittest::AccessKitNode<'_>| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some(label)
+    };
+    // 未勾選 → 點一下開啟
+    open_menu(&mut h);
+    assert!(h.query_all_by(log_item(false)).next().is_some(), "the log item starts unchecked");
+    h.get_by(log_item(false)).click();
+    h.run_steps(3);
+    assert!(h.state().runner.log_enabled, "the toggle enables logging");
+    assert!(h.state().status.as_ref().is_some_and(|(m, _)| m.contains("result.log")), "the status bar reports the log path");
+    h.state_mut().runner.push_line("logged line".into());
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), "hello\nlogged line\n", "enabling syncs the file with the panel's current output, then appends");
+    // 再點一下關閉
+    open_menu(&mut h);
+    assert!(h.query_all_by(log_item(true)).next().is_some(), "the item shows checked while enabled");
+    h.get_by(log_item(true)).click();
+    h.run_steps(3);
+    assert!(!h.state().runner.log_enabled, "the toggle disables logging");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Options > General 的「介面字型」可從下拉選單挑選，確定後寫回設定（編輯區字型不變）。
 #[test]
 fn test_options_ui_font_row_sets_interface_font_only() {

@@ -3,7 +3,7 @@
 //!
 //! Windows 主控台程式常以 GBK/ANSI 輸出，逐行解碼時先試嚴格 UTF-8，失敗則以 GBK 解碼。
 
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
@@ -31,6 +31,9 @@ pub(crate) const MAX_OUTPUT_LINES: usize = 5_000;
 /// 面板保留的輸出位元組上限（UTF-8 約等於排版成本；5 千行 × 40 字元 ≈ 200KB）。
 const MAX_OUTPUT_CHARS: usize = 200_000;
 
+/// 開啟「輸出到檔案」時預設寫入的檔名（放在 MadEdit.exe 同目錄）
+const LOG_FILE_NAME: &str = "result.log";
+
 /// 一次運行的狀態與輸出
 pub struct ScriptRunner {
     pub show: bool,
@@ -40,6 +43,13 @@ pub struct ScriptRunner {
     pub text: String,
     /// 因超過上限而被省略的行數（面板顯示提示用）
     pub trimmed_lines: usize,
+    /// 右鍵選單勾選「輸出到檔案」：所有輸出同時寫入 result.log（無大小限制，
+    /// 面板截斷不影響檔案內容）
+    pub log_enabled: bool,
+    /// 記錄檔位置；None 表示 MadEdit.exe 同目錄的 [`LOG_FILE_NAME`]（測試可覆寫到暫存目錄）
+    pub(crate) log_path: Option<PathBuf>,
+    /// 已開啟的記錄檔；停用時關閉
+    log_file: Option<std::fs::File>,
     /// 運行結束的結果：退出碼或啟動失敗訊息
     pub exit: Option<Result<i32, String>>,
     pub started: Option<Instant>,
@@ -68,6 +78,9 @@ impl Default for ScriptRunner {
             lines: Vec::new(),
             text: String::new(),
             trimmed_lines: 0,
+            log_enabled: false,
+            log_path: None,
+            log_file: None,
             exit: None,
             started: None,
             elapsed: None,
@@ -85,6 +98,13 @@ impl Default for ScriptRunner {
 impl ScriptRunner {
     /// 新增一行輸出（同步維護可選取文字框用的全文）
     pub(crate) fn push_line(&mut self, line: String) {
+        // 記錄檔先寫原始行（不受面板截斷影響，無大小限制）
+        if self.log_enabled
+            && let Some(f) = &mut self.log_file
+        {
+            let _ = f.write_all(line.as_bytes());
+            let _ = f.write_all(b"\n");
+        }
         self.lines.push(line.clone());
         if !self.text.is_empty() {
             self.text.push('\n');
@@ -133,7 +153,7 @@ impl ScriptRunner {
         }
     }
 
-    /// 清空輸出（面板按鈕與右鍵選單共用）
+    /// 清空輸出（面板按鈕與右鍵選單共用）。記錄檔不受影響：只有 F5 開始新運行才從頭寫。
     fn clear_output(&mut self) {
         self.lines.clear();
         self.text.clear();
@@ -150,6 +170,56 @@ impl ScriptRunner {
     pub fn stop(&mut self) {
         self.stopped = true;
         self.kill_tree();
+    }
+
+    /// 記錄檔的完整路徑：使用者未覆寫時用 MadEdit.exe 同目錄的 result.log
+    pub(crate) fn resolved_log_path(&self) -> Option<PathBuf> {
+        self.log_path.clone().or_else(|| {
+            std::env::current_exe().ok().and_then(|exe| exe.parent().map(|d| d.join(LOG_FILE_NAME)))
+        })
+    }
+
+    /// 勾選／取消「輸出到檔案」。開啟時**以清空方式開檔**，並把面板目前的輸出整段寫入
+    /// （兩邊同步：檔案內容＝面板顯示的內容），之後新輸出接在後面；失敗時回傳錯誤訊息並保持停用。
+    pub(crate) fn set_log_enabled(&mut self, on: bool) -> Result<(), String> {
+        if !on {
+            self.log_enabled = false;
+            self.log_file = None; // 關閉檔案
+            return Ok(());
+        }
+        let Some(path) = self.resolved_log_path() else {
+            return Err("cannot locate the executable directory".into());
+        };
+        match std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(&path) {
+            Ok(mut f) => {
+                // 同步：面板目前顯示的內容整段寫入（含每行結尾換行），之後的新輸出接在後面
+                for line in &self.lines {
+                    if f.write_all(line.as_bytes()).is_err() || f.write_all(b"\n").is_err() {
+                        return Err(path.display().to_string());
+                    }
+                }
+                self.log_file = Some(f);
+                self.log_enabled = true;
+                Ok(())
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// F5 開始新運行：記錄檔從頭寫。失敗時回傳錯誤，由呼叫端通知使用者並停用。
+    pub(crate) fn reopen_log_truncated(&mut self) -> std::io::Result<()> {
+        if !self.log_enabled {
+            return Ok(());
+        }
+        let Some(path) = self.resolved_log_path() else { return Ok(()) };
+        self.log_file = Some(std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(path)?);
+        Ok(())
+    }
+
+    /// 停用記錄並關閉檔案（開檔失敗時由呼叫端呼叫）
+    pub(crate) fn disable_log(&mut self) {
+        self.log_enabled = false;
+        self.log_file = None;
     }
 
     /// 殺掉子程序樹；不在 UI 執行緒等待任何鎖或程序
@@ -428,6 +498,12 @@ impl App {
         self.runner.lines.clear();
         self.runner.text.clear();
         self.runner.trimmed_lines = 0;
+        // 開啟「輸出到檔案」時，新的 F5 運行從頭寫 result.log；開檔失敗就停用並告知
+        if let Err(e) = self.runner.reopen_log_truncated() {
+            self.runner.disable_log();
+            let hint = format!("{} {e}", self.t("run.log_fail", "無法開啟記錄檔："));
+            self.set_status(hint);
+        }
         if let Err(e) = self.runner.start_process(&program, &args, cwd.as_deref()) {
             // 啟動失敗時不會有 Done 事件，立即清掉暫存檔
             if let Some(tmp) = self.runner.temp_file.take() {
@@ -530,9 +606,27 @@ impl App {
         } else {
             None
         };
-        egui::Popup::menu(&body).open_memory(open).at_pointer_fixed().show(|ui| output_menu(ui, lang, &mut menu));
+        egui::Popup::menu(&body).open_memory(open).at_pointer_fixed().show(|ui| output_menu(ui, lang, self.runner.log_enabled, &mut menu));
         if selected.is_some() {
             self.runner.sel = selected;
+        }
+        // 「輸出到檔案」是即時生效的勾選項：勾上續寫 result.log，取消就關檔
+        if menu.toggle_log {
+            let on = !self.runner.log_enabled;
+            match self.runner.set_log_enabled(on) {
+                Ok(()) => {
+                    if on
+                        && let Some(path) = self.runner.resolved_log_path()
+                    {
+                        let hint = self.tf("run.log_on", "輸出同時寫入 {q}", None, Some(&path.display().to_string()));
+                        self.set_status(hint);
+                    }
+                }
+                Err(e) => {
+                    let hint = format!("{} {e}", self.t("run.log_fail", "無法開啟記錄檔："));
+                    self.set_status(hint);
+                }
+            }
         }
         if menu.copy {
             let text = selected_or_all(&self.runner.text, self.runner.sel);
@@ -573,16 +667,18 @@ impl App {
     }
 }
 
-/// 輸出面板右鍵選單的動作（全選／複製／清空）
+/// 輸出面板右鍵選單的動作（全選／複製／清空／輸出到檔案）
 #[derive(Default)]
 struct OutputMenu {
     select_all: bool,
     copy: bool,
     clear: bool,
+    toggle_log: bool,
 }
 
-/// 輸出面板右鍵選單；空白處與文字框共用同一份選單
-fn output_menu(ui: &mut egui::Ui, lang: i18n::Lang, menu: &mut OutputMenu) {
+/// 輸出面板右鍵選單；空白處與文字框共用同一份選單。
+/// `log_enabled` 只用來畫「輸出到檔案」的勾選狀態，切換在選單關閉後統一處理。
+fn output_menu(ui: &mut egui::Ui, lang: i18n::Lang, log_enabled: bool, menu: &mut OutputMenu) {
     use crate::app::i18n::translate;
     ui.set_min_width(menus::SUBMENU_MIN_WIDTH);
     if ui.button(menus::check_label(false, translate(lang, "run.select_all", "全選"))).clicked() {
@@ -595,6 +691,12 @@ fn output_menu(ui: &mut egui::Ui, lang: i18n::Lang, menu: &mut OutputMenu) {
     }
     if ui.button(menus::check_label(false, translate(lang, "run.clear", "清空"))).clicked() {
         menu.clear = true;
+        ui.close();
+    }
+    // 複選型選單項：點了直接切換狀態，選單保持開著（勾選狀態下幀就會更新）
+    ui.separator();
+    if ui.button(menus::check_label(log_enabled, translate(lang, "run.log_to_file", "輸出到檔案（result.log）"))).clicked() {
+        menu.toggle_log = true;
         ui.close();
     }
 }
@@ -718,5 +820,54 @@ mod tests {
         runner.clear_output();
         assert_eq!(runner.trimmed_lines, 0);
         assert!(runner.text.is_empty() && runner.lines.is_empty());
+    }
+
+    /// 「輸出到檔案」：記錄檔收下每一行（不受面板截斷限制）；勾選開啟時以面板目前內容
+    /// 清空重寫（兩邊同步），新的 F5 運行從頭寫，停用後不再寫入；清空面板不影響檔案。
+    #[test]
+    fn test_log_file_receives_every_line_and_is_truncated_on_new_run() {
+        let dir = std::env::temp_dir().join(format!("madedit-runner-log-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("result.log");
+        let mut runner = ScriptRunner::default();
+        runner.log_path = Some(log.clone());
+        // 勾選開啟前面板已有內容：開啟時整段寫入（同步）
+        runner.push_line("before".into());
+        runner.set_log_enabled(true).expect("open log");
+        assert_eq!(std::fs::read_to_string(&log).unwrap(), "before\n", "enabling syncs the file with the panel");
+        // 超過面板上限的輸出，記錄檔必須一行不少
+        for i in 0..(MAX_OUTPUT_LINES + 300) {
+            runner.push_line(format!("line {i}"));
+        }
+        assert!(runner.lines.len() <= MAX_OUTPUT_LINES, "panel stays capped");
+        assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), MAX_OUTPUT_LINES + 301, "the log keeps every line");
+        // 新運行（F5）：從頭寫
+        runner.reopen_log_truncated().expect("truncate");
+        runner.push_line("fresh".into());
+        assert_eq!(std::fs::read_to_string(&log).unwrap(), "fresh\n");
+        // 停用後不再寫入
+        runner.set_log_enabled(false).expect("close log");
+        runner.push_line("dropped".into());
+        assert_eq!(std::fs::read_to_string(&log).unwrap(), "fresh\n");
+        // 面板「清空」不影響檔案
+        runner.set_log_enabled(true).expect("reopen");
+        runner.reopen_log_truncated().expect("truncate");
+        runner.push_line("kept".into());
+        runner.clear_output();
+        assert_eq!(std::fs::read_to_string(&log).unwrap(), "kept\n");
+        runner.disable_log();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 記錄檔預設放在 MadEdit.exe 同目錄（測試可用 log_path 覆寫）
+    #[test]
+    fn test_log_path_defaults_next_to_the_executable() {
+        let runner = ScriptRunner::default();
+        let default = runner.resolved_log_path().expect("a default path");
+        assert_eq!(default.file_name().map(|n| n.to_string_lossy().into_owned()), Some("result.log".into()));
+        let mut overridden = ScriptRunner::default();
+        overridden.log_path = Some(PathBuf::from("/tmp/custom.log"));
+        assert_eq!(overridden.resolved_log_path(), Some(PathBuf::from("/tmp/custom.log")));
     }
 }

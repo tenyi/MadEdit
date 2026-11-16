@@ -19,6 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Options > General has "Automatically reload files changed by other programs". When enabled, a file that was changed on disk and has no unsaved edits is reloaded without the banner; files with unsaved edits still show the usual prompt.
 - Opening a file now detects Big5, GBK/GB18030, Shift_JIS, EUC-KR, EUC-JP and similar encodings from its content (UTF-8 and BOMs are handled first). A GBK `.ini` file opens as GBK instead of being decoded with the Big5 fallback, so Chinese text is no longer garbled.
 - The text in the Script Output panel can be selected and copied: drag to select, Ctrl+C to copy, and right-click (which keeps the selection, like the editor) for Select All, Copy and Clear. Long output still scrolls in the panel; past 5,000 lines or 200 KB the oldest lines are dropped (the panel says how many) so huge outputs cannot slow down the interface.
+- The output panel's context menu has an "Output to file (result.log)" checkbox: when checked, the file is opened from scratch and the panel's current output is written into it (keeping both in sync), then every new line is also written to `result.log` next to `MadEdit.exe` with no size limit — the on-screen cap does not apply to the file. Each F5 run starts the file from scratch; clearing the panel does not touch the file.
 - Tools > Options > General has an "Interface font" setting (Automatic by default) for menus, dialogs, tabs and the status bar. The editor and the Script Output panel keep using the editor font.
 
 ### Changed
@@ -41,6 +42,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - 「工具 > 選項 > 一般」新增「其他程式修改時自動重新載入」：開啟後，磁碟上被修改且沒有未儲存編輯的檔案會直接重新載入，不再顯示提示；有未儲存編輯的檔案仍保留原本的提示流程。
 - 開檔時會依內容辨識 Big5、GBK/GB18030、Shift_JIS、EUC-KR、EUC-JP 等編碼（UTF-8 與 BOM 優先）。GBK 的 `.ini` 會以 GBK 開啟，不再被 Big5 備援編碼解成亂碼。
 - 「執行輸出」面板的文字可以選取與複製：拖曳選取、Ctrl+C 複製，右鍵選單提供「全選／複製／清空」；右鍵不會取消選取（與編輯區一致），長輸出仍可在面板內捲動。輸出超過 5,000 行或 200 KB 時自動捨棄較早的行（面板會顯示省略了多少行），大量輸出不會拖慢介面。
+- 「執行輸出」面板右鍵選單新增「輸出到檔案（result.log）」勾選項：勾選時以清空方式開檔，並把面板目前的輸出整段寫入（兩邊同步），之後每一行都同時寫入 `MadEdit.exe` 同目錄的 `result.log`，檔案沒有大小限制（面板截斷不影響檔案內容）。每次按 F5 運行時檔案從頭寫；中途清除面板不影響檔案。
 - 「工具 > 選項 > 一般」新增「介面字型」（預設自動）：指定選單、對話框、分頁與狀態列的字型；編輯區與「執行輸出」面板仍使用編輯區字型。
 
 #### 變更
