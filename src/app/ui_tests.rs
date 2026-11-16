@@ -3167,6 +3167,51 @@ fn test_run_script_ps1_streams_output() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 文字／列塊／十六進位模式是同一組三選一：工具列上畫成一條分段控制，同一時間只有一個
+/// 被選中，點另一個就切換模式（回歸：三個各自獨立、未選中的完全看不出是一組）。
+#[test]
+fn test_toolbar_edit_modes_are_one_three_way_choice() {
+    use crate::core::model::EditMode;
+    use eframe::egui::accesskit::{Role, Toggled};
+    use egui_kittest::kittest::NodeT as _;
+    const NAMES: [&str; 3] = ["文字模式", "列塊模式", "十六進位模式"];
+    let mut h = harness();
+    h.run_steps(2);
+    let mut rects = Vec::new();
+    let mut selected = Vec::new();
+    for n in h.query_all_by(|n| n.role() == Role::RadioButton && n.label().is_some_and(|l| NAMES.contains(&l.as_str()))) {
+        rects.push(n.rect());
+        if n.accesskit_node().toggled() == Some(Toggled::True) {
+            selected.extend(n.accesskit_node().label());
+        }
+    }
+    assert_eq!(rects.len(), 3, "工具列應有三個模式選項");
+    assert_eq!(selected, ["文字模式"], "預設只有文字模式被選中");
+    // 三個選項必須緊鄰成組（同一列、彼此間距 1pt，分組間距 12pt），一看就知道是三選一。
+    rects.sort_by(|a, b| a.left().total_cmp(&b.left()));
+    for pair in rects.windows(2) {
+        assert!((pair[0].top() - pair[1].top()).abs() < 1.0, "模式選項必須在同一列：{rects:?}");
+        assert!(pair[1].left() - pair[0].right() <= 2.0, "模式選項之間應緊鄰：{rects:?}");
+    }
+    // 分組間距：左邊的換行按鈕與模式組之間要有一般分組的距離。
+    let neighbour = h.get_by(|n| n.role() == Role::Button && n.label().as_deref() == Some("依欄數換行")).rect();
+    assert!(rects[0].left() - neighbour.right() >= 8.0, "模式組與左邊的換行按鈕之間應有分組間距");
+    // 切換：模式跟著變，選中狀態跟著移動。
+    for (name, mode) in [("列塊模式", EditMode::Column), ("十六進位模式", EditMode::Hex), ("文字模式", EditMode::Text)] {
+        h.get_by(|n| n.role() == Role::RadioButton && n.label().as_deref() == Some(name)).click();
+        h.run_steps(2);
+        assert_eq!(h.state().doc().mode, mode, "點 {name} 應切換到 {mode:?}");
+        let toggled: Vec<String> = h.query_all_by(|n| n.role() == Role::RadioButton && n.toggled() == Some(Toggled::True)).filter_map(|n| n.accesskit_node().label()).collect();
+        assert_eq!(toggled, [name], "點 {name} 後只有它被選中");
+    }
+    // 鍵盤也要能用：移到選項上按空白鍵等於點它（原本的一般按鈕支援）。
+    h.get_by(|n| n.role() == Role::RadioButton && n.label().as_deref() == Some("列塊模式")).focus();
+    h.run_steps(1);
+    h.key_press(Key::Space);
+    h.run_steps(2);
+    assert_eq!(h.state().doc().mode, EditMode::Column, "選項取得焦點後按空白鍵應切換模式");
+}
+
 /// doc.path 帶 `\\?\` verbatim 前綴（canonicalize 產生）時，run_script 會先清掉前綴：
 /// cmd 不認得 verbatim 路徑，否則 `cd /d "%~dp0"` 會報「系統找不到指定的路徑」。
 #[cfg(windows)]

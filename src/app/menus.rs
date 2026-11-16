@@ -748,58 +748,30 @@ impl App {
         let resp = ui
             .horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
-                let mode = self.doc().mode;
                 let wrap = self.settings.wrap_mode;
-                let groups: &[&[(&str, C, Option<bool>)]] = &[
-                    &[("new", C::New, None), ("fileopen", C::Open, None), ("filesave", C::Save, None), ("saveall", C::SaveAll, None), ("fileclose", C::Close, None), ("closeall", C::CloseAll, None)],
-                    &[("print", C::Print, None)],
-                    &[("undo", C::Undo, None), ("redo", C::Redo, None)],
-                    &[("cut", C::Cut, None), ("copy", C::Copy, None), ("paste", C::Paste, None)],
-                    &[("indent", C::IncreaseIndent, None), ("unindent", C::DecreaseIndent, None), ("comment", C::Comment, None), ("uncomment", C::Uncomment, None)],
-                    &[("find", C::Find, None), ("findnext", C::FindNext, None), ("findprev", C::FindPrevious, None), ("replace", C::Replace, None), ("goposition", C::GoToLine, None)],
-                    &[
-                        ("nowrap", C::NoWrap, Some(wrap == WrapMode::NoWrap)),
-                        ("wrapbywin", C::WrapByWindow, Some(wrap == WrapMode::ByWindow)),
-                        ("wrapbycol", C::WrapByColumn, Some(wrap == WrapMode::ByColumn)),
-                    ],
-                    &[
-                        ("textmode", C::TextMode, Some(mode == EditMode::Text)),
-                        ("columnmode", C::ColumnMode, Some(mode == EditMode::Column)),
-                        ("hexmode", C::HexMode, Some(mode == EditMode::Hex)),
-                    ],
-                    &[("bookmark_toggle", C::ToggleBookmark, None), ("bookmark_next", C::NextBookmark, None), ("bookmark_prev", C::PreviousBookmark, None), ("bookmark_clear", C::ClearAllBookmarks, None)],
-                    &[("preview", C::PreviewMarkdown, None)],
-                ];
-                let can_undo = self.doc().can_undo();
-                let can_redo = self.doc().can_redo();
-                let is_md = self.doc().is_markdown();
-                for (g, group) in groups.iter().enumerate() {
-                    if g > 0 {
-                        ui.separator();
-                    }
-                    for &(icon, c, selected) in *group {
-                        let Some((light, dark)) = self.icons.get(icon) else { continue };
-                        let tex = if ui.visuals().dark_mode { dark } else { light };
-                        let img = egui::Image::new((tex.id(), egui::vec2(16.0, 16.0)));
-                        let mut btn = Button::image(img).frame_when_inactive(false);
-                        if let Some(sel) = selected {
-                            btn = btn.selected(sel);
-                        }
-                        let enabled = match c {
-                            C::Undo => can_undo,
-                            C::Redo => can_redo,
-                            C::PreviewMarkdown => is_md,
-                            _ => true,
-                        };
-                        let sc = self.shortcut_text(c, ui.ctx());
-                        let tip = if sc.is_empty() { self.cmd_text(c) } else { format!("{} ({sc})", self.cmd_text(c)) };
-                        // Announced without the menu's "(&F)" mnemonic and trailing "...".
-                        let name = plain_label(&self.cmd_text(c));
-                        if ui.add_enabled_ui(enabled, |ui| form::icon_button(ui, btn, &tip, &name)).inner.clicked() {
-                            self.pending.push(c);
-                        }
-                    }
-                }
+                self.icon_group(ui, &[("new", C::New, None), ("fileopen", C::Open, None), ("filesave", C::Save, None), ("saveall", C::SaveAll, None), ("fileclose", C::Close, None), ("closeall", C::CloseAll, None)]);
+                ui.separator();
+                self.icon_group(ui, &[("print", C::Print, None)]);
+                ui.separator();
+                self.icon_group(ui, &[("undo", C::Undo, None), ("redo", C::Redo, None)]);
+                ui.separator();
+                self.icon_group(ui, &[("cut", C::Cut, None), ("copy", C::Copy, None), ("paste", C::Paste, None)]);
+                ui.separator();
+                self.icon_group(ui, &[("indent", C::IncreaseIndent, None), ("unindent", C::DecreaseIndent, None), ("comment", C::Comment, None), ("uncomment", C::Uncomment, None)]);
+                ui.separator();
+                self.icon_group(ui, &[("find", C::Find, None), ("findnext", C::FindNext, None), ("findprev", C::FindPrevious, None), ("replace", C::Replace, None), ("goposition", C::GoToLine, None)]);
+                ui.separator();
+                self.icon_group(ui, &[
+                    ("nowrap", C::NoWrap, Some(wrap == WrapMode::NoWrap)),
+                    ("wrapbywin", C::WrapByWindow, Some(wrap == WrapMode::ByWindow)),
+                    ("wrapbycol", C::WrapByColumn, Some(wrap == WrapMode::ByColumn)),
+                ]);
+                ui.separator();
+                self.edit_mode_group(ui);
+                ui.separator();
+                self.icon_group(ui, &[("bookmark_toggle", C::ToggleBookmark, None), ("bookmark_next", C::NextBookmark, None), ("bookmark_prev", C::PreviousBookmark, None), ("bookmark_clear", C::ClearAllBookmarks, None)]);
+                ui.separator();
+                self.icon_group(ui, &[("preview", C::PreviewMarkdown, None)]);
                 if !self.quick_in_menubar {
                     ui.separator();
                     self.quick_controls(ui, false);
@@ -813,5 +785,57 @@ impl App {
             self.check(ui, C::ToggleMenubar, s.show_menubar);
             self.check(ui, C::ToggleStatusbar, s.show_statusbar);
         });
+    }
+
+    /// One group of toolbar icons, separated from its neighbours by a divider.
+    fn icon_group(&mut self, ui: &mut egui::Ui, group: &[(&str, C, Option<bool>)]) {
+        let can_undo = self.doc().can_undo();
+        let can_redo = self.doc().can_redo();
+        let is_md = self.doc().is_markdown();
+        for &(icon, c, selected) in group {
+            let Some((light, dark)) = self.icons.get(icon) else { continue };
+            let tex = if ui.visuals().dark_mode { dark } else { light };
+            let img = egui::Image::new((tex.id(), egui::vec2(16.0, 16.0)));
+            let mut btn = Button::image(img).frame_when_inactive(false);
+            if let Some(sel) = selected {
+                btn = btn.selected(sel);
+            }
+            let enabled = match c {
+                C::Undo => can_undo,
+                C::Redo => can_redo,
+                C::PreviewMarkdown => is_md,
+                _ => true,
+            };
+            let sc = self.shortcut_text(c, ui.ctx());
+            let tip = if sc.is_empty() { self.cmd_text(c) } else { format!("{} ({sc})", self.cmd_text(c)) };
+            // Announced without the menu's "(&F)" mnemonic and trailing "...".
+            let name = plain_label(&self.cmd_text(c));
+            if ui.add_enabled_ui(enabled, |ui| form::icon_button(ui, btn, &tip, &name)).inner.clicked() {
+                self.pending.push(c);
+            }
+        }
+    }
+
+    /// The text / column / hex edit modes as one three-way choice, so the toolbar shows which
+    /// one is in use instead of three unrelated buttons.
+    fn edit_mode_group(&mut self, ui: &mut egui::Ui) {
+        let mode = self.doc().mode;
+        let choices = [(C::TextMode, EditMode::Text, "textmode"), (C::ColumnMode, EditMode::Column, "columnmode"), (C::HexMode, EditMode::Hex, "hexmode")];
+        let mut items = Vec::with_capacity(choices.len());
+        for &(c, m, icon) in &choices {
+            let Some((light, dark)) = self.icons.get(icon) else { return };
+            let tex = if ui.visuals().dark_mode { dark } else { light };
+            let sc = self.shortcut_text(c, ui.ctx());
+            let tip = if sc.is_empty() { self.cmd_text(c) } else { format!("{} ({sc})", self.cmd_text(c)) };
+            items.push(form::IconChoice {
+                image: egui::Image::new((tex.id(), egui::vec2(16.0, 16.0))),
+                tip,
+                name: plain_label(&self.cmd_text(c)),
+                selected: mode == m,
+            });
+        }
+        if let Some(index) = form::icon_choices(ui, &items) {
+            self.pending.push(choices[index].0);
+        }
     }
 }

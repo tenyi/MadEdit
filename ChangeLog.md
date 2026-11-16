@@ -29,6 +29,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Editor tabs and the File View panel's tab now use a flat, content-connected style with rounded top corners only (like Windows 11 Explorer), instead of detached rounded buttons, so the selected tab merges with the pane below it.
 - Closing the last tab leaves an empty workspace: MadEdit neither creates an untitled document nor exits, and the editor area offers New and Open.
 - Reloading a file (manually or automatically after an external change) keeps the current scroll position instead of jumping back to the caret or the top of the file.
+- The toolbar's text, column and hex mode buttons are now one three-way choice: a single outlined group holds all three icons, the current mode is filled in the accent colour with an accent outline, and assistive technology is told these are radio buttons instead of three unrelated toggles.
 
 ### 繁體中文
 
@@ -55,6 +56,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - 編輯器分頁與「文件視圖」面板的分頁改為上緣圓角、下緣與內容相連的扁平樣式（類似 Windows 11 檔案總管），不再是有分離感的圓角按鈕；選取的分頁會與下方內容連成一體。
 - 關閉最後一個分頁後改為空白工作區：不再自動建立未命名文件，也不會結束程式；編輯區提供「新增」與「開啟」按鈕。
 - 重新載入檔案（手動或偵測到外部修改後自動載入）會保留目前的捲動位置，不再跳回游標或檔案開頭。
+- 工具列的「文字模式／列塊模式／十六進位模式」改為同一組三選一：三個圖示收在同一個外框內，目前的模式以強調色填滿並加上強調色外框；螢幕閱讀器會讀成選項按鈕（radio），不再是三個互不相關的切換鈕。
 
 ## [0.6.9] - 2026-11-10
 

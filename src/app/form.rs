@@ -242,6 +242,68 @@ pub fn segmented<T: PartialEq + Clone>(ui: &mut Ui, value: &mut T, choices: &[(T
     });
 }
 
+/// One icon in an [`icon_choices`] group.
+pub struct IconChoice<'a> {
+    pub image: egui::Image<'a>,
+    /// Tooltip text, normally the command name with its shortcut.
+    pub tip: String,
+    /// Accessible name without the menu's "(&F)" mnemonic.
+    pub name: String,
+    pub selected: bool,
+}
+
+/// Mutually exclusive icon buttons drawn as one joined group, for a toolbar choice such as the
+/// text, column and hex edit modes: an outlined strip holds every choice and the current one is
+/// filled and outlined in the accent colour, so the mode in use is visible at a glance and the
+/// group reads as "pick one of these three" instead of three unrelated buttons. Each choice is
+/// announced as a radio button rather than a toggle. Returns the index of the picked choice.
+pub fn icon_choices(ui: &mut Ui, choices: &[IconChoice<'_>]) -> Option<usize> {
+    let visuals = ui.visuals().clone();
+    let icon = egui::vec2(16.0, 16.0);
+    let size = icon + ui.spacing().button_padding * 2.0;
+    // Rows lay controls out right to left; keep the choices in reading order anyway.
+    let rtl = ui.layout().prefer_right_to_left();
+    let mut picked = None;
+    egui::Frame::new()
+        .fill(visuals.widgets.inactive.weak_bg_fill)
+        .stroke(visuals.widgets.inactive.bg_stroke)
+        .corner_radius(6.0)
+        // A one-pixel vertical margin keeps the strip inside the toolbar row instead of making the
+        // whole toolbar taller than the plain icon buttons next to it.
+        .inner_margin(egui::Margin::symmetric(2, 1))
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = 1.0;
+            ui.horizontal(|ui| {
+                let order: Vec<usize> = if rtl { (0..choices.len()).rev().collect() } else { (0..choices.len()).collect() };
+                for index in order {
+                    let choice = &choices[index];
+                    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+                    // Space / Enter on a focused click-sensing widget counts as a click (egui).
+                    if response.clicked() {
+                        picked = Some(index);
+                    }
+                    response.widget_info(|| WidgetInfo::selected(Role::RadioButton, ui.is_enabled(), choice.selected, &choice.name));
+                    let response = response.on_hover_text(choice.tip.as_str());
+                    if ui.is_rect_visible(rect) {
+                        let radius = 4.0;
+                        if choice.selected {
+                            // A soft accent fill keeps a colourful icon legible; the stroke marks
+                            // the current choice even when the pointer is elsewhere.
+                            let tint = if visuals.dark_mode { 0.45 } else { 0.22 };
+                            ui.painter().rect_filled(rect, radius, ACCENT.gamma_multiply(tint));
+                            ui.painter().rect_stroke(rect, radius, egui::Stroke::new(1.5, ACCENT), egui::StrokeKind::Inside);
+                        } else if response.hovered() {
+                            ui.painter().rect_filled(rect, radius, visuals.widgets.hovered.weak_bg_fill);
+                        }
+                        choice.image.paint_at(ui, egui::Rect::from_center_size(rect.center(), icon));
+                        focus_ring(ui, &response, rect, radius, ACCENT);
+                    }
+                }
+            });
+        });
+    picked
+}
+
 /// A page entry in a settings sidebar.
 pub fn nav_item(ui: &mut Ui, selected: bool, text: &str) -> Response {
     list_row(ui, Role::Tab, selected, text, "")
