@@ -3289,6 +3289,76 @@ fn test_output_panel_right_click_keeps_selection() {
     assert_eq!(after, before, "the kept selection is the same range");
 }
 
+/// 右鍵「按住」期間選取就要保留（不能按下取消、放開才又選中造成閃爍）。
+#[test]
+fn test_output_panel_right_press_alone_keeps_selection() {
+    use egui_kittest::kittest::NodeT as _;
+    let mut h = harness();
+    {
+        let runner = &mut h.state_mut().runner;
+        runner.show = true;
+        runner.text = "hello\nworld\nthird".into();
+        runner.lines = vec!["hello".into(), "world".into(), "third".into()];
+        runner.exit = Some(Ok(0));
+    }
+    h.run_steps(3);
+    let is_text_box = |n: &egui_kittest::kittest::AccessKitNode<'_>| n.role() == egui::accesskit::Role::MultilineTextInput;
+    let selection = |h: &Harness<'static, App>| {
+        h.get_by(is_text_box)
+            .accesskit_node()
+            .raw_text_selection()
+            .map(|s| (s.anchor.character_index, s.focus.character_index))
+    };
+    let rect = h.get_by(is_text_box).rect();
+    let inside = egui::pos2(rect.left() + 30.0, rect.center().y);
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: inside, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+    }
+    for pressed in [true, false] {
+        h.event(egui::Event::Key { key: Key::A, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::COMMAND });
+    }
+    h.run_steps(3);
+    let before = selection(&h).expect("ctrl+A sets a selection");
+    assert_ne!(before.0, before.1, "ctrl+A must select all text: {before:?}");
+    // 只按下右鍵，先不放開
+    h.event(egui::Event::PointerButton { pos: inside, button: egui::PointerButton::Secondary, pressed: true, modifiers: egui::Modifiers::NONE });
+    h.run_steps(2);
+    assert_eq!(selection(&h).expect("selection still there while the button is held"), before, "the right press alone must keep the selection");
+    h.event(egui::Event::PointerButton { pos: inside, button: egui::PointerButton::Secondary, pressed: false, modifiers: egui::Modifiers::NONE });
+    h.run_steps(2);
+    assert_eq!(selection(&h).expect("selection still there after release"), before, "the release keeps the same range");
+}
+
+/// 按住右鍵超過 egui 的 click 時限（0.8 秒）再放開，選單仍要彈出來，選取也仍在。
+#[test]
+fn test_output_panel_long_right_press_still_opens_menu() {
+    let mut h = harness();
+    {
+        let runner = &mut h.state_mut().runner;
+        runner.show = true;
+        runner.text = "hello\nworld\nthird".into();
+        runner.lines = vec!["hello".into(), "world".into(), "third".into()];
+        runner.exit = Some(Ok(0));
+    }
+    h.run_steps(3);
+    let is_text_box = |n: &egui_kittest::kittest::AccessKitNode<'_>| n.role() == egui::accesskit::Role::MultilineTextInput;
+    let rect = h.get_by(is_text_box).rect();
+    let inside = egui::pos2(rect.left() + 30.0, rect.center().y);
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: inside, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+    }
+    for pressed in [true, false] {
+        h.event(egui::Event::Key { key: Key::A, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::COMMAND });
+    }
+    h.run_steps(3);
+    // 按住右鍵約 2 秒（每步約 1/60 秒），遠超過 egui 的 0.8 秒 click 上限
+    h.event(egui::Event::PointerButton { pos: inside, button: egui::PointerButton::Secondary, pressed: true, modifiers: egui::Modifiers::NONE });
+    h.run_steps(120);
+    h.event(egui::Event::PointerButton { pos: inside, button: egui::PointerButton::Secondary, pressed: false, modifiers: egui::Modifiers::NONE });
+    h.run_steps(3);
+    assert!(h.query_all_by(|n| n.label().is_some_and(|l| l.contains("全選"))).next().is_some(), "a long right press must still open the menu");
+}
+
 /// Options > General 的「介面字型」可從下拉選單挑選，確定後寫回設定（編輯區字型不變）。
 #[test]
 fn test_options_ui_font_row_sets_interface_font_only() {

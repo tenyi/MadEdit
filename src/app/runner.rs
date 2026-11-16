@@ -461,7 +461,18 @@ impl App {
                 });
             })
             .response;
-        body.container_context_menu(|ui| output_menu(ui, lang, &mut menu));
+        // 右鍵選單：在「放開」時開啟，按住多久都開得出來。egui 的 click 只認 0.8 秒內的短按，
+        // 按住不放會被當成長按而不算 click，選單就永遠不會開；位置固定在放開時的游標處。
+        let right_released = ui.input(|i| i.pointer.button_released(egui::PointerButton::Secondary)) && body.container_contains_pointer();
+        let open = if right_released {
+            Some(egui::SetOpenCommand::Bool(true))
+        } else if body.container_clicked() {
+            // 左鍵點面板時關掉選單（與 egui 內建的 container_context_menu 一致）
+            Some(egui::SetOpenCommand::Bool(false))
+        } else {
+            None
+        };
+        egui::Popup::menu(&body).open_memory(open).at_pointer_fixed().show(|ui| output_menu(ui, lang, &mut menu));
         if selected.is_some() {
             self.runner.sel = selected;
         }
@@ -473,11 +484,13 @@ impl App {
         if menu.clear {
             self.runner.clear_output();
         }
-        // 右鍵不清掉選取（Windows 習慣）：egui 把次要鍵按下列為重新定位游標，
-        // 會把選取收合成一個插入點，所以把先前記住的範圍寫回去，選取highlight仍留著
+        // 右鍵不清掉選取（Windows 習慣，與編輯區一致）：egui 把次要鍵「按下」當成重新定位
+        // 游標，會把選取收合成一個插入點；所以在按下那一幀就把記住的範圍寫回去，
+        // 不能等放開才做，否則按住期間選取會消失、放開又回來，看起來像閃爍。
+        let right_pressed = ui.input(|i| i.pointer.secondary_pressed()) && body.container_contains_pointer();
         let keep = if menu.select_all {
             Some((0, self.runner.text.chars().count()))
-        } else if body.container_secondary_clicked() {
+        } else if right_pressed {
             self.runner.sel
         } else {
             None
