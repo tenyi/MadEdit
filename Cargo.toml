@@ -5,6 +5,10 @@ edition = "2024"
 rust-version = "1.99"
 repository = "https://github.com/tenyi/MadEdit"
 
+# Vendored winit 0.30.13 with the mixed-DPI drag fix (see vendor/winit-pre/PATCHES.md).
+[patch.crates-io]
+winit = { path = "vendor/winit-pre" }
+
 [dependencies]
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 semver = "1"
