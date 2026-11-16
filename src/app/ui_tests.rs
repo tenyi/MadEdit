@@ -3013,6 +3013,44 @@ fn test_tab_context_menu_has_preview_entries() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 分頁右鍵選單的「開啟檔案所在資料夾」：已存檔的分頁可用，未存檔的分頁停用。
+/// 不實際點擊該項，避免測試裡真的開啟檔案總管。
+#[test]
+fn test_tab_context_menu_open_folder_entry() {
+    use egui_kittest::kittest::NodeT as _;
+    let dir = std::env::temp_dir().join(format!("madedit-tab-folder-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("saved.txt");
+    std::fs::write(&file, "x").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    let menu_item = |n: &egui_kittest::kittest::AccessKitNode<'_>| {
+        n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("　 開啟檔案所在資料夾(F)")
+    };
+    let open_tab_menu = |h: &mut Harness<'static, App>| {
+        let label = h.state().doc().display_name();
+        h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some(label.as_str()))
+            .click_secondary();
+        h.run_steps(3);
+    };
+    // 已存檔：項目可用
+    open_tab_menu(&mut h);
+    let item = h.get_by(menu_item);
+    assert!(!item.accesskit_node().is_disabled(), "the saved file's folder can be opened");
+    // 關閉選單（按 Escape）
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+    // 未存檔：項目存在但停用
+    h.state_mut().new_document();
+    h.run_steps(3);
+    open_tab_menu(&mut h);
+    let item = h.get_by(menu_item);
+    assert!(item.accesskit_node().is_disabled(), "an untitled document has no folder to open");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// F5 運行 .ps1：powershell -File 執行，輸出串流到面板。
 #[cfg(windows)]
 #[test]

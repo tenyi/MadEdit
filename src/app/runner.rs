@@ -182,6 +182,15 @@ impl ScriptRunner {
     /// 勾選／取消「輸出到檔案」。開啟時**以清空方式開檔**，並把面板目前的輸出整段寫入
     /// （兩邊同步：檔案內容＝面板顯示的內容），之後新輸出接在後面；失敗時回傳錯誤訊息並保持停用。
     pub(crate) fn set_log_enabled(&mut self, on: bool) -> Result<(), String> {
+        self.set_log_with_mode(on, true)
+    }
+
+    /// 啟動時沿用上次的勾選：以**續寫**模式開檔（清空只在 F5 開始新運行或面板勾選同步時發生）。
+    pub(crate) fn set_log_enabled_append(&mut self, on: bool) -> Result<(), String> {
+        self.set_log_with_mode(on, false)
+    }
+
+    fn set_log_with_mode(&mut self, on: bool, sync_with_panel: bool) -> Result<(), String> {
         if !on {
             self.log_enabled = false;
             self.log_file = None; // 關閉檔案
@@ -190,12 +199,21 @@ impl ScriptRunner {
         let Some(path) = self.resolved_log_path() else {
             return Err("cannot locate the executable directory".into());
         };
-        match std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(&path) {
+        let open = || {
+            if sync_with_panel {
+                std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(&path)
+            } else {
+                std::fs::OpenOptions::new().create(true).append(true).open(&path)
+            }
+        };
+        match open() {
             Ok(mut f) => {
-                // 同步：面板目前顯示的內容整段寫入（含每行結尾換行），之後的新輸出接在後面
-                for line in &self.lines {
-                    if f.write_all(line.as_bytes()).is_err() || f.write_all(b"\n").is_err() {
-                        return Err(path.display().to_string());
+                if sync_with_panel {
+                    // 同步：面板目前顯示的內容整段寫入（含每行結尾換行），之後的新輸出接在後面
+                    for line in &self.lines {
+                        if f.write_all(line.as_bytes()).is_err() || f.write_all(b"\n").is_err() {
+                            return Err(path.display().to_string());
+                        }
                     }
                 }
                 self.log_file = Some(f);
@@ -610,11 +628,14 @@ impl App {
         if selected.is_some() {
             self.runner.sel = selected;
         }
-        // 「輸出到檔案」是即時生效的勾選項：勾上續寫 result.log，取消就關檔
+        // 「輸出到檔案」是即時生效的勾選項：勾上以面板目前內容同步 result.log，取消就關檔；
+        // 勾選狀態存進設定，重開程式沿用（啟動時以續寫模式開檔，不清空）
         if menu.toggle_log {
             let on = !self.runner.log_enabled;
             match self.runner.set_log_enabled(on) {
                 Ok(()) => {
+                    self.settings.output_log_to_file = on;
+                    self.save_settings();
                     if on
                         && let Some(path) = self.runner.resolved_log_path()
                     {

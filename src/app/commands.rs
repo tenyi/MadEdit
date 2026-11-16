@@ -68,6 +68,7 @@ commands! {
     SaveACopy => "menuSaveACopy", "另存副本...", "";
     SaveAll => "menuSaveAll", "全部儲存(&V)", "Ctrl+Shift+S";
     Reload => "menuReload", "重新載入(&R)", "Ctrl+R";
+    OpenFolder => "menuOpenFolder", "開啟檔案所在資料夾(&F)", "";
     Close => "menuClose", "關閉檔案(&C)", "Ctrl+F4";
     CloseAll => "menuCloseAll", "全部關閉(&L)", "";
     CloseOthers => "menuCloseAllButThis", "關閉其他檔案", "";

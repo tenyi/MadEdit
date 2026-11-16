@@ -253,6 +253,13 @@ impl App {
         let ui_fam = app.settings.ui_font_family.clone();
         app.fonts.apply(&cc.egui_ctx, &fam, &ui_fam);
         app.font_applied = Some((fam, ui_fam));
+        // 沿用上次的「輸出到檔案」勾選；以續寫模式開檔（失敗就靜默停用，不打擾啟動）
+        if app.settings.output_log_to_file
+            && app.runner.set_log_enabled_append(true).is_err()
+        {
+            app.runner.disable_log();
+            app.settings.output_log_to_file = false;
+        }
 
         if files.is_empty() && app.settings.reload_files_on_startup {
             let session = app.settings.session_files.clone();
@@ -1062,6 +1069,14 @@ impl App {
                                 menu_cmd = Some((i, c));
                                 ui.close();
                             }
+                        }
+                        // 開啟檔案所在資料夾（未存檔的文件沒有資料夾可開）
+                        if ui
+                            .add_enabled(t.doc.path.is_some(), egui::Button::new(menus::check_label(false, &self.cmd_text(C::OpenFolder))))
+                            .clicked()
+                        {
+                            menu_cmd = Some((i, C::OpenFolder));
+                            ui.close();
                         }
                         // 預覽為：Markdown／HTML／圖形（僅對應類型的檔案可用）
                         let is_md = t.doc.is_markdown();

@@ -6,6 +6,7 @@ menuSaveAs	Save As (&A)...	另存为(&A)...	名前を付けて保存(&A)...	다�
 menuSaveACopy	Save a Copy...	保存副本...	コピーを保存...	복사본 저장...	Kopie speichern...	Guardar una copia...	Enregistrer une copie...	Salva una copia...	Salvar uma cópia...
 menuSaveAll	Save All (&V)	全部保存(&V)	すべて保存(&V)	모두 저장(&V)	Alle speichern (&V)	Guardar todo (&V)	Tout enregistrer (&V)	Salva tutto (&V)	Salvar tudo (&V)
 menuReload	Reload (&R)	重新加载(&R)	再読み込み(&R)	다시 로드(&R)	Neu laden (&R)	Recargar (&R)	Recharger (&R)	Ricarica (&R)	Recarregar (&R)
+menuOpenFolder	Open Folder (&F)	打开所在文件夹(&F)	ファイルの場所を開く(&F)	폴더 열기(&F)	Ordner öffnen (&F)	Abrir carpeta (&F)	Ouvrir le dossier (&F)	Apri cartella (&F)	Abrir pasta (&F)
 menuClose	Close (&C)	关闭(&C)	閉じる(&C)	닫기(&C)	Schließen (&C)	Cerrar (&C)	Fermer (&C)	Chiudi (&C)	Fechar (&C)
 menuCloseAll	Close All (&L)	全部关闭(&L)	すべて閉じる(&L)	모두 닫기(&L)	Alle schließen (&L)	Cerrar todo (&L)	Tout fermer (&L)	Chiudi tutto (&L)	Fechar tudo (&L)
 menuCloseAllButThis	Close Others	关闭其他文件	他を閉じる	다른 파일 닫기	Andere schließen	Cerrar los demás	Fermer les autres	Chiudi gli altri	Fechar os outros

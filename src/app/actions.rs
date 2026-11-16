@@ -379,6 +379,29 @@ impl App {
                     self.reload_tab(id);
                 }
             }
+            C::OpenFolder => {
+                // 在系統檔案管理員開啟檔案所在資料夾並選中該檔；背景執行，不阻塞 UI
+                let Some(path) = self.doc().path.clone() else { return };
+                let path = crate::core::favorites::clean_path(path);
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                    let _ = std::process::Command::new("explorer")
+                        .arg(format!("/select,{}", path.display()))
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .spawn();
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = std::process::Command::new("open").arg("-R").arg(&path).spawn();
+                }
+                #[cfg(all(unix, not(target_os = "macos")))]
+                {
+                    let dir = path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| path.clone());
+                    let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+                }
+            }
             C::Close => {
                 if self.is_preview_tab() {
                     self.tab_mut().md_preview = None;
