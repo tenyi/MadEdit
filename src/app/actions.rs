@@ -55,6 +55,7 @@ fn saves_view_preference(c: C) -> bool {
             | C::ToggleMenubar
             | C::ToggleStatusbar
             | C::ToggleFileView
+            | C::ToggleScriptOutput
     )
 }
 
@@ -806,6 +807,10 @@ impl App {
             }
             C::ToggleStatusbar => self.settings.show_statusbar = !self.settings.show_statusbar,
             C::ToggleFileView => self.settings.show_file_view = !self.settings.show_file_view,
+            C::ToggleScriptOutput => {
+                self.runner.show = !self.runner.show;
+                self.settings.show_script_output = self.runner.show;
+            }
             C::ToggleCodeFolding => {
                 self.settings.code_folding = !self.settings.code_folding;
                 if !self.settings.code_folding {

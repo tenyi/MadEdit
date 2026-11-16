@@ -50,6 +50,7 @@ macro_rules! commands {
                         | C::ShowEndOfLine | C::ShowTabChar | C::ShowSpaceChar | C::ShowAllChar
                         | C::RightToLeft | C::MarkActiveLine | C::MarkBracePair | C::SpellCheck | C::TypewriterMode
                         | C::ToggleToolbar | C::ToggleMenubar | C::ToggleStatusbar | C::ToggleFileView | C::ToggleTheme
+                        | C::ToggleScriptOutput
                         | C::ShowFindInFilesResults | C::CollapseAllResults
                         | C::Options | C::Highlighting | C::FileAssociation | C::SourceFormatter | C::PurgeHistories
                         | C::WindowList | C::KeyboardShortcuts | C::About
@@ -186,6 +187,7 @@ commands! {
     ToggleMenubar => "menuMenuBarToggle", "顯示/隱藏選單列", "Ctrl+F10";
     ToggleStatusbar => "menuStatusBarToggle", "顯示/隱藏狀態列", "";
     ToggleFileView => "menuFileView", "文件視圖(&F)", "";
+    ToggleScriptOutput => "menuScriptOutput", "運行輸出(&O)", "";
     ToggleTheme => "menuToggleTheme", "切換深色/淺色主題", "";
     TextMode => "menuTextMode", "文字模式(&T)", "Alt+1";
     ColumnMode => "menuColumnMode", "列塊模式(&C)", "Alt+2";

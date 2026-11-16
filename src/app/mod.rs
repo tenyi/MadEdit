@@ -209,6 +209,9 @@ impl App {
         #[cfg(target_os = "macos")]
         crate::macos::attach_context(&cc.egui_ctx);
         let auto_reload_was_on = settings.auto_reload_external;
+        // 「執行輸出」面板沿用上次結束時的顯示狀態（檢視 → 運行輸出）。
+        let mut runner = runner::ScriptRunner::default();
+        runner.show = settings.show_script_output;
         let mut app = Self {
             updates: updates::UpdateState::default(),
             instance: None,
@@ -243,7 +246,7 @@ impl App {
             spell: None,
             spell_error: None,
             fif: FindInFiles::default(),
-            runner: runner::ScriptRunner::default(),
+            runner,
             bindings: Vec::new(),
             post_it: false,
             quick_in_menubar: false,
@@ -1656,6 +1659,12 @@ impl eframe::App for App {
         }
         self.fif.poll(&ctx);
         self.runner.poll(&ctx);
+        // 「執行輸出」面板也會被面板上的 × 與執行腳本（自動開啟）改變顯示狀態，
+        // 這裡統一同步到設定，下次啟動沿用最後的顯示/隱藏。
+        if self.runner.show != self.settings.show_script_output {
+            self.settings.show_script_output = self.runner.show;
+            self.save_settings();
+        }
 
         // 測試用截圖
         if let Some((path, frames)) = self.screenshot.as_mut() {

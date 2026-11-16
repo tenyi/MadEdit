@@ -525,6 +525,48 @@ fn test_view_menu_groups_display_options_into_submenus() {
 }
 
 #[test]
+fn test_view_menu_toggles_the_script_output_panel() {
+    let mut h = harness();
+    assert!(!h.state().runner.show);
+    let toggle = |h: &mut Harness<'static, App>| {
+        h.get_by_label("檢視(V)").click();
+        h.run_steps(3);
+        // 選單項目帶勾選欄前綴，面板標題則是純文字，因此排除後者以免同時命中兩個節點。
+        h.get_by(|n| n.label().is_some_and(|l| l.contains("運行輸出") && l != "運行輸出")).click();
+        h.run_steps(3);
+    };
+    toggle(&mut h);
+    assert!(h.state().runner.show, "勾選後應顯示運行輸出面板");
+    assert!(h.state().settings.show_script_output, "勾選狀態應寫入設定");
+    assert!(h.query_by_label("運行輸出").is_some(), "面板標題應出現");
+    toggle(&mut h);
+    assert!(!h.state().runner.show, "再次點擊應隱藏面板");
+    assert!(!h.state().settings.show_script_output, "取消勾選也應寫入設定");
+    assert!(h.query_by_label("運行輸出").is_none(), "面板標題應消失");
+}
+
+/// 關閉面板的 × 與執行腳本（自動開啟）都會改變顯示狀態，設定要跟著記住，
+/// 下次啟動沿用最後狀態。
+#[test]
+fn test_script_output_panel_remembers_its_state() {
+    let settings = crate::core::settings::Settings { show_script_output: true, ..Default::default() };
+    let mut h = Harness::builder()
+        .allow_missing_glyphs()
+        .with_pixels_per_point(1.0)
+        .with_size([1000.0, 700.0])
+        .build_eframe(move |cc| App::with_settings(cc, Vec::new(), None, settings, None));
+    h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
+    h.run_steps(3);
+    assert!(h.state().runner.show, "上次結束時面板顯示中，重開應沿用");
+    assert!(h.query_by_label("運行輸出").is_some());
+    // 用面板上的 × 關閉：設定應同步成隱藏（標題欄也有一個「關閉」，取面板內的那個）。
+    h.get_by(|n| n.label().is_some_and(|l| l == "關閉") && n.raw_bounds().is_some_and(|r| r.y0 > 100.0)).click();
+    h.run_steps(3);
+    assert!(!h.state().runner.show);
+    assert!(!h.state().settings.show_script_output, "× 關閉後設定應同步");
+}
+
+#[test]
 fn test_quick_controls_move_to_toolbar_when_menu_bar_hidden() {
     use eframe::egui::accesskit::Role;
     let mut h = harness();

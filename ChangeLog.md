@@ -22,6 +22,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - The output panel's context menu has an "Output to file (result.log)" checkbox: when checked, the file is opened from scratch and the panel's current output is written into it (keeping both in sync), then every new line is also written to `result.log` next to `MadEdit.exe` with no size limit — the on-screen cap does not apply to the file. Each F5 run starts the file from scratch; clearing the panel does not touch the file. The checkbox state is remembered across sessions.
 - The editor tab context menu has "Open Folder", which opens the file's folder in the system file manager (with the file selected on Windows and macOS). It is disabled for unsaved documents.
 - Tools > Options > General has an "Interface font" setting (Automatic by default) for menus, dialogs, tabs and the status bar. The editor and the Script Output panel keep using the editor font.
+- View > Script Output shows or hides the Script Output panel and is checked while the panel is open, the same way View > File View works. The panel's state is remembered, including when it was closed with the panel's × or opened automatically by running a script, so the next launch starts the same way.
 
 ### Changed
 - Windows: the menu bar now lives in a custom-drawn title bar together with the app icon and the window buttons (minimize / maximize / close), like VS Code. The bar is 1.5× the menu height, is draggable, and double-clicking toggles maximize; edge resizing and Aero Snap still work. The zoom controls, theme toggle and quick search stay on the bar's right side. Other platforms keep the native title bar and menu bar. Because the window buttons are ordinary EGUI widgets, Windows 11 does not show the Snap Layouts flyout when hovering the maximize button.
@@ -47,6 +48,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - 「執行輸出」面板右鍵選單新增「輸出到檔案（result.log）」勾選項：勾選時以清空方式開檔，並把面板目前的輸出整段寫入（兩邊同步），之後每一行都同時寫入 `MadEdit.exe` 同目錄的 `result.log`，檔案沒有大小限制（面板截斷不影響檔案內容）。每次按 F5 運行時檔案從頭寫；中途清除面板不影響檔案。勾選狀態會記住，重開程式沿用。
 - 編輯器分頁右鍵選單新增「開啟檔案所在資料夾」：用系統檔案管理員開啟檔案所在資料夾（Windows/macOS 上會選中該檔案）；未存檔的文件此項停用。
 - 「工具 > 選項 > 一般」新增「介面字型」（預設自動）：指定選單、對話框、分頁與狀態列的字型；編輯區與「執行輸出」面板仍使用編輯區字型。
+- 「檢視 > 運行輸出」可顯示或隱藏「運行輸出」面板，面板開啟時選單會打勾（與「檢視 > 文件視圖」一致）。面板狀態會記住：無論是從選單切換、按面板的 × 關閉，還是執行腳本時自動開啟，下次啟動都沿用最後的顯示／隱藏狀態。
 
 #### 變更
 - Windows：選單列移進自繪標題欄，與應用程式圖示、視窗按鈕（最小化／最大化／關閉）同一列（類似 VS Code）。標題欄高度為選單高度的 1.5 倍，可拖動、雙擊可最大化／還原，邊緣縮放與 Aero Snap 貼邊正常。字型縮放、主題切換與快速搜尋保留在同一列右側。其他平台維持原生標題列與選單列。視窗按鈕是一般 EGUI 控件，因此 Windows 11 懸停最大化按鈕時不會顯示 Snap Layouts 浮層。

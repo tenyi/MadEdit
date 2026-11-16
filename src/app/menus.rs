@@ -454,6 +454,9 @@ impl App {
             self.check(ui, C::ToggleStatusbar, s.show_statusbar);
         });
         self.check(ui, C::ToggleFileView, s.show_file_view);
+        // 運行輸出面板也能像文件視圖一樣手動顯示/隱藏；執行腳本時會自動打開。
+        let script_output_shown = self.runner.show;
+        self.check(ui, C::ToggleScriptOutput, script_output_shown);
         self.check(ui, C::FullScreen, self.fullscreen);
         self.check(ui, C::AlwaysOnTop, s.always_on_top);
         self.check(ui, C::PostIt, self.post_it);

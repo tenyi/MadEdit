@@ -256,6 +256,8 @@ pub struct Settings {
     pub ui_font_family: String,
     /// 「執行輸出」面板的「輸出到檔案（result.log）」勾選狀態（跨階段記住，重開程式沿用）
     pub output_log_to_file: bool,
+    /// 「執行輸出」面板是否顯示（檢視 → 運行輸出）：記住使用者最後的顯示/隱藏狀態
+    pub show_script_output: bool,
     /// 等寬模式：每個字元依固定格子寬度排列（關閉時依字型實際字寬排列）
     pub fixed_width: bool,
     pub tab_size: usize,
@@ -378,6 +380,7 @@ impl Default for Settings {
             font_size: 14.0,
             ui_font_family: String::new(),
             output_log_to_file: false,
+            show_script_output: false,
             fixed_width: false,
             tab_size: 4,
             indent_size: 4,
@@ -730,7 +733,7 @@ mod tests {
 
     #[test]
     fn test_settings_roundtrip_and_partial_json() {
-        let mut s = Settings { font_size: 18.0, ui_font_family: "Segoe UI".into(), output_log_to_file: true, ..Default::default() };
+        let mut s = Settings { font_size: 18.0, ui_font_family: "Segoe UI".into(), output_log_to_file: true, show_script_output: true, ..Default::default() };
         s.add_recent_file(PathBuf::from("/a"));
         s.add_recent_file(PathBuf::from("/b"));
         s.add_recent_file(PathBuf::from("/a"));
@@ -740,11 +743,13 @@ mod tests {
         assert_eq!(back.font_size, 18.0);
         assert_eq!(back.ui_font_family, "Segoe UI");
         assert!(back.output_log_to_file, "the log toggle persists");
+        assert!(back.show_script_output, "the Script Output panel state persists");
         // 舊版設定檔缺少欄位時以預設值補上
         let partial: Settings = serde_json::from_str(r#"{"tab_size": 8}"#).unwrap();
         assert_eq!(partial.tab_size, 8);
         assert!(partial.show_line_numbers);
         assert!(partial.ui_font_family.is_empty(), "missing ui_font_family means automatic");
         assert!(!partial.output_log_to_file, "missing log toggle defaults to off");
+        assert!(!partial.show_script_output, "missing Script Output state defaults to hidden");
     }
 }
