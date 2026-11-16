@@ -517,7 +517,7 @@ impl App {
                 }
                 self.push_tab(doc);
                 self.settings.add_recent_file(canon);
-                let shown = path.display().to_string();
+                let shown = crate::core::display_path(&path);
                 self.set_status(if notes.is_empty() { self.tf("msg.opened", "已開啟 {q}", None, Some(&shown)) } else { notes.join("；") });
                 true
             }
@@ -529,7 +529,7 @@ impl App {
                         self.confirm = Some(Confirm::CreateNew { path: canon });
                     }
                 } else {
-                    self.confirm = Some(Confirm::Message { title: self.t("msg.open_fail", "開啟失敗").to_string(), text: format!("{}\n{e}", path.display()) });
+                    self.confirm = Some(Confirm::Message { title: self.t("msg.open_fail", "開啟失敗").to_string(), text: format!("{}\n{e}", crate::core::display_path(&path)) });
                 }
                 false
             }
@@ -551,7 +551,7 @@ impl App {
         // 直接綁定路徑，存檔時寫回同一個檔案，不再詢問另存新檔
         doc.path = Some(path.clone());
         self.push_tab(doc);
-        let shown = path.display().to_string();
+        let shown = crate::core::display_path(&path);
         self.set_status(self.tf("msg.created", "已建立 {q}", None, Some(&shown)));
     }
 
@@ -1071,7 +1071,7 @@ impl App {
                         name.push_str(" 🔒");
                     }
                     let selected = i == self.active && !preview_active;
-                    let tooltip = t.doc.path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| unsaved.clone());
+                    let tooltip = t.doc.path.as_ref().map(|p| crate::core::display_path(p)).unwrap_or_else(|| unsaved.clone());
                     let close_name = format!("{close_tip} {}", t.doc.display_name());
                     let form::FlatTab { rect, body, close: close_btn } =
                         form::flat_tab(ui, ("doc-tab", i), &name, selected, content_bg, Some(&close_name));
@@ -1082,7 +1082,8 @@ impl App {
                     if body.clicked() {
                         activate = Some((i, false));
                     }
-                    if body.middle_clicked() {
+                    // 左鍵雙擊分頁標題即關閉這個分頁（未儲存的變更仍會先詢問）。
+                    if body.middle_clicked() || body.double_clicked() {
                         close = Some(t.doc.id);
                     }
                     body.context_menu(|ui| {
@@ -1101,6 +1102,13 @@ impl App {
                             menu_cmd = Some((i, C::OpenFolder));
                             ui.close();
                         }
+                        // 複製完整路徑，緊接在「開啟資料夾」之後（Windows 上不含 `\\?\` 前綴）
+                        if let Some(p) = &t.doc.path
+                            && ui.button(menus::check_label(false, &copy_path)).clicked()
+                        {
+                            ui.ctx().copy_text(crate::core::display_path(p));
+                            ui.close();
+                        }
                         // 預覽為：Markdown／HTML／圖形（僅對應類型的檔案可用）
                         let is_md = t.doc.is_markdown();
                         let is_svg = t.doc.path.as_ref().is_some_and(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")));
@@ -1116,12 +1124,6 @@ impl App {
                                     ui.close();
                                 }
                             }
-                        }
-                        if let Some(p) = &t.doc.path
-                            && ui.button(menus::check_label(false, &copy_path)).clicked()
-                        {
-                            ui.ctx().copy_text(p.display().to_string());
-                            ui.close();
                         }
                     });
                     if close_btn.is_some_and(|btn| btn.clicked()) {
@@ -1140,7 +1142,8 @@ impl App {
                         if body.clicked() {
                             activate = Some((i, true));
                         }
-                        if body.middle_clicked() || close_btn.is_some_and(|btn| btn.clicked()) {
+                        // 雙擊預覽分頁標題同樣關閉它。
+                        if body.middle_clicked() || body.double_clicked() || close_btn.is_some_and(|btn| btn.clicked()) {
                             close_preview = Some(i);
                         }
                     }

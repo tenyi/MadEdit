@@ -1706,7 +1706,7 @@ impl App {
             }
             Confirm::CreateNew { path } => {
                 let mut choice = None;
-                let name = path.display().to_string();
+                let name = crate::core::display_path(path);
                 let body = self.tf("confirm.create_body", "「{q}」不存在，是否要建立新的檔案？", None, Some(&name));
                 modal.show(ctx, |ui| {
                     confirm_body(ui, opened, self.t("confirm.create_title", "檔案不存在"), &[&body]);

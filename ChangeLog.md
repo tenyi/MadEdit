@@ -23,6 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - The editor tab context menu has "Open Folder", which opens the file's folder in the system file manager (with the file selected on Windows and macOS). It is disabled for unsaved documents.
 - Tools > Options > General has an "Interface font" setting (Automatic by default) for menus, dialogs, tabs and the status bar. The editor and the Script Output panel keep using the editor font.
 - View > Script Output shows or hides the Script Output panel and is checked while the panel is open, the same way View > File View works. The panel's state is remembered, including when it was closed with the panel's × or opened automatically by running a script, so the next launch starts the same way.
+- Left double-clicking an editor tab's title closes that tab, like its × button; double-clicking a Markdown preview tab closes the preview. Unsaved changes are still confirmed first.
 
 ### Changed
 - Windows: the menu bar now lives in a custom-drawn title bar together with the app icon and the window buttons (minimize / maximize / close), like VS Code. The bar is 1.5× the menu height, is draggable, and double-clicking toggles maximize; edge resizing and Aero Snap still work. The zoom controls, theme toggle and quick search stay on the bar's right side. Other platforms keep the native title bar and menu bar. Because the window buttons are ordinary EGUI widgets, Windows 11 does not show the Snap Layouts flyout when hovering the maximize button.
@@ -30,6 +31,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Closing the last tab leaves an empty workspace: MadEdit neither creates an untitled document nor exits, and the editor area offers New and Open.
 - Reloading a file (manually or automatically after an external change) keeps the current scroll position instead of jumping back to the caret or the top of the file.
 - The toolbar's text, column and hex mode buttons are now one three-way choice: a single outlined group holds all three icons, the current mode is filled in the accent colour with an accent outline, and assistive technology is told these are radio buttons instead of three unrelated toggles.
+
+### Fixed
+- Windows: paths shown to the user no longer carry the `\\?\` prefix that `canonicalize` adds. The tab tooltip, Copy Full Path, the File View list, the open/create status messages, the "create this file?" prompt and the print header now show `D:\work\a.txt` instead of `\\?\D:\work\a.txt`.
 
 ### 繁體中文
 
@@ -50,6 +54,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - 編輯器分頁右鍵選單新增「開啟檔案所在資料夾」：用系統檔案管理員開啟檔案所在資料夾（Windows/macOS 上會選中該檔案）；未存檔的文件此項停用。
 - 「工具 > 選項 > 一般」新增「介面字型」（預設自動）：指定選單、對話框、分頁與狀態列的字型；編輯區與「執行輸出」面板仍使用編輯區字型。
 - 「檢視 > 運行輸出」可顯示或隱藏「運行輸出」面板，面板開啟時選單會打勾（與「檢視 > 文件視圖」一致）。面板狀態會記住：無論是從選單切換、按面板的 × 關閉，還是執行腳本時自動開啟，下次啟動都沿用最後的顯示／隱藏狀態。
+- 以滑鼠左鍵雙擊編輯器分頁標題即可關閉該分頁（與 × 按鈕相同）；雙擊 Markdown 預覽分頁則關閉該預覽。有未儲存的變更時仍會先詢問。
 
 #### 變更
 - Windows：選單列移進自繪標題欄，與應用程式圖示、視窗按鈕（最小化／最大化／關閉）同一列（類似 VS Code）。標題欄高度為選單高度的 1.5 倍，可拖動、雙擊可最大化／還原，邊緣縮放與 Aero Snap 貼邊正常。字型縮放、主題切換與快速搜尋保留在同一列右側。其他平台維持原生標題列與選單列。視窗按鈕是一般 EGUI 控件，因此 Windows 11 懸停最大化按鈕時不會顯示 Snap Layouts 浮層。
@@ -57,6 +62,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - 關閉最後一個分頁後改為空白工作區：不再自動建立未命名文件，也不會結束程式；編輯區提供「新增」與「開啟」按鈕。
 - 重新載入檔案（手動或偵測到外部修改後自動載入）會保留目前的捲動位置，不再跳回游標或檔案開頭。
 - 工具列的「文字模式／列塊模式／十六進位模式」改為同一組三選一：三個圖示收在同一個外框內，目前的模式以強調色填滿並加上強調色外框；螢幕閱讀器會讀成選項按鈕（radio），不再是三個互不相關的切換鈕。
+
+#### 修正
+- Windows：顯示給使用者的路徑不再帶 `canonicalize` 產生的 `\\?\` 前綴。分頁提示、「複製完整路徑」、文件視圖清單、開啟／建立的狀態訊息、「是否建立新檔案」詢問與列印頁首都改成 `D:\work\a.txt` 這種寫法，不再是 `\\?\D:\work\a.txt`。
 
 ## [0.6.9] - 2026-11-10
 

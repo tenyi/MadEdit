@@ -3,6 +3,10 @@
 //! 預設略過，執行方式：
 //! `MADEDIT_SHOT_OUT=out.png MADEDIT_SHOT_FILE=檔案 MADEDIT_SHOT_CMDS=menuToggleTheme,menuHexMode cargo test shot -- --ignored`
 //!
+//! `MADEDIT_SHOT_CLICK` / `MADEDIT_SHOT_RCLICK` click (left / right) widgets by their accessible
+//! name before drawing, e.g. `MADEDIT_SHOT_RCLICK=README.md` for a tab's context menu;
+//! `MADEDIT_SHOT_HOVER` hovers one so its tooltip is drawn.
+//!
 //! The window starts in the dark theme (it follows the system); `menuToggleTheme` switches to
 //! the light one.
 
@@ -190,6 +194,17 @@ fn shot() {
     for label in std::env::var("MADEDIT_SHOT_CLICK").unwrap_or_default().split(',').filter(|s| !s.is_empty()) {
         harness.get_by_label(label).click();
         harness.run_steps(3);
+    }
+    // Same for a right click, e.g. a tab's own context menu. `MADEDIT_SHOT_CLICK` draws with the
+    // left button only, so context menus need their own variable.
+    for label in std::env::var("MADEDIT_SHOT_RCLICK").unwrap_or_default().split(',').filter(|s| !s.is_empty()) {
+        harness.get_by_label(label).click_secondary();
+        harness.run_steps(3);
+    }
+    // And for hovering, so tooltips (such as a tab's full path) can be inspected too.
+    for label in std::env::var("MADEDIT_SHOT_HOVER").unwrap_or_default().split(',').filter(|s| !s.is_empty()) {
+        harness.get_by_label(label).hover();
+        harness.run_steps(4);
     }
     harness.render().expect("繪製失敗").save(&out).expect("無法儲存截圖");
 }

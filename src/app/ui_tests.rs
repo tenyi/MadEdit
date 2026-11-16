@@ -1063,6 +1063,52 @@ fn test_switch_tab_by_number_shortcut() {
     assert_eq!(h.state_mut().active, 2, "分頁不存在時不動作");
 }
 
+/// 左鍵雙擊分頁標題即關閉該分頁；有未儲存的變更時仍先詢問，不能直接丟棄內容。
+#[test]
+fn test_double_clicking_a_tab_title_closes_that_tab() {
+    use eframe::egui::PointerButton;
+    use egui::accesskit::Role;
+    // 每幀 50ms：兩次點擊相距 50ms，落在 egui 的雙擊判定時間內。
+    let mut h = Harness::builder()
+        .allow_missing_glyphs()
+        .with_pixels_per_point(1.0)
+        .with_step_dt(0.05)
+        .with_size([1000.0, 700.0])
+        .build_eframe(|cc| App::new(cc, Vec::new(), None));
+    h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
+    h.run_steps(3);
+    h.state_mut().pending.push(C::New);
+    h.run_steps(3);
+    assert_eq!(h.state().tabs.len(), 2);
+    // 對同一個標題連按兩次左鍵（每次 press/release 一幀）。未命名文件的名稱帶文件編號，
+    // 整份測試共用的行程裡編號不固定，所以一律從目前狀態取名稱。
+    let double_click = |h: &mut Harness<'static, App>, label: &str| {
+        let at = h.get_by(|n| n.role() == Role::Tab && n.label().as_deref() == Some(label)).rect().center();
+        for _ in 0..2 {
+            for pressed in [true, false] {
+                h.event(Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: Modifiers::default() });
+            }
+            h.run_steps(1);
+        }
+        h.run_steps(2);
+    };
+    let first = h.state().tabs[0].doc.display_name();
+    // 單擊只切換分頁，不得關閉；等雙擊視窗過期後再測雙擊。
+    h.get_by(|n| n.role() == Role::Tab && n.label().as_deref() == Some(first.as_str())).click();
+    h.run_steps(8);
+    assert_eq!(h.state().tabs.len(), 2, "單擊分頁標題不得關閉分頁");
+    double_click(&mut h, &first);
+    assert_eq!(h.state().tabs.len(), 1, "雙擊分頁標題應關閉該分頁");
+    // 有未儲存的變更時，雙擊只開啟確認，不得直接關閉。
+    type_text(&mut h, "修改");
+    assert_eq!(h.state().tabs.len(), 1);
+    let dirty = format!("{} *", h.state().doc().display_name());
+    double_click(&mut h, &dirty);
+    assert!(h.state().confirm.is_some(), "有未儲存的變更時雙擊應先詢問");
+    assert_eq!(h.state().tabs.len(), 1, "確認前不得關閉分頁");
+    assert_eq!(text(&mut h), "修改", "內容不得被丟棄");
+}
+
 #[cfg(unix)]
 #[test]
 fn test_replace_in_files_skips_opened_file_via_symlink_alias() {
@@ -3090,6 +3136,18 @@ fn test_tab_context_menu_open_folder_entry() {
     open_tab_menu(&mut h);
     let item = h.get_by(menu_item);
     assert!(!item.accesskit_node().is_disabled(), "the saved file's folder can be opened");
+    // 「複製完整路徑」緊接在「開啟資料夾」之後、在「預覽為」之前，中間沒有其他項目。
+    let folder = item.rect();
+    let copy = h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("　 複製完整路徑")).rect();
+    let preview = h.get_by(|n| n.role() == egui::accesskit::Role::Label && n.value().as_deref() == Some("預覽為")).rect();
+    assert!(copy.top() > folder.bottom(), "複製完整路徑應在開啟資料夾之後：{folder:?} {copy:?}");
+    assert!(preview.top() > copy.bottom(), "複製完整路徑應在預覽為之前：{copy:?} {preview:?}");
+    let between = h
+        .query_all_by(|n| n.role() == egui::accesskit::Role::Button)
+        .map(|n| n.rect())
+        .filter(|r| r.top() > folder.bottom() && r.bottom() < copy.top())
+        .count();
+    assert_eq!(between, 0, "兩項之間不應夾著其他選單項目");
     // 關閉選單（按 Escape）
     h.key_press(egui::Key::Escape);
     h.run_steps(2);
@@ -3099,6 +3157,49 @@ fn test_tab_context_menu_open_folder_entry() {
     open_tab_menu(&mut h);
     let item = h.get_by(menu_item);
     assert!(item.accesskit_node().is_disabled(), "an untitled document has no folder to open");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 分頁右鍵「複製完整路徑」放進剪貼簿的是 Windows 習慣的寫法：canonicalize 產生的
+/// `\\?\D:\…` 前綴會被去掉（Explorer、cmd 與使用者都不認得那種路徑）。
+#[test]
+fn test_tab_menu_copy_path_drops_the_verbatim_prefix() {
+    let dir = std::env::temp_dir().join(format!("madedit-tab-copy-path-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("sample.txt");
+    std::fs::write(&file, "x").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    let native = h.state().doc().path.clone().expect("opened file has a path");
+    let natural = crate::core::display_path(&native);
+    // 模擬 Windows 上 canonicalize 產生的 verbatim 路徑（真實開檔流程會出現）。
+    #[cfg(windows)]
+    {
+        h.state_mut().doc_mut().path = Some(std::path::PathBuf::from(format!(r"\\?\{}", natural)));
+    }
+    h.run_steps(2);
+    let label = h.state().doc().display_name();
+    h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some(label.as_str())).click_secondary();
+    h.run_steps(3);
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("　 複製完整路徑")).click();
+    h.run_steps(1);
+    let copied: Vec<String> = h
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .filter_map(|c| match c {
+            egui::OutputCommand::CopyText(text) => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(copied, [natural], "複製的應是 Windows 習慣的完整路徑");
+    #[cfg(windows)]
+    {
+        assert!(!copied[0].starts_with(r"\\?\"), "不得殘留 \\\\?\\ 前綴：{}", copied[0]);
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 

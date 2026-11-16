@@ -278,7 +278,7 @@ impl App {
                         label.push_str(" 🔒");
                     }
                 }
-                let tooltip = tab.doc.path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| unsaved.clone());
+                let tooltip = tab.doc.path.as_ref().map(|p| crate::core::display_path(p)).unwrap_or_else(|| unsaved.clone());
                 let selected = i == active && preview == preview_active;
                 let resp = item_row(ui, &label, 6.0, selected).on_hover_text(tooltip);
                 if resp.clicked() {
