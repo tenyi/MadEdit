@@ -11,7 +11,9 @@ use super::{App, Confirm};
 use crate::core::favorites::{FavoriteGroup, FavoriteItem};
 
 fn harness() -> Harness<'static, App> {
-    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, Vec::new(), None));
+    // 強制 1.0 縮放：kittest 的真實視窗可能落在不同縮放比例的顯示器上，
+    // 版面斷言（座標、可視範圍）必須與顯示器 DPI 無關，和視覺迴歸測試一致。
+    let mut h = Harness::builder().allow_missing_glyphs().with_pixels_per_point(1.0).with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, Vec::new(), None));
     // 測試機的系統語言不一定是繁體中文，按鈕文字固定用原文
     h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
     h.run_steps(3);
@@ -703,7 +705,7 @@ fn test_recent_files_list_explains_an_empty_list() {
 #[test]
 fn test_fixed_size_dialogs_fit_a_small_window() {
     use eframe::egui::accesskit::Role;
-    let mut h = Harness::builder().allow_missing_glyphs().with_size([500.0, 400.0]).build_eframe(|cc| App::new(cc, Vec::new(), None));
+    let mut h = Harness::builder().allow_missing_glyphs().with_pixels_per_point(1.0).with_size([500.0, 400.0]).build_eframe(|cc| App::new(cc, Vec::new(), None));
     h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
     h.run_steps(3);
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500.0, 400.0));
@@ -712,7 +714,8 @@ fn test_fixed_size_dialogs_fit_a_small_window() {
         h.state_mut().pending.push(cmd);
         h.run_steps(4);
         let window = h.get_by_role_and_label(Role::Window, title).rect();
-        let footer = h.get_by(|n| n.role() == Role::Button && n.label().as_deref() == Some(button)).rect();
+        // 標題列右上也有一顆「關閉」，對話框內的按鈕要在對話框視窗裡找。
+        let footer = dialog(&h).get_by(|n| n.role() == Role::Button && n.label().as_deref() == Some(button)).rect();
         assert!(screen.contains_rect(window), "{title}: {window:?}");
         assert!(window.contains_rect(footer), "{title}: {footer:?} outside {window:?}");
     }
@@ -1506,7 +1509,7 @@ fn test_every_dialog_keeps_its_buttons_inside_its_window() {
 
 fn dialogs_keep_their_buttons_inside(size: egui::Vec2) {
     use eframe::egui::accesskit::Role;
-    let mut h = Harness::builder().allow_missing_glyphs().with_size(size).build_eframe(|cc| App::new(cc, Vec::new(), None));
+    let mut h = Harness::builder().allow_missing_glyphs().with_pixels_per_point(1.0).with_size(size).build_eframe(|cc| App::new(cc, Vec::new(), None));
     h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
     h.run_steps(3);
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
@@ -1536,6 +1539,10 @@ fn dialogs_keep_their_buttons_inside(size: egui::Vec2) {
         let rects: Vec<egui::Rect> = h.query_all_by(|n| n.role() == Role::Button && n.label().as_deref() == Some(button)).map(|n| n.rect()).collect();
         assert!(!rects.is_empty(), "{cmd:?}: no {button} button");
         for r in rects {
+            // 標題列右上的視窗按鈕（最小化／最大化／關閉）不在任何對話框視窗內，略過。
+            if r.top() < 34.0 {
+                continue;
+            }
             assert!(screen.contains_rect(r), "{cmd:?} at {size:?}: {button} at {r:?} is off screen");
             assert!(windows.iter().any(|w| w.contains_rect(r)), "{cmd:?} at {size:?}: {button} at {r:?} is outside its window {windows:?}");
         }
@@ -1760,7 +1767,9 @@ fn test_dialog_reopens_scrolled_to_the_top() {
     h.event(Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: egui::vec2(0.0, -400.0), modifiers: Modifiers::NONE, phase: egui::TouchPhase::Move, source: egui::MouseWheelSource::Wheel });
     h.run_steps(4);
     assert!(first_row(&h).is_none_or(|r| r.top() < top.top() - 50.0), "the wheel did not scroll the dialog");
-    click_button(&mut h, "關閉");
+    // 標題列右上也有一顆「關閉」，對話框內的按鈕要在對話框視窗裡找。
+    dialog(&h).get_by(|n| n.role() == Role::Button && n.label().as_deref() == Some("關閉")).click();
+    h.run_steps(3);
     assert!(h.state_mut().dialog.is_none());
     h.state_mut().pending.push(C::PageSetup);
     h.run_steps(4);
@@ -3049,6 +3058,39 @@ fn test_tab_context_menu_open_folder_entry() {
     let item = h.get_by(menu_item);
     assert!(item.accesskit_node().is_disabled(), "an untitled document has no folder to open");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 標題欄高度 = 選單自然高 × 1.5：選單列與視窗按鈕必須完整落在工具列之上，
+/// 不能被工具列蓋住（面板保留高度不足時會出現這個問題）。
+#[test]
+fn test_title_bar_contents_stay_above_the_toolbar() {
+    let mut h = harness();
+    h.run_steps(3);
+    let toolbar_top = h.get_by_label("復原").rect().top();
+    for name in ["檔案(F)", "檢視(V)", "說明(H)", "關閉", "最小化"] {
+        let rect = h.get_by_label(name).rect();
+        assert!(
+            rect.bottom() < toolbar_top,
+            "{name} 下緣 {:.1} 應在工具列 {:.1} 之上",
+            rect.bottom(),
+            toolbar_top
+        );
+    }
+}
+
+/// 點開一個選單後，滑鼠移到同一選單列的另一個選單應自動切換（Windows 自繪標題欄）。
+#[test]
+fn test_menu_bar_hover_switches_the_open_menu() {
+    let mut h = harness();
+    h.get_by_label("檢視(V)").click();
+    h.run_steps(3);
+    assert!(h.query_by_label_contains("顯示").is_some(), "檢視選單應已開啟");
+    assert!(h.query_by_label_contains("關於").is_none(), "說明選單此時不應存在");
+    let help = h.get_by_label("說明(H)").rect();
+    h.event(Event::PointerMoved(help.center()));
+    h.run_steps(4);
+    assert!(h.query_by_label_contains("關於").is_some(), "懸停 說明(H) 應切換到說明選單");
+    assert!(h.query_by_label_contains("顯示").is_none(), "切換後檢視選單應已關閉");
 }
 
 /// F5 運行 .ps1：powershell -File 執行，輸出串流到面板。

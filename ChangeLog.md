@@ -24,6 +24,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Tools > Options > General has an "Interface font" setting (Automatic by default) for menus, dialogs, tabs and the status bar. The editor and the Script Output panel keep using the editor font.
 
 ### Changed
+- Windows: the menu bar now lives in a custom-drawn title bar together with the app icon and the window buttons (minimize / maximize / close), like VS Code. The bar is 1.5× the menu height, is draggable, and double-clicking toggles maximize; edge resizing and Aero Snap still work. The zoom controls, theme toggle and quick search stay on the bar's right side. Other platforms keep the native title bar and menu bar. Because the window buttons are ordinary EGUI widgets, Windows 11 does not show the Snap Layouts flyout when hovering the maximize button.
 - Editor tabs and the File View panel's tab now use a flat, content-connected style with rounded top corners only (like Windows 11 Explorer), instead of detached rounded buttons, so the selected tab merges with the pane below it.
 - Closing the last tab leaves an empty workspace: MadEdit neither creates an untitled document nor exits, and the editor area offers New and Open.
 - Reloading a file (manually or automatically after an external change) keeps the current scroll position instead of jumping back to the caret or the top of the file.
@@ -48,6 +49,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - 「工具 > 選項 > 一般」新增「介面字型」（預設自動）：指定選單、對話框、分頁與狀態列的字型；編輯區與「執行輸出」面板仍使用編輯區字型。
 
 #### 變更
+- Windows：選單列移進自繪標題欄，與應用程式圖示、視窗按鈕（最小化／最大化／關閉）同一列（類似 VS Code）。標題欄高度為選單高度的 1.5 倍，可拖動、雙擊可最大化／還原，邊緣縮放與 Aero Snap 貼邊正常。字型縮放、主題切換與快速搜尋保留在同一列右側。其他平台維持原生標題列與選單列。視窗按鈕是一般 EGUI 控件，因此 Windows 11 懸停最大化按鈕時不會顯示 Snap Layouts 浮層。
 - 編輯器分頁與「文件視圖」面板的分頁改為上緣圓角、下緣與內容相連的扁平樣式（類似 Windows 11 檔案總管），不再是有分離感的圓角按鈕；選取的分頁會與下方內容連成一體。
 - 關閉最後一個分頁後改為空白工作區：不再自動建立未命名文件，也不會結束程式；編輯區提供「新增」與「開啟」按鈕。
 - 重新載入檔案（手動或偵測到外部修改後自動載入）會保留目前的捲動位置，不再跳回游標或檔案開頭。

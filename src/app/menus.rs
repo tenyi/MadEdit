@@ -11,7 +11,7 @@ use crate::core::syntax;
 
 /// Room the zoom / theme / quick-search controls need at the right of the menu bar
 /// (widest language included); with less free space they stay in the toolbar.
-const QUICK_CONTROLS_WIDTH: f32 = 340.0;
+pub(super) const QUICK_CONTROLS_WIDTH: f32 = 340.0;
 
 /// Minimum widths of top-level menus and of submenus / context menus. egui sizes every popup
 /// to its widest item, so without a floor Help (one item) is a sliver next to Search and
@@ -120,28 +120,11 @@ impl App {
         }
     }
 
+    /// 原生選單列（非 Windows 平台仍在用；Windows 上選單已移進自繪標題欄）。
+    #[cfg_attr(windows, allow(dead_code))]
     pub fn menu_bar(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
-            menu(ui, self.t("menu.file", "檔案(F)"), |ui| self.file_menu(ui));
-            menu(ui, self.t("menu.edit", "編輯(E)"), |ui| self.edit_menu(ui));
-            menu(ui, self.t("menu.search", "搜尋(S)"), |ui| self.search_menu(ui));
-            menu(ui, self.t("menu.view", "檢視(V)"), |ui| self.view_menu(ui));
-            menu(ui, self.t("menu.macro", "巨集(M)"), |ui| self.macro_menu(ui));
-            menu(ui, self.t("menu.tools", "工具(T)"), |ui| self.tools_menu(ui));
-            menu(ui, self.t("menu.window", "視窗(W)"), |ui| self.window_menu(ui));
-            menu(ui, self.t("menu.help", "說明(H)"), |ui| {
-                self.item(ui, C::KeyboardShortcuts);
-                ui.separator();
-                if ui.add_enabled(!self.updates.busy(), Button::new(self.t("updates.check", "檢查更新"))).clicked() {
-                    self.start_update_check(ui.ctx(), true);
-                    ui.close();
-                }
-                let label = self.t("updates.auto", "自動檢查更新（每日）");
-                if ui.checkbox(&mut self.settings.auto_check_updates, label).changed() {
-                    self.save_settings();
-                }
-                self.item(ui, C::About);
-            });
+            self.menus(ui);
             // Zoom, theme and quick search sit at the right end of the menu bar, so the toolbar
             // stays a single row of icons. Below this width they would overlap the menus. They do
             // not depend on the toolbar being shown, or hiding it would remove the theme toggle.
@@ -152,9 +135,33 @@ impl App {
         });
     }
 
+    /// 八個下拉選單本体（不含容器與右側快捷控制項），供原生選單列與 Windows 自繪標題欄共用。
+    pub fn menus(&mut self, ui: &mut egui::Ui) {
+        menu(ui, self.t("menu.file", "檔案(F)"), |ui| self.file_menu(ui));
+        menu(ui, self.t("menu.edit", "編輯(E)"), |ui| self.edit_menu(ui));
+        menu(ui, self.t("menu.search", "搜尋(S)"), |ui| self.search_menu(ui));
+        menu(ui, self.t("menu.view", "檢視(V)"), |ui| self.view_menu(ui));
+        menu(ui, self.t("menu.macro", "巨集(M)"), |ui| self.macro_menu(ui));
+        menu(ui, self.t("menu.tools", "工具(T)"), |ui| self.tools_menu(ui));
+        menu(ui, self.t("menu.window", "視窗(W)"), |ui| self.window_menu(ui));
+        menu(ui, self.t("menu.help", "說明(H)"), |ui| {
+            self.item(ui, C::KeyboardShortcuts);
+            ui.separator();
+            if ui.add_enabled(!self.updates.busy(), Button::new(self.t("updates.check", "檢查更新"))).clicked() {
+                self.start_update_check(ui.ctx(), true);
+                ui.close();
+            }
+            let label = self.t("updates.auto", "自動檢查更新（每日）");
+            if ui.checkbox(&mut self.settings.auto_check_updates, label).changed() {
+                self.save_settings();
+            }
+            self.item(ui, C::About);
+        });
+    }
+
     /// Font zoom, theme switch and quick search. `rtl` is set inside a right-to-left layout,
     /// where widgets are placed from the right edge and must therefore be added in reverse.
-    fn quick_controls(&mut self, ui: &mut egui::Ui, rtl: bool) {
+    pub(super) fn quick_controls(&mut self, ui: &mut egui::Ui, rtl: bool) {
         let zoom_out = ("A−", self.t("zoom.out", "縮小字型"), C::ZoomOut);
         let zoom_in = ("A+", self.t("zoom.in", "放大字型"), C::ZoomIn);
         let size = self.settings.font_size.to_string();

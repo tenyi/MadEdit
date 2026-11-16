@@ -25,6 +25,7 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "pulldown-cmark",
+ "raw-window-handle",
  "regex",
  "resvg",
  "rfd",
@@ -36,6 +37,7 @@ dependencies = [
  "sys-locale",
  "unicode-width",
  "ureq",
+ "windows",
 ]
 
 [[package]]

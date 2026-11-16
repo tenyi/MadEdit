@@ -20,6 +20,17 @@ mod preview;
 mod print;
 mod svgpreview;
 mod runner;
+#[cfg(windows)]
+mod titlebar;
+
+/// Windows 自繪標題欄的應用程式圖示（egui 貼圖，從內嵌 PNG 載入一次後快取）。
+#[cfg(windows)]
+fn load_app_icon(ctx: &egui::Context) -> TextureHandle {
+    let img = image::load_from_memory(include_bytes!("../../assets/madedit-icon.png")).expect("app icon decodes");
+    let size = [img.width() as usize, img.height() as usize];
+    let image = egui::ColorImage::from_rgba_unmultiplied(size, &img.to_rgba8());
+    ctx.load_texture("madedit-app-icon", image, egui::TextureOptions::default())
+}
 pub mod view;
 #[cfg(test)]
 mod visual_tests;
@@ -119,6 +130,11 @@ pub struct App {
     widths: CharWidths,
     /// Toolbar icon textures: (light theme, dark theme). See `icons.rs`.
     icons: HashMap<&'static str, (TextureHandle, TextureHandle)>,
+    /// Windows 自繪標題欄：應用程式圖示貼圖與子類安裝標記
+    #[cfg(windows)]
+    app_icon: Option<TextureHandle>,
+    #[cfg(windows)]
+    titlebar_installed: bool,
     status: Option<(String, f64)>,
     find: FindBar,
     goto: GotoBar,
@@ -209,6 +225,10 @@ impl App {
             fonts_changed: false,
             widths: CharWidths::default(),
             icons: HashMap::new(),
+            #[cfg(windows)]
+            app_icon: None,
+            #[cfg(windows)]
+            titlebar_installed: false,
             status: None,
             find: FindBar::default(),
             goto: GotoBar::default(),
@@ -1532,6 +1552,13 @@ impl eframe::App for App {
 
         let show_bars = !self.post_it;
         self.quick_in_menubar = false;
+        #[cfg(windows)]
+        {
+            // Windows 自繪標題欄：圖示 + 選單列 + 快捷控制 + 視窗按鈕
+            //（便利貼模式只保留圖示與視窗按鈕）。面板由 `title_bar` 自行建立並給定高度。
+            self.title_bar(ui, _frame);
+        }
+        #[cfg(not(windows))]
         if self.settings.show_menubar && show_bars {
             egui::Panel::top("menubar").show(ui, |ui| self.menu_bar(ui));
         }
@@ -1659,5 +1686,88 @@ impl eframe::App for App {
     fn on_exit(&mut self) {
         self.fif.stop_worker();
         self.save_session();
+    }
+}
+
+impl App {
+    /// Windows 自繪標題欄：圖示 + 選單列 + 快捷控制 + 視窗按鈕。
+    /// 高度由選單自然高推導（× 1.5），拖動、雙擊最大化與按鈕全部由 egui 處理；
+    /// 原生子類（`titlebar` 模組）只負責客戶區邊緣縮放，因此懸停與點擊不會互相搶事件。
+    #[cfg(windows)]
+    fn title_bar(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        use raw_window_handle::HasWindowHandle;
+        if !self.titlebar_installed
+            && let Ok(handle) = frame.window_handle()
+            && let raw_window_handle::RawWindowHandle::Win32(win) = handle.as_raw()
+        {
+            titlebar::install(win.hwnd.get() as isize);
+            self.titlebar_installed = true;
+        }
+
+        let maximized = ui.ctx().input(|i| i.viewport().maximized).unwrap_or(false);
+        // 快捷控制項跟著選單列走：隱藏選單列時移交給工具列（與非 Windows 行為一致）。
+        let quick_shown = self.settings.show_menubar && !self.post_it && ui.available_width() >= menus::QUICK_CONTROLS_WIDTH;
+        let menus_shown = self.settings.show_menubar && !self.post_it;
+        let icon = self.app_icon.get_or_insert_with(|| load_app_icon(ui.ctx())).clone();
+        // 欄高 = 選單按鈕自然高 × 1.5。自然高由字型與樣式推導（字高 + 上下內距，且不小於
+        // 互動尺寸），不測量已佈局的結果，因此不會出現逐幀回饋放大。
+        let text_h = ui.text_style_height(&egui::TextStyle::Button);
+        let menu_h = (text_h + 2.0 * ui.spacing().button_padding.y).max(ui.spacing().interact_size.y);
+        // 欄（容器）高度 = 選單自然高 × 1.5：固定給面板，避免 `ui.set_height` 只撐大內容
+        // 卻不改變面板保留高度，導致選單列下緣被工具列蓋住。
+        let bar_height = (menu_h * 1.5).max(24.0);
+        // 圖示邊長（與欄高等比縮放，保持視覺平衡）
+        let icon_size = (bar_height * 0.5).clamp(16.0, 32.0);
+
+        egui::Panel::top("titlebar").exact_size(bar_height).show_separator_line(false).show(ui, |ui| {
+            // 拖動區：`interact` 只註冊互動矩形、不佔用版面（`allocate_rect` 會推進游標，
+            // 把選單列推出面板高度，導致點擊落空）。先註冊者在下，後面的按鈕優先取得點擊。
+            let drag = ui.interact(ui.max_rect(), ui.scope_id().with("titlebar-drag"), egui::Sense::click_and_drag());
+            if drag.drag_started() {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            }
+            if drag.double_clicked() {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+            }
+            // 內容：右側叢集釘右緣，左側圖示 + 選單列自然由左至右。
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // 視窗按鈕：純 egui 按鈕，hover 效果由 egui 穩定處理，點擊發 ViewportCommand。
+                let click = |ui: &mut egui::Ui, glyph: &str, name: &str| {
+                    form::icon_button(ui, egui::Button::new(glyph), name, name).clicked()
+                };
+                if click(ui, "×", &self.t("btn.close", "關閉")) {
+                    // 與原生關閉一致：走 close_requested 流程（未存檔先詢問）。
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                if click(ui, if maximized { "❒" } else { "□" }, &self.t("btn.maximize", "最大化／還原")) {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                }
+                if click(ui, "─", &self.t("btn.minimize", "最小化")) {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                }
+                if quick_shown {
+                    ui.separator();
+                    ui.scope(|ui| {
+                        self.quick_in_menubar = true;
+                        self.quick_controls(ui, true);
+                    });
+                }
+                // 圖示與選單佔用剩餘寬度，並明確由左至右排列；
+                // `MenuBar` 提供「點開一個後懸停自動切換」。
+                // 便利貼模式與「隱藏選單列」時只保留圖示。
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    let (icon_rect, _) = ui.allocate_exact_size(egui::vec2(icon_size, icon_size), egui::Sense::hover());
+                    ui.painter().image(
+                        icon.id(),
+                        icon_rect,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+                    if menus_shown {
+                        egui::MenuBar::new().ui(ui, |ui| self.menus(ui));
+                    }
+                });
+            });
+        });
     }
 }
