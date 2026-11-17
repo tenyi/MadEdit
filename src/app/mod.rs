@@ -1047,14 +1047,16 @@ impl App {
         let close_tip = self.t("btn.close", "關閉").to_string();
         let close_preview_tip = self.t("md.close", "關閉預覽").to_string();
         let copy_path = self.t("tab.copy_path", "複製完整路徑").to_string();
-        // 選取的分頁和下面的編輯區同色才會連成一體：文字模式用語法主題底色，十六進位模式用
-        // Hex 檢視的底色。
+        // 選取的分頁和下面的編輯區同色才會連成一體：暗色下編輯區用統一的面板底色（見
+        // view::paint 的背景規則），淺色沿用語法主題底色；十六進位模式用 Hex 檢視的底色。
         let dark = Self::is_dark(ui.ctx());
-        let content_bg = if self.doc().mode == EditMode::Hex {
-            ui.visuals().extreme_bg_color
-        } else {
-            let c = crate::core::syntax::theme_colors(&self.syntax_theme(dark), dark).background;
-            Color32::from_rgb(c.0, c.1, c.2)
+        let content_bg = match self.doc().mode {
+            EditMode::Hex => ui.visuals().extreme_bg_color,
+            _ if dark => ui.visuals().panel_fill,
+            _ => {
+                let c = crate::core::syntax::theme_colors(&self.syntax_theme(dark), dark).background;
+                Color32::from_rgb(c.0, c.1, c.2)
+            }
         };
         let strip = ui.max_rect();
         let mut active_rect = None;
@@ -1569,7 +1571,8 @@ impl eframe::App for App {
             egui::Panel::top("menubar").show(ui, |ui| self.menu_bar(ui));
         }
         if self.settings.show_toolbar && show_bars {
-            egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
+            // 不畫面板分隔線：標題欄（含選單列）與工具列之間不需要一條橫線。
+            egui::Panel::top("toolbar").show_separator_line(false).show(ui, |ui| self.toolbar(ui));
         }
         // 狀態列先配置，才會橫跨整個視窗；文件視圖在其上方、緊接工具列底部，
         // 接下來的分頁列與搜尋結果都只佔編輯區寬度，與編輯器左右並排。
@@ -1728,6 +1731,10 @@ impl App {
         // 欄（容器）高度 = 選單自然高 × 1.5：固定給面板，避免 `ui.set_height` 只撐大內容
         // 卻不改變面板保留高度，導致選單列下緣被工具列蓋住。
         let bar_height = (menu_h * 1.5).max(24.0);
+        // 吸附到整數物理像素：×1.5 的高度在小數點後留下碎片時（某些縮放比例下），標題欄
+        // 與工具列面板的接縫會露出一條 wgpu 清除色（黑線，深淺主題都出現）。對齊後嚴絲合縫。
+        let ppp = ui.ctx().pixels_per_point();
+        let bar_height = ((bar_height * ppp).ceil() / ppp).max(24.0);
         // 圖示邊長（與欄高等比縮放，保持視覺平衡）
         let icon_size = (bar_height * 0.5).clamp(16.0, 32.0);
 

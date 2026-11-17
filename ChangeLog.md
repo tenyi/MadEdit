@@ -31,6 +31,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Closing the last tab leaves an empty workspace: MadEdit neither creates an untitled document nor exits, and the editor area offers New and Open.
 - Reloading a file (manually or automatically after an external change) keeps the current scroll position instead of jumping back to the caret or the top of the file.
 - The toolbar's text, column and hex mode buttons are now one three-way choice: a single outlined group holds all three icons, the current mode is filled in the accent colour with an accent outline, and assistive technology is told these are radio buttons instead of three unrelated toggles.
+- The title bar's minimize / maximize / close buttons follow the Windows 11 style: flat full-height tiles without frames of their own, thin drawn glyphs instead of font characters, and Close turns red with a white glyph on hover.
+- In the dark theme the editor area and the tab strip now use the same background as the other panels (the Script Output dock, side panels) instead of the syntax theme's own grey-blue background, which looked hazy next to them; light theme keeps the theme's white background.
+- The title bar's font zoom buttons (A− / A+) no longer paint a background while idle, so they blend into the bar in both themes; the border and hover feedback remain.
+- The horizontal separator line between the menu bar and the toolbar is gone, as are the separators between the quick controls (font zoom, theme toggle, quick search); at fractional scale factors the title bar height now snaps to whole physical pixels, which removes the thin dark line that could show at the panel seam on 100% / 125% displays.
 
 ### Fixed
 - Windows: paths shown to the user no longer carry the `\\?\` prefix that `canonicalize` adds. The tab tooltip, Copy Full Path, the File View list, the open/create status messages, the "create this file?" prompt and the print header now show `D:\work\a.txt` instead of `\\?\D:\work\a.txt`.
@@ -62,6 +66,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - 關閉最後一個分頁後改為空白工作區：不再自動建立未命名文件，也不會結束程式；編輯區提供「新增」與「開啟」按鈕。
 - 重新載入檔案（手動或偵測到外部修改後自動載入）會保留目前的捲動位置，不再跳回游標或檔案開頭。
 - 工具列的「文字模式／列塊模式／十六進位模式」改為同一組三選一：三個圖示收在同一個外框內，目前的模式以強調色填滿並加上強調色外框；螢幕閱讀器會讀成選項按鈕（radio），不再是三個互不相關的切換鈕。
+- 標題欄的最小化／最大化／關閉按鈕改為 Windows 11 風格：整欄高的平面熱區、不再自帶底框，字形改由線段繪製（不依賴字型字元），懸停時整格變色，關閉鍵懸停變紅底白叉。
+- 暗色主題下，編輯區與分頁列改用與其他面板（執行輸出停靠欄、側邊面板）一致的背景色，不再使用語法主題自帶的灰藍底（與整體介面相比顯得灰蒙蒙）；淺色主題維持主題原本的白底。
+- 標題欄的字型縮放按鈕（A−／A+）閒置時不再繪製底色，深淺主題都與標題欄融為一體；邊框與懸停回饋保留。
+- 選單列與工具列之間的橫向分隔線移除，快捷控件（字型縮放、主題切換、快速搜尋）之間的分隔線也一併移除；標題欄高度在非整數縮放比例（100%／125% 等）下吸附到整數物理像素，消除面板接縫處可能出現的細黑線。
 
 #### 修正
 - Windows：顯示給使用者的路徑不再帶 `canonicalize` 產生的 `\\?\` 前綴。分頁提示、「複製完整路徑」、文件視圖清單、開啟／建立的狀態訊息、「是否建立新檔案」詢問與列印頁首都改成 `D:\work\a.txt` 這種寫法，不再是 `\\?\D:\work\a.txt`。

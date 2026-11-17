@@ -70,9 +70,11 @@ pub(super) fn text(
     let total_rows = view.row_count(&doc.editor);
     let vis = view.visible_rows;
     let colors = syntax::theme_colors(env.theme_name, env.is_dark);
-    let bg = rgb(colors.background);
-    let fg = rgb(colors.foreground);
     let visuals = ui.visuals().clone();
+    // 暗色模式下編輯區與其他面板共用同一底色：語法主題自帶的灰藍底（如 base16-ocean 的
+    // #2B303B）在整體深色介面中顯得灰蒙蒙；淺色主題本身已是白底，維持主題原色不動。
+    let bg = if env.is_dark { visuals.panel_fill } else { rgb(colors.background) };
+    let fg = rgb(colors.foreground);
     let sel_color = colors
         .selection
         .map(|c| rgb(c).gamma_multiply(0.85))

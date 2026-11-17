@@ -40,11 +40,9 @@ pub fn caption_button(ui: &mut Ui, icon: CaptionIcon, tip: &str, name: &str) -> 
     if ui.is_rect_visible(rect) {
         let visuals = ui.visuals();
         let text = visuals.widgets.inactive.fg_stroke.color;
-        let hover_fill = if visuals.dark_mode {
-            Color32::from_white_alpha(25)
-        } else {
-            Color32::from_black_alpha(15)
-        };
+        // The palette's own hovered fill keeps the strip consistent with every other control.
+        let hover_fill = visuals.widgets.hovered.weak_bg_fill;
+        // Windows' fixed caption red (the system ClearType constant, not a theme colour).
         let close_red = Color32::from_rgb(232, 17, 35);
         let hovered = response.hovered() || response.is_pointer_button_down_on();
         let (fill, glyph) = match (icon, hovered) {
@@ -430,10 +428,12 @@ const TAB_MAX_TEXT: f32 = 220.0;
 const TAB_CLOSE_SIZE: f32 = 16.0;
 const TAB_TOP_RADIUS: u8 = 6;
 
-/// Background of a tab strip, slightly darker than the panes so a selected tab (filled with
-/// the pane's own background) reads as part of the content below instead of a detached button.
+/// Background of a tab strip. Dark mode unifies it with the panes (the selected tab still reads
+/// as part of the content via its outline and the strip's baseline gap); light mode keeps a
+/// slightly darker strip (derived from the panel fill) so the selected tab stands out.
 pub fn tab_strip_bg(ui: &Ui) -> Color32 {
-    if ui.visuals().dark_mode { Color32::from_gray(22) } else { Color32::from_gray(235) }
+    let fill = ui.visuals().panel_fill;
+    if ui.visuals().dark_mode { fill } else { fill.gamma_multiply(0.95) }
 }
 
 /// A flat tab attached to the pane below it, in the style of Windows 11 Explorer / UltraEdit:
