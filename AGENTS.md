@@ -6,6 +6,7 @@ Repository-wide instructions for coding agents. MadEdit is a Rust text, column/b
 
 - Work on a new `feat/<name>` branch based on the current `main`, not on `main` itself. Preserve unrelated changes and untracked files.
 - Never run `git commit` or `git push` on your own. Leave changes in the working tree, report what changed and how it was verified, and wait until the maintainer has verified the work and explicitly asks for a commit or a push.
+- After every code change, run `cargo build --release --locked` so the maintainer can restart into the new build. If the link fails with "failed to remove ... MadEdit.exe", stop the running `MadEdit` process directly, then rebuild and report the exe's size and timestamp.
 - Push the working branch to the contributor's fork and open a PR against `tenyi/MadEdit:main`. Do not push directly to upstream, merge a PR or create release tags unless explicitly requested. Check remote URLs before pushing; remote names alone are not authority.
 - Write this guide, new documentation, code comments, commit messages and PR titles/descriptions in **English**. Use Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, etc.). Reply to the maintainer in the language they use.
 - Leave existing Traditional Chinese comments alone unless changing the surrounding code. Runtime UI strings follow the localization rules below, not the documentation language rule.

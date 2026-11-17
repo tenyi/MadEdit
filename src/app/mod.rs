@@ -1743,20 +1743,24 @@ impl App {
             }
             // 內容：右側叢集釘右緣，左側圖示 + 選單列自然由左至右。
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // 視窗按鈕：純 egui 按鈕，hover 效果由 egui 穩定處理，點擊發 ViewportCommand。
-                let click = |ui: &mut egui::Ui, glyph: &str, name: &str| {
-                    form::icon_button(ui, egui::Button::new(glyph), name, name).clicked()
+                // 視窗按鈕：Win11 風格的整欄平面按鈕（`form::caption_button` 以線段畫字形，
+                // 懸停整格變色、關閉鍵變紅），相鄰不留間距，與原生標題欄一致。
+                let click = |ui: &mut egui::Ui, icon: form::CaptionIcon, name: &str| {
+                    form::caption_button(ui, icon, name, name).clicked()
                 };
-                if click(ui, "×", &self.t("btn.close", "關閉")) {
+                let spacing_x = ui.spacing().item_spacing.x;
+                ui.spacing_mut().item_spacing.x = 0.0;
+                if click(ui, form::CaptionIcon::Close, &self.t("btn.close", "關閉")) {
                     // 與原生關閉一致：走 close_requested 流程（未存檔先詢問）。
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
-                if click(ui, if maximized { "❒" } else { "□" }, &self.t("btn.maximize", "最大化／還原")) {
+                if click(ui, if maximized { form::CaptionIcon::Restore } else { form::CaptionIcon::Maximize }, &self.t("btn.maximize", "最大化／還原")) {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
                 }
-                if click(ui, "─", &self.t("btn.minimize", "最小化")) {
+                if click(ui, form::CaptionIcon::Minimize, &self.t("btn.minimize", "最小化")) {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                 }
+                ui.spacing_mut().item_spacing.x = spacing_x;
                 if quick_shown {
                     ui.separator();
                     ui.scope(|ui| {

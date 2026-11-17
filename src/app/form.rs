@@ -19,6 +19,84 @@ pub fn icon_button(ui: &mut Ui, button: egui::Button<'_>, tip: &str, name: &str)
     response
 }
 
+/// The glyph of a Windows caption button (title-bar minimize / maximize / close).
+#[derive(Clone, Copy, PartialEq)]
+pub enum CaptionIcon {
+    Minimize,
+    Maximize,
+    Restore,
+    Close,
+}
+
+/// Windows 11 style caption button: a flat full-height hit area with a thin stroke glyph and no
+/// frame of its own (the previous `Button`-based ones looked like boxed chips against the bar).
+/// Hovering paints the whole tile — Close turns system red with a white glyph, like the native
+/// title bar. `name` is the accessible label; `tip` the tooltip.
+pub fn caption_button(ui: &mut Ui, icon: CaptionIcon, tip: &str, name: &str) -> Response {
+    // Tile fills the whole bar height, so the three buttons read as one caption strip.
+    let height = ui.available_height().max(ui.spacing().interact_size.y);
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(46.0, height), Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(Role::Button, ui.is_enabled(), name));
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.visuals();
+        let text = visuals.widgets.inactive.fg_stroke.color;
+        let hover_fill = if visuals.dark_mode {
+            Color32::from_white_alpha(25)
+        } else {
+            Color32::from_black_alpha(15)
+        };
+        let close_red = Color32::from_rgb(232, 17, 35);
+        let hovered = response.hovered() || response.is_pointer_button_down_on();
+        let (fill, glyph) = match (icon, hovered) {
+            (CaptionIcon::Close, true) => (close_red, Color32::WHITE),
+            (_, true) => (hover_fill, text),
+            (_, false) => (Color32::TRANSPARENT, text),
+        };
+        let painter = ui.painter().clone();
+        if fill != Color32::TRANSPARENT {
+            painter.rect_filled(rect, 0.0, fill);
+        }
+        let stroke = egui::Stroke::new(1.0, glyph);
+        let c = rect.center();
+        match icon {
+            CaptionIcon::Minimize => {
+                painter.line_segment([c + egui::vec2(-5.0, 0.0), c + egui::vec2(5.0, 0.0)], stroke);
+            }
+            CaptionIcon::Maximize => {
+                painter.rect_stroke(
+                    egui::Rect::from_center_size(c, egui::Vec2::splat(10.0)),
+                    0.0,
+                    stroke,
+                    egui::StrokeKind::Inside,
+                );
+            }
+            CaptionIcon::Restore => {
+                // Two overlapping squares, the back one hidden behind the bar fill isn't needed
+                // on a flat strip: both outlines show, as in the native restore glyph.
+                for offset in [egui::vec2(-2.0, 2.0), egui::vec2(2.0, -2.0)] {
+                    painter.rect_stroke(
+                        egui::Rect::from_center_size(c + offset, egui::Vec2::splat(8.0)),
+                        0.0,
+                        stroke,
+                        egui::StrokeKind::Inside,
+                    );
+                }
+            }
+            CaptionIcon::Close => {
+                painter.line_segment(
+                    [c + egui::vec2(-5.0, -5.0), c + egui::vec2(5.0, 5.0)],
+                    stroke,
+                );
+                painter.line_segment(
+                    [c + egui::vec2(5.0, -5.0), c + egui::vec2(-5.0, 5.0)],
+                    stroke,
+                );
+            }
+        }
+    }
+    response.on_hover_text(tip)
+}
+
 /// Outlines text fields and other inputs drawn in `ui`, which would otherwise vanish into the
 /// light theme's panels and cards, and gives dark fields a softer fill than near-black.
 pub fn outline_fields(ui: &mut Ui) {
