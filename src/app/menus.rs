@@ -172,19 +172,20 @@ impl App {
             parts.reverse();
         }
         let quick = self.t("find.quick", "快速搜尋");
-        for (n, part) in parts.into_iter().enumerate() {
-            if n > 0 {
-                ui.separator();
-            }
+        for part in parts.into_iter() {
             match part {
                 0 => {
                     for (i, (label, tip, c)) in zooms.into_iter().enumerate() {
                         if i == 1 {
                             ui.label(&size);
                         }
-                        if form::icon_button(ui, Button::new(label), tip, tip).clicked() {
-                            self.pending.push(c);
-                        }
+                        // 閒置時底色透明（深淺主題都與標題欄底色融為一體），保留邊框與懸停高亮。
+                        ui.scope(|ui| {
+                            ui.style_mut().visuals.widgets.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
+                            if form::icon_button(ui, Button::new(label), tip, tip).clicked() {
+                                self.pending.push(c);
+                            }
+                        });
                     }
                 }
                 1 => self.theme_toggle(ui),

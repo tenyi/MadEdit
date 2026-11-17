@@ -1769,7 +1769,6 @@ impl App {
                 }
                 ui.spacing_mut().item_spacing.x = spacing_x;
                 if quick_shown {
-                    ui.separator();
                     ui.scope(|ui| {
                         self.quick_in_menubar = true;
                         self.quick_controls(ui, true);
