@@ -5,7 +5,7 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -61,6 +61,14 @@ pub struct ScriptRunner {
     pid: Option<u32>,
     /// 等待子程序結束的執行緒（單位型 JoinHandle）
     worker: Option<JoinHandle<()>>,
+    /// 子程序 stdin：面板輸入行透過它把一行送進子程序（內層 None 表示已關閉）
+    stdin: Option<Arc<Mutex<Option<ChildStdin>>>>,
+    /// 輸入行的內容（運行中顯示在面板底部的提示符輸入框）
+    pub(crate) input: String,
+    /// 程序剛啟動：面板下一次畫出輸入框時向它要一次焦點（只搶一次，不打斷編輯）
+    pub(crate) focus_input: bool,
+    /// 跟隨捲動游標：已經「跟到底」過的輸出行數；有新行到達時面板再捲一次到底
+    pub(crate) follow_seen: usize,
     /// 選中片段的臨時檔案，運行結束後刪除
     temp_file: Option<PathBuf>,
     /// 使用者按下停止
@@ -86,6 +94,10 @@ impl Default for ScriptRunner {
             elapsed: None,
             rx: None,
             child: None,
+            stdin: None,
+            input: String::new(),
+            focus_input: false,
+            follow_seen: 0,
             pid: None,
             worker: None,
             temp_file: None,
@@ -270,6 +282,7 @@ impl ScriptRunner {
         let mut command = Command::new(program);
         command
             .args(args)
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         // 輸出已重定向到面板：隱藏 cmd/powershell 等子程序自己彈出的主控台黑窗
@@ -286,6 +299,8 @@ impl ScriptRunner {
         let pid = child.id();
         let stdout = child.stdout.take().expect("stdout piped");
         let stderr = child.stderr.take().expect("stderr piped");
+        // stdin 交給面板輸入行：包一層 Option 讓結束/停止時能單獨關閉（子程序收到 EOF）
+        let stdin = Arc::new(Mutex::new(Some(child.stdin.take().expect("stdin piped"))));
         let child = Arc::new(Mutex::new(child));
         let (tx, rx) = channel::<Msg>();
 
@@ -346,6 +361,9 @@ impl ScriptRunner {
         });
         self.child = Some(child);
         self.pid = Some(pid);
+        self.stdin = Some(Arc::clone(&stdin));
+        self.input.clear();
+        self.focus_input = true;
         self.rx = Some(rx);
         self.running = true;
         self.started = Some(Instant::now());
@@ -382,6 +400,9 @@ impl ScriptRunner {
                     }
                     self.child = None;
                     self.pid = None;
+                    // 關閉 stdin（子程序讀到 EOF），輸入行隨面板一起消失
+                    self.stdin = None;
+                    self.input.clear();
                     ctx.request_repaint();
                     // 結束後不再放回接收端
                     keep_rx = false;
@@ -400,6 +421,30 @@ impl ScriptRunner {
         }
         if keep_rx {
             self.rx = Some(rx);
+        }
+    }
+
+    /// 把一行輸入寫進子程序 stdin（面板輸入行按 Enter 送出）。
+    /// 同時以「> 行」回顯到輸出與記錄檔，方便對照腳本停在什麼提示上。
+    /// 程序已結束或管道寫入失敗時回傳錯誤，由呼叫端提示使用者。
+    pub fn send_line(&mut self, line: &str) -> Result<(), String> {
+        self.push_line(format!("> {line}"));
+        let sent = self
+            .stdin
+            .as_ref()
+            .and_then(|stdin| stdin.lock().ok())
+            .and_then(|mut guard| {
+                guard.as_mut().map(|stdin| {
+                    // Windows 主控程式慣用 CRLF；兩種行尾管道都能接受，用 CRLF 更穩
+                    stdin.write_all(line.as_bytes()).is_ok()
+                        && stdin.write_all(b"\r\n").is_ok()
+                        && stdin.flush().is_ok()
+                })
+            });
+        if sent == Some(true) {
+            Ok(())
+        } else {
+            Err("process exited".into())
         }
     }
 }
@@ -516,6 +561,7 @@ impl App {
         self.runner.lines.clear();
         self.runner.text.clear();
         self.runner.trimmed_lines = 0;
+        self.runner.follow_seen = 0;
         // 開啟「輸出到檔案」時，新的 F5 運行從頭寫 result.log；開檔失敗就停用並告知
         if let Err(e) = self.runner.reopen_log_truncated() {
             self.runner.disable_log();
@@ -577,6 +623,18 @@ impl App {
         ui.separator();
         let running = self.runner.running;
         let has_output = !self.runner.text.is_empty();
+        // 輸入行錨定在面板內部矩形的最底端，作為**懸浮層**畫在輸出區之上（帶面板底色，
+        // 蓋住捲到最下面的輸出，看起來就像終端把提示符釘在最後一行）。這個面板的高度＝
+        // 上一幀的內容高度，所以內容必須**恰好填滿**面板分配的高度：輸出區佔滿剩餘空間
+        //（與未加輸入行前完全相同），輸入行不進內容流、不回報額外高度——內容高度恆等於
+        // 分配高度，面板在任一縮放係數下都不漂移。輸入行若也走正常排版流，無論預留多少
+        // 都會跟面板高度互相回饋（實測要嘛一幀長一點、要嘛一幀縮一點）。
+        let full = ui.max_rect();
+        let row_h = self.settings.font_size + ui.spacing().item_spacing.y;
+        let row_rect = egui::Rect::from_min_max(
+            egui::pos2(full.left(), full.bottom() - row_h),
+            egui::pos2(full.right(), full.bottom()),
+        );
         // 輸出被截斷時要講清楚，免得讓人以為程式只印了這些
         if self.runner.trimmed_lines > 0 {
             let hint = self.tf("run.trimmed", "（輸出過長，已省略較早的 {n} 行）", Some(self.runner.trimmed_lines), None);
@@ -591,6 +649,9 @@ impl App {
         let mut state = None;
         let mut text_id = None;
         let mut selected = None;
+        // 運行中有新輸出到達時跟隨捲動到最後一行（以行數計變化，避免每幀搶捲動）
+        let line_count = self.runner.lines.len();
+        let stick = running && line_count != self.runner.follow_seen;
         let body = ui
             .scope(|ui| {
                 egui::ScrollArea::vertical().id_salt("script-output").auto_shrink([false, false]).show(ui, |ui| {
@@ -603,6 +664,15 @@ impl App {
                         .desired_rows(1)
                         .show(ui);
                     text_id = Some(output.response.id);
+                    // 運行中在捲動內容末尾墊出輸入行高度的空檔：捲到底時最後一行輸出
+                    // 剛好停在輸入行上方，不會被懸浮的輸入行蓋住（空檔在捲動內容裡，
+                    // 不影響「內容＝面板高度」的恆等，面板高度不受影響）
+                    if running {
+                        ui.add_space(row_h);
+                    }
+                    if stick {
+                        ui.scroll_to_rect(ui.min_rect(), Some(egui::Align::BOTTOM));
+                    }
                     if let Some(range) = output.cursor_range {
                         let (a, b) = (range.primary.index.min(range.secondary.index).0, range.primary.index.max(range.secondary.index).0);
                         if a < b {
@@ -613,6 +683,9 @@ impl App {
                 });
             })
             .response;
+        if stick {
+            self.runner.follow_seen = line_count;
+        }
         // 右鍵選單：在「放開」時開啟，按住多久都開得出來。egui 的 click 只認 0.8 秒內的短按，
         // 按住不放會被當成長按而不算 click，選單就永遠不會開；位置固定在放開時的游標處。
         let right_released = ui.input(|i| i.pointer.button_released(egui::PointerButton::Secondary)) && body.container_contains_pointer();
@@ -678,6 +751,48 @@ impl App {
                     ui.memory_mut(|mem| mem.request_focus(id));
                 }
             }
+        }
+        // 運行中在面板最底部顯示命令列提示符式輸入行：懸浮在面板底色上（蓋住捲到下面的輸出），
+        // 無邊框，看起來像終端的最後一行。回車把一行寫進子程序 stdin（set /p、input() 等
+        // 行式互動可用；pause、choice 直接讀主控台按鍵，管道救不了，只能停止或改用真終端）。
+        if running {
+            ui.painter().rect_filled(row_rect, 0.0, ui.visuals().panel_fill);
+            let mut row = ui.new_child(
+                egui::UiBuilder::new()
+                    .id_salt("run-input-row")
+                    .max_rect(row_rect)
+                    .layout(egui::Layout::top_down(egui::Align::LEFT)),
+            );
+            row.horizontal(|ui| {
+                let prompt = RichText::new("> ").font(output_font.clone()).color(ui.visuals().text_color());
+                ui.label(prompt);
+                let hint = self.t("run.input_hint", "輸入並按 Enter 傳送到程序…");
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut self.runner.input)
+                        .id_salt("run-input")
+                        .frame(egui::Frame::NONE)
+                        .hint_text(hint)
+                        .font(output_font.clone())
+                        .desired_width(ui.available_width()),
+                );
+                // 只在程序啟動後的第一幀搶一次焦點（游標閃爍提示可輸入），
+                // 之後不干擾編輯區；送出後繼續留在輸入框方便連續輸入
+                if self.runner.focus_input {
+                    self.runner.focus_input = false;
+                    resp.request_focus();
+                }
+                let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                // egui 的單行 TextEdit 在按 Enter 時會**先交出焦點**，所以不能用 has_focus 判斷，
+                // 必須用「失去焦點的那一幀且按著 Enter」：點別處失焦不送出，按 Enter 送出
+                if resp.lost_focus() && enter {
+                    let line = std::mem::take(&mut self.runner.input);
+                    if let Err(e) = self.runner.send_line(&line) {
+                        let hint = format!("{} {e}", self.t("run.input_fail", "無法傳送到程序（可能已結束）："));
+                        self.set_status(hint);
+                    }
+                    resp.request_focus();
+                }
+            });
         }
         if !has_output && !running {
             ui.painter().text(empty_center, Align2::CENTER_CENTER, self.t("run.empty", "（尚無輸出）"), output_font, ui.visuals().weak_text_color());
@@ -795,6 +910,34 @@ mod tests {
         assert_eq!(selected_or_all("abc", Some((0, 99))), "abc");
         // 字元索引而非位元組索引
         assert_eq!(selected_or_all("中文abc", Some((1, 3))), "文a");
+    }
+
+    /// stdin 互動：send_line 寫進子程序並以「> 行」回顯；程序結束後 stdin 關閉、輸入行清空
+    #[test]
+    fn test_send_line_feeds_child_stdin_and_echoes() {
+        let mut runner = ScriptRunner::default();
+        // Windows 用 findstr 過濾含 x 的行，其餘平台用 cat 原樣回傳
+        #[cfg(windows)]
+        let (program, args) = ("cmd".to_string(), vec!["/c".to_string(), "findstr".to_string(), "x".to_string()]);
+        #[cfg(not(windows))]
+        let (program, args) = ("cat".to_string(), Vec::new());
+        runner.start_process(&program, &args, None).expect("spawn");
+        assert!(runner.stdin.is_some(), "stdin is piped");
+        runner.send_line("xline").expect("write stdin");
+        // cat 讀到 EOF 才結束：關掉 stdin 端讓子程序收尾（cmd /c 會自己結束，不用關）
+        runner.stdin = None;
+        let ctx = egui::Context::default();
+        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+        while runner.running && Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            runner.poll(&ctx);
+        }
+        assert!(!runner.running, "child exited");
+        assert!(runner.lines.iter().any(|l| l == "> xline"), "echo: {:?}", runner.lines);
+        #[cfg(windows)]
+        assert!(runner.lines.iter().any(|l| l == "xline"), "child response: {:?}", runner.lines);
+        assert!(runner.input.is_empty(), "the input line is cleared on exit");
+        assert!(runner.stdin.is_none(), "stdin is closed on exit");
     }
 
     /// 輸出超過行數上限時只保留尾段，並記下省略了幾行（面板據此提示）

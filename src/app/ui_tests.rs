@@ -2786,6 +2786,48 @@ fn test_run_script_bat_uses_its_folder_as_cwd() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 運行輸出面板的輸入行：鍵入文字按 Enter 送進子程序 stdin，`set /p` 選單場景能依輸入續行。
+#[cfg(windows)]
+#[test]
+fn test_output_panel_input_line_sends_enter_to_child_stdin() {
+    let dir = std::env::temp_dir().join(format!("madedit-run-menu-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("menu.bat");
+    std::fs::write(&file, "@echo off\r\nset /p choice=choose:\r\necho got [%choice%]\r\n").unwrap();
+
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(2);
+    {
+        let (program, mut args) = super::runner::interpreter_for(".bat").expect(".bat must map to an interpreter");
+        args.push(file.display().to_string());
+        let runner = &mut h.state_mut().runner;
+        runner.show = true;
+        assert!(runner.start_process(&program, &args, Some(dir.as_path())).is_ok());
+    }
+    h.run_steps(3);
+    // 輸入行在程序啟動後自動聚焦；直接鍵入「3」再按 Enter
+    h.event(eframe::egui::Event::Text("3".into()));
+    h.key_down(eframe::egui::Key::Enter);
+    h.run_steps(2);
+    println!("runner.input = {:?}", h.state().runner.input);
+    println!("runner.text  = {:?}", h.state().runner.text);
+    println!("running      = {}", h.state().runner.running);
+    for _ in 0..200 {
+        h.run_steps(1);
+        if !h.state().runner.running {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let lines = h.state_mut().runner.text.clone();
+    assert!(lines.contains("> 3"), "輸入應以「> 行」回顯: {lines}");
+    assert!(lines.contains("got [3]"), "腳本應依輸入續行: {lines}");
+    assert_eq!(h.state_mut().runner.exit, Some(Ok(0)));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 無法識別的副檔名提示，不啟動程序。
 #[test]
 fn test_run_script_rejects_unknown_extensions() {

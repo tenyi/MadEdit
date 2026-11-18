@@ -206,5 +206,9 @@ fn shot() {
         harness.get_by_label(label).hover();
         harness.run_steps(4);
     }
+    // MADEDIT_SHOT_STEPS=N：畫圖前多跑 N 幀，觀察會隨時間變化的佈局（例如面板高度回饋）
+    if let Some(n) = std::env::var("MADEDIT_SHOT_STEPS").ok().and_then(|s| s.parse::<usize>().ok()) {
+        harness.run_steps(n);
+    }
     harness.render().expect("繪製失敗").save(&out).expect("無法儲存截圖");
 }
