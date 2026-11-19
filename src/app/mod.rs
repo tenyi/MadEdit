@@ -194,6 +194,8 @@ pub struct App {
     pending: Vec<C>,
     /// 下一幀將焦點交給編輯區
     focus_editor: bool,
+    /// 上次在分頁列自動捲動過的（索引、是否預覽分頁）；僅在激活分頁變化時觸發捲動
+    tab_scroll_done: Option<(usize, bool)>,
     /// 簡繁轉換的安全模式（不轉換易誤轉的字）
     chinese_safe: bool,
     /// 收藏面板中選取的群組（右鍵與「新增…」以此為目標）
@@ -281,6 +283,7 @@ impl App {
             shot_slot: Default::default(),
             pending: Vec::new(),
             focus_editor: true,
+            tab_scroll_done: None,
             chinese_safe: false,
             fav_selected: None,
             file_view_tab: favorites::FileViewTab::List,
@@ -1098,6 +1101,8 @@ impl App {
         };
         let strip = ui.max_rect();
         let mut active_rect = None;
+        // 激活分頁變化時（例如從「開啟」清單點選），若該分頁超出可見範圍則自動捲動到可見。
+        let want_tab_scroll = self.tab_scroll_done != Some((self.active, preview_active));
         egui::ScrollArea::horizontal().id_salt("tabs").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
@@ -1197,8 +1202,21 @@ impl App {
                     }
                 }
                 ui.add_space(8.0);
+                // 激活分頁變化的那一幀，把它捲動到可見（帶 [usize; bool] 之外再取一次 rect 以免借用衝突）
+                if want_tab_scroll
+                    && let Some(rect) = active_rect
+                {
+                    // 僅當橫向不完全可見時才捲動，避免每次切換都強制移動使用者的捲動位置
+                    let clip = ui.clip_rect();
+                    if rect.left() < clip.left() || rect.right() > clip.right() {
+                        ui.scroll_to_rect(rect, None);
+                    }
+                }
             });
         });
+        if want_tab_scroll {
+            self.tab_scroll_done = Some((self.active, preview_active));
+        }
         form::tab_strip_baseline(ui, strip, active_rect);
         if let Some((i, preview)) = activate {
             self.activate_view(i, preview);
