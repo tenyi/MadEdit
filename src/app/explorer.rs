@@ -53,11 +53,9 @@ pub(crate) struct Explorer {
     /// 篩選輸入框的即時內容；按「>」或 Enter 後才寫入 `filter_applied` 生效。
     pub(crate) filter: String,
     pub(crate) filter_applied: String,
-    /// ▣ 分欄模式（階段 2 起使用）。
-    #[allow(dead_code)]
+    /// ▣ 分欄模式（樹下方顯示所選資料夾內容列表；跨階段記住）。
     pub(crate) split: bool,
-    /// 分欄模式下下半部的高度比例（階段 2 起使用）。
-    #[allow(dead_code)]
+    /// 分欄模式下上半部樹的高度比例（拖拽分隔條後記住）。
     pub(crate) ratio: f32,
     /// 目前選中的資料夾。
     pub(crate) selected: Option<PathBuf>,
@@ -164,12 +162,32 @@ impl Explorer {
     fn apply_filter(&mut self) {
         self.filter_applied = self.filter.trim().to_string();
     }
+
+    /// 把目前狀態寫回設定（跨階段記住）；由 App 在狀態變更後呼叫。
+    fn save_to_settings(&self, settings: &mut crate::core::settings::Settings) {
+        settings.explorer.split = self.split;
+        settings.explorer.ratio = self.ratio;
+        settings.explorer.filter = self.filter_applied.clone();
+        settings.explorer.selected = self.selected.as_ref().map(|p| p.to_string_lossy().into_owned());
+        settings.explorer.expanded = self.expanded.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+    }
+
+    /// 從設定還原狀態（啟動時呼叫一次）。
+    pub(crate) fn restore_from_settings(&mut self, settings: &crate::core::settings::Settings) {
+        self.split = settings.explorer.split;
+        self.ratio = settings.explorer.ratio.clamp(0.15, 0.85);
+        self.filter = settings.explorer.filter.clone();
+        self.filter_applied = settings.explorer.filter.clone();
+        self.selected = settings.explorer.selected.as_ref().map(PathBuf::from);
+        self.expanded = settings.explorer.expanded.iter().map(PathBuf::from).collect();
+    }
 }
 
 impl App {
-    /// 「資源管理器」頁籤：篩選列 + 上半部目錄樹（分欄列表見階段 2）。
+    /// 「資源管理器」頁籤：篩選列 + 上半部目錄樹 + 分欄內容列表。
     pub(super) fn explorer_panel(&mut self, ui: &mut egui::Ui) {
         let mut action = Action::None;
+        let mut state_changed = false;
         let filter_hint = self.t("ex.filter_hint", "輸入檔名篩選，如 *.txt");
         let apply_tip = self.t("ex.apply", "執行篩選").to_string();
 
@@ -186,12 +204,12 @@ impl App {
             let clicked = ui.button(">").on_hover_text(apply_tip.clone()).clicked();
             if enter || clicked {
                 self.explorer.apply_filter();
+                state_changed = true;
             }
-            if ui.add(egui::Checkbox::new(&mut self.explorer.split, "")).on_hover_text(split_tip).changed()
-                && self.explorer.split
-            {
+            if ui.add(egui::Checkbox::new(&mut self.explorer.split, "")).on_hover_text(split_tip).changed() {
+                state_changed = true;
                 // 開啟分欄時確保已有選中資料夾（沒有則退回磁碟機根）。
-                if self.explorer.selected.is_none() {
+                if self.explorer.split && self.explorer.selected.is_none() {
                     let roots = self.explorer.roots();
                     if let Some(first) = roots.first() {
                         self.explorer.selected = Some(first.clone());
@@ -212,9 +230,14 @@ impl App {
             let split_tip = self.t("ex.split_tip", "拖曳調整上下高度").to_string();
             let (srect, sresp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 7.0), egui::Sense::click_and_drag());
             if sresp.dragged() {
+                // 拖拽分隔條向下（dy>0）→ 樹變高；拖拽向上 → 樹變矮。
                 let dy = sresp.drag_delta().y;
-                let r = self.explorer.ratio - dy / total;
-                self.explorer.ratio = r.clamp(0.15, 0.85);
+                let r = self.explorer.ratio + dy / total;
+                let clamped = r.clamp(0.15, 0.85);
+                if clamped != self.explorer.ratio {
+                    self.explorer.ratio = clamped;
+                    state_changed = true;
+                }
             }
             if ui.is_rect_visible(srect) {
                 let stroke = if sresp.hovered() || sresp.dragged() {
@@ -228,6 +251,8 @@ impl App {
             self.explorer_list(ui, &mut action);
         }
 
+        // 狀態有變（選中位置、展開節點、篩選、分欄、比例）→ 寫回設定即時保存。
+        let moved_selection = matches!(action, Action::Select(_) | Action::Enter(_));
         match action {
             Action::None => {}
             Action::Select(p) => {
@@ -249,6 +274,12 @@ impl App {
             Action::Open(p) => {
                 self.open_path(&p);
             }
+        }
+
+        // 狀態有變（選中位置、展開節點、篩選、分欄、比例）→ 寫回設定即時保存。
+        if state_changed || moved_selection {
+            self.explorer.save_to_settings(&mut self.settings);
+            self.save_settings();
         }
     }
 

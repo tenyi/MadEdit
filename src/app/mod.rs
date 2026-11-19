@@ -275,6 +275,8 @@ impl App {
         app.load_icons(&cc.egui_ctx);
         app.rebuild_bindings();
         app.apply_theme(&cc.egui_ctx);
+        // 資源管理器頁籤：從設定還原分欄/篩選/位置
+        app.explorer.restore_from_settings(&app.settings);
         // 第一幀繪製前就註冊編輯區字型家族（set_fonts 於下一幀才生效，延後註冊會 panic）
         let fam = app.settings.font_family.clone();
         let ui_fam = app.settings.ui_font_family.clone();

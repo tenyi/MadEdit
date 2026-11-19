@@ -240,11 +240,31 @@ impl Default for FindInFilesOptions {
     }
 }
 
+/// 資源管理器頁籤狀態（跨階段記住位置與外觀）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ExplorerOptions {
+    /// ▣ 分欄模式（樹下方顯示所選資料夾內容列表）
+    pub split: bool,
+    /// 上半部樹佔分欄高度的比例（拖拽分隔條後記住）
+    pub ratio: f32,
+    /// 生效中的檔名篩選詞（按「>」或 Enter 後的值）
+    pub filter: String,
+    /// 目前選中的資料夾
+    pub selected: Option<String>,
+    /// 展開中的資料夾（絕對路徑清單）
+    pub expanded: Vec<String>,
+}
+
+impl Default for ExplorerOptions {
+    fn default() -> Self {
+        Self { split: false, ratio: 0.5, filter: String::new(), selected: None, expanded: Vec::new() }
+    }
+}
+
 /// 全部設定
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct Settings {
-    pub auto_check_updates: bool,
+pub struct Settings {    pub auto_check_updates: bool,
     pub last_update_check: u64,
     pub skipped_update: String,
     // ── 檢視 ──
@@ -303,6 +323,8 @@ pub struct Settings {
     pub show_file_view: bool,
     /// 文件視圖面板寬度（使用者拖曳分隔線後記住）
     pub file_view_width: f32,
+    /// 資源管理器頁籤狀態（分欄、篩選、選中位置與展開節點，跨階段記住）
+    pub explorer: ExplorerOptions,
 
     // ── 一般 ──
     /// 新文件與「強制使用預設編碼」採用的編碼
@@ -417,6 +439,7 @@ impl Default for Settings {
             // 預設關閉：面板是新的工作區，從「檢視 → 文件視圖」開啟
             show_file_view: false,
             file_view_width: 240.0,
+            explorer: ExplorerOptions::default(),
 
             default_encoding: "UTF-8".into(),
             fallback_encoding: "Big5".into(),
@@ -713,6 +736,25 @@ mod tests {
         // 舊版設定檔沒有這個欄位：維持提示流程
         let legacy: Settings = serde_json::from_str(r#"{"tab_size": 8}"#).unwrap();
         assert!(!legacy.auto_reload_external);
+    }
+
+    #[test]
+    fn test_explorer_options_roundtrip_and_legacy_defaults() {
+        let mut s = Settings::default();
+        s.explorer.split = true;
+        s.explorer.ratio = 0.7;
+        s.explorer.filter = "*.rs".into();
+        s.explorer.selected = Some(r"D:\work".into());
+        s.explorer.expanded = vec![r"D:\".into(), r"D:\work".into()];
+        let back: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert!(back.explorer.split);
+        assert_eq!(back.explorer.ratio, 0.7);
+        assert_eq!(back.explorer.filter, "*.rs");
+        assert_eq!(back.explorer.selected.as_deref(), Some(r"D:\work"));
+        assert_eq!(back.explorer.expanded, vec![r"D:\".to_string(), r"D:\work".to_string()]);
+        // 舊版設定檔沒有 explorer 欄位：全部回到預設（不分欄、無篩選、無選中）
+        let legacy: Settings = serde_json::from_str(r#"{"tab_size": 8}"#).unwrap();
+        assert_eq!(legacy.explorer, ExplorerOptions::default());
     }
 
     #[test]
