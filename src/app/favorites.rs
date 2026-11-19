@@ -60,6 +60,8 @@ enum FavAction {
     OpenGroup(usize),
     OpenFavorite(usize, usize),
     OpenRecent(PathBuf),
+    /// Close an editor tab (or its Markdown preview page) listed in the 「開啟」 view.
+    CloseView(usize, bool),
     ActivateView(usize, bool),
     NewGroup,
     RenameGroup(usize),
@@ -193,7 +195,8 @@ impl App {
                                 let item = &self.settings.favorites[gi].items[ii];
                                 (item.label(names_only), item.path.clone())
                             };
-                            let resp = item_row(ui, &label, ITEM_INDENT, false).on_hover_text(path.display().to_string());
+                            let (resp, _) = item_row(ui, &label, ITEM_INDENT, false, false, "");
+                            let resp = resp.on_hover_text(path.display().to_string());
                             if resp.clicked() {
                                 *action = Some(FavAction::OpenFavorite(gi, ii));
                             }
@@ -239,7 +242,8 @@ impl App {
                     } else {
                         path.display().to_string()
                     };
-                    let resp = item_row(ui, &label, RECENT_ITEM_INDENT, false).on_hover_text(path.display().to_string());
+                    let (resp, _) = item_row(ui, &label, RECENT_ITEM_INDENT, false, false, "");
+                    let resp = resp.on_hover_text(path.display().to_string());
                     if resp.clicked() {
                         *action = Some(FavAction::OpenRecent(path.clone()));
                     }
@@ -257,6 +261,7 @@ impl App {
         let unsaved = self.t("st.unsaved", "尚未儲存").to_string();
         let preview_title = self.t("md.title", "Markdown 預覽").to_string();
         let no_files = self.t("st.no_document", "沒有開啟的檔案");
+        let close_label = self.t("fav.close_tab", "關閉此分頁").to_string();
         egui::ScrollArea::vertical().id_salt("file-view-open-tabs").auto_shrink([false, false]).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             if rows.is_empty() {
@@ -280,9 +285,17 @@ impl App {
                 }
                 let tooltip = tab.doc.path.as_ref().map(|p| crate::core::display_path(p)).unwrap_or_else(|| unsaved.clone());
                 let selected = i == active && preview == preview_active;
-                let resp = item_row(ui, &label, 6.0, selected).on_hover_text(tooltip);
+                let (resp, close) = item_row(ui, &label, 6.0, selected, true, &close_label);
+                let resp = resp.on_hover_text(tooltip);
                 if resp.clicked() {
                     *action = Some(FavAction::ActivateView(i, preview));
+                }
+                // 雙擊等同於雙擊編輯器分頁標題：關閉該分頁（預覽列則關閉預覽）。
+                if resp.double_clicked() {
+                    *action = Some(FavAction::CloseView(i, preview));
+                }
+                if close.map_or(false, |c| c.clicked()) {
+                    *action = Some(FavAction::CloseView(i, preview));
                 }
             }
         });
@@ -308,6 +321,21 @@ impl App {
             }
             FavAction::OpenRecent(path) => {
                 self.open_path(&path);
+            }
+            FavAction::CloseView(i, preview) => {
+                if i < self.tabs.len() {
+                    if preview {
+                        let was_active = self.active == i && self.is_preview_tab();
+                        self.tabs[i].md_preview = None;
+                        if was_active {
+                            self.preview_tab_active = false;
+                            self.focus_editor = true;
+                        }
+                    } else {
+                        let id = self.tabs[i].doc.id;
+                        self.request_close(vec![id], false);
+                    }
+                }
             }
             FavAction::ActivateView(i, preview) => self.activate_view(i, preview),
             FavAction::NewGroup => self.open_favorite_name_dialog(FavTarget::NewGroup),
@@ -584,23 +612,48 @@ fn group_row(ui: &mut egui::Ui, name: &str, count: usize, expanded: bool, select
 }
 
 /// A file row: indented under its group, truncated with the full path on hover.
-fn item_row(ui: &mut egui::Ui, label: &str, indent: f32, selected: bool) -> egui::Response {
+/// When `closable`, a "×" close button appears at the right end on hover or selection;
+/// it owns its own rectangle (never overlapping the row hit rect) with a derived Id
+/// so the row click and the close click never fight over the same widget state.
+fn item_row(ui: &mut egui::Ui, label: &str, indent: f32, selected: bool, closable: bool, close_label: &str) -> (egui::Response, Option<egui::Response>) {
+    const CLOSE_WIDTH: f32 = 20.0;
     let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), egui::Sense::click());
     response.widget_info(|| egui::WidgetInfo::selected(egui::accesskit::Role::Button, ui.is_enabled(), selected, label));
+    let mut close = None;
+    // Pointer-in-rect instead of response.hovered(): the close button's interact rect sits
+    // on top of the row inside it, which would steal "hovered" and make the button flicker.
+    let row_hovered = ui.rect_contains_pointer(rect);
     if ui.is_rect_visible(rect) {
         let visuals = ui.visuals();
         if selected {
             ui.painter().rect_filled(rect, 4.0, visuals.selection.bg_fill.gamma_multiply(0.35));
-        } else if response.hovered() {
+        } else if row_hovered {
             ui.painter().rect_filled(rect, 4.0, visuals.widgets.hovered.weak_bg_fill);
         }
+        let show_close = closable && (row_hovered || selected);
+        let x_w = if closable { CLOSE_WIDTH } else { 0.0 };
         let body = egui::TextStyle::Body.resolve(ui.style());
         let color = if selected { visuals.strong_text_color() } else { visuals.text_color() };
         let x = rect.left() + indent + 6.0;
-        let mut job = egui::text::LayoutJob { wrap: egui::text::TextWrapping::truncate_at_width((rect.right() - 6.0 - x).max(0.0)), ..Default::default() };
-        job.append(label, 0.0, egui::TextFormat::simple(body, color));
-        let galley = ui.painter().layout_job(job);
+        let mut layout = egui::text::LayoutJob { wrap: egui::text::TextWrapping::truncate_at_width((rect.right() - 6.0 - x_w - x).max(0.0)), ..Default::default() };
+        layout.append(label, 0.0, egui::TextFormat::simple(body, color));
+        let galley = ui.painter().layout_job(layout);
         ui.painter().galley(egui::pos2(x, rect.center().y - galley.size().y / 2.0), galley, color);
+        if show_close {
+            // Independent interact rect at the right end; Id derived from the row Id.
+            let x_rect = egui::Rect::from_min_size(
+                egui::pos2(rect.right() - 4.0 - CLOSE_WIDTH, rect.top()),
+                egui::vec2(CLOSE_WIDTH, ROW_HEIGHT),
+            );
+            let resp = ui.interact(x_rect, response.id.with("close"), egui::Sense::click());
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::accesskit::Role::Button, true, close_label));
+            resp.clone().on_hover_text(close_label);
+            // No button chrome of its own: only the glyph turns red on hover, like the
+            // editor tab's close button.
+            let tint = if resp.hovered() { egui::Color32::from_rgb(232, 17, 35) } else { visuals.weak_text_color() };
+            ui.painter().text(x_rect.center(), egui::Align2::CENTER_CENTER, "×", egui::FontId::proportional(13.0), tint);
+            close = Some(resp);
+        }
     }
-    response
+    (response, close)
 }

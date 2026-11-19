@@ -26,6 +26,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - View > Script Output shows or hides the Script Output panel and is checked while the panel is open, the same way View > File View works. The panel's state is remembered, including when it was closed with the panel's × or opened automatically by running a script, so the next launch starts the same way.
 - Left double-clicking an editor tab's title closes that tab, like its × button; double-clicking a Markdown preview tab closes the preview. Unsaved changes are still confirmed first.
 - The Script Output panel accepts input while a script is running: a prompt-style input line (`>`) appears at the bottom of the panel, focused once when the process starts, and pressing Enter writes the line to the child process's stdin (echoed as `> line` in the output and `result.log`). Line-based interaction such as batch `set /p` or Python `input()` now works; programs that read the console directly (`pause`, `choice`, full-screen TUIs) still need the Stop button or a real terminal.
+- The File View panel's Open tab shows a "×" at the right end of a row while it is hovered or selected; clicking it closes that tab (a Markdown preview row closes the preview). Double-clicking a row closes it the same way as double-clicking the editor tab's title. Unsaved changes are still confirmed first.
 
 ### Changed
 - Windows: the menu bar now lives in a custom-drawn title bar together with the app icon and the window buttons (minimize / maximize / close), like VS Code. The bar is 1.5× the menu height, is draggable, and double-clicking toggles maximize; edge resizing and Aero Snap still work. The zoom controls, theme toggle and quick search stay on the bar's right side. Other platforms keep the native title bar and menu bar. Because the window buttons are ordinary EGUI widgets, Windows 11 does not show the Snap Layouts flyout when hovering the maximize button.
@@ -63,6 +64,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - 「檢視 > 運行輸出」可顯示或隱藏「運行輸出」面板，面板開啟時選單會打勾（與「檢視 > 文件視圖」一致）。面板狀態會記住：無論是從選單切換、按面板的 × 關閉，還是執行腳本時自動開啟，下次啟動都沿用最後的顯示／隱藏狀態。
 - 以滑鼠左鍵雙擊編輯器分頁標題即可關閉該分頁（與 × 按鈕相同）；雙擊 Markdown 預覽分頁則關閉該預覽。有未儲存的變更時仍會先詢問。
 - 運行期間「執行輸出」面板可輸入：面板最底部出現提示符（`>`）樣式的輸入行，程序啟動時自動聚焦一次，按 Enter 把該行寫進子程序的 stdin（並以「> 行」回顯到輸出與 `result.log`）。批次檔的 `set /p`、Python 的 `input()` 等行式互動因此可用；直接讀主控台按鍵的程式（`pause`、`choice`、全螢幕 TUI）仍需按「停止」或改用真正的終端。
+- 檔案檢視面板的「開啟」頁籤在列被滑鼠懸停或選中時於列尾顯示「×」，點擊即關閉該分頁（Markdown 預覽列則關閉預覽）；雙擊列與雙擊編輯器分頁標題同效，同樣關閉。未存檔修改仍會先確認。
 
 #### 變更
 - Windows：選單列移進自繪標題欄，與應用程式圖示、視窗按鈕（最小化／最大化／關閉）同一列（類似 VS Code）。標題欄高度為選單高度的 1.5 倍，可拖動、雙擊可最大化／還原，邊緣縮放與 Aero Snap 貼邊正常。字型縮放、主題切換與快速搜尋保留在同一列右側。其他平台維持原生標題列與選單列。視窗按鈕是一般 EGUI 控件，因此 Windows 11 懸停最大化按鈕時不會顯示 Snap Layouts 浮層。

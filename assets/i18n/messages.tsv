@@ -606,6 +606,7 @@ fav.delete_item	Delete Selected Item	删除选定项目	選択項目を削除	�
 fav.open_group	Open all files in the group (replaces the open tabs)	打开分组中的所有文件（替换当前所有打开）	グループ内の全ファイルを開く（現在のタブを置き換え）	그룹의 모든 파일 열기(현재 탭 대체)	Alle Dateien der Gruppe öffnen (ersetzt offene Tabs)	Abrir todos los archivos del grupo (reemplaza las pestañas abiertas)	Ouvrir tous les fichiers du groupe (remplace les onglets ouverts)	Apri tutti i file del gruppo (sostituisce le schede aperte)	Abrir todos os arquivos do grupo (substitui as abas abertas)
 fav.open	Open	打开	開く	열기	Öffnen	Abrir	Ouvrir	Apri	Abrir
 fav.recent	Recent Files	最近打开的文件	最近開いたファイル	최근 연 파일	Zuletzt geöffnet	Archivos recientes	Fichiers récents	File recenti	Arquivos recentes
+fav.close_tab	Close this tab	关闭此标签	このタブを閉じる	이 탭 닫기	Diesen Tab schließen	Cerrar esta pestaña	Fermer cet onglet	Chiudi questa scheda	Fechar esta aba
 fav.none	(None)	（无）	（なし）	(없음)	(Keine)	(Ninguno)	(Aucun)	(Nessuno)	(Nenhum)
 fav.group_hint	Double-click opens all files in the group (replaces the open tabs)	双击打开分组中的所有文件（替换当前所有打开）	ダブルクリックでグループ内の全ファイルを開く（現在のタブを置き換え）	더블클릭으로 그룹의 모든 파일 열기(현재 탭 대체)	Doppelklick öffnet alle Dateien der Gruppe (ersetzt offene Tabs)	Doble clic abre todos los archivos del grupo (reemplaza las pestañas abiertas)	Double-clic pour ouvrir tous les fichiers du groupe (remplace les onglets ouverts)	Doppio clic apre tutti i file del gruppo (sostituisce le schede aperte)	Clique duplo abre todos os arquivos do grupo (substitui as abas abertas)
 fav.default_group	Common	常用	よく使う	자주 사용	Häufig	Frecuentes	Fréquents	Frequenti	Frequentes

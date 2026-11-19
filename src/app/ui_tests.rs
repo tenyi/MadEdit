@@ -2529,6 +2529,83 @@ fn test_file_view_open_tab_switches_between_documents() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 「開啟」列表列尾的 ×（選中列可見）點擊後會關閉對應的分頁。
+#[test]
+fn test_file_view_open_tab_close_button_closes_document() {
+    let dir = std::env::temp_dir().join(format!("madedit-file-view-close-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("closable.txt");
+    std::fs::write(&file, "bye").unwrap();
+
+    let mut h = harness();
+    h.state_mut().settings.show_file_view = true;
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some("開啟")).click();
+    h.run_steps(3);
+    assert_eq!(h.state().tabs.len(), 1, "前置：應有一個開啟的分頁");
+    // 作用中文件的列為選中狀態，列尾 ✕ 因此可見且可點。
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("關閉此分頁")).click();
+    h.run_steps(3);
+    assert!(h.state().tabs.is_empty(), "點擊列尾 × 後分頁應被關閉");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 「開啟」列表：單擊列只切換文件；雙擊列等同雙擊編輯器分頁標題，關閉該分頁。
+#[test]
+fn test_double_clicking_open_list_row_closes_document() {
+    use eframe::egui::PointerButton;
+    use egui::accesskit::Role;
+    let dir = std::env::temp_dir().join(format!("madedit-file-view-dblclose-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let first = dir.join("one.txt");
+    let second = dir.join("two.txt");
+    std::fs::write(&first, "one").unwrap();
+    std::fs::write(&second, "two").unwrap();
+
+    // 每幀 50ms：兩次點擊相距 50ms，落在 egui 的雙擊判定時間內。
+    let mut h = Harness::builder()
+        .allow_missing_glyphs()
+        .with_pixels_per_point(1.0)
+        .with_step_dt(0.05)
+        .with_size([1000.0, 700.0])
+        .build_eframe(|cc| App::new(cc, Vec::new(), None));
+    h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
+    h.state_mut().settings.show_file_view = true;
+    h.state_mut().open_path(&first);
+    h.state_mut().open_path(&second);
+    h.run_steps(3);
+    h.get_by(|n| n.role() == Role::Tab && n.label().as_deref() == Some("開啟")).click();
+    h.run_steps(3);
+    let first_canon = first.canonicalize().unwrap();
+    let second_canon = second.canonicalize().unwrap();
+    let row = |h: &mut Harness<'static, App>, label: &str| {
+        h.get_by(|n| n.role() == Role::Button && n.label().as_deref() == Some(label)).rect().center()
+    };
+    // 單擊只切換，不得關閉。
+    let at = row(&mut h, "one.txt");
+    for pressed in [true, false] {
+        h.event(Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: Modifiers::default() });
+    }
+    h.run_steps(8);
+    assert_eq!(h.state().tabs.len(), 2, "單擊列不得關閉分頁");
+    assert_eq!(h.state().doc().path.as_deref(), Some(first_canon.as_path()), "單擊列應切換到該文件");
+    // 雙擊同一列：關閉該分頁，剩下的分頁是另一份文件。
+    let at = row(&mut h, "one.txt");
+    for _ in 0..2 {
+        for pressed in [true, false] {
+            h.event(Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: Modifiers::default() });
+        }
+        h.run_steps(1);
+    }
+    h.run_steps(3);
+    assert_eq!(h.state().tabs.len(), 1, "雙擊列應關閉該分頁");
+    assert_eq!(h.state().doc().path.as_deref(), Some(second_canon.as_path()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 開啟「其他程式修改時自動重新載入」後，沒有未存檔修改的文件會直接重讀。
 #[test]
 fn test_auto_reload_external_reloads_unmodified_files() {
