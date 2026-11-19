@@ -1,7 +1,7 @@
 //! Code folding model: which line ranges the user has collapsed.
 //!
-//! Pure logic (no egui, no view state): brace-based fold detection for C-like
-//! languages, the active fold list, and patience when the text changes. The
+//! Pure logic (no egui, no view state): brace/bracket-based fold detection for
+//! C-like languages, the active fold list, and patience when the text changes. The
 //! view layer maps document rows to display rows in `app/view/foldmap.rs`.
 //!
 //! The module is self-contained on purpose: deleting it plus its two call sites
@@ -268,6 +268,14 @@ pub fn detect_braces(lines: &[String]) -> Vec<FoldRange> {
     braces
 }
 
+/// Bracket (`[` … `]`) fold ranges for C-like files.
+#[cfg(test)]
+pub fn detect_brackets(lines: &[String]) -> Vec<FoldRange> {
+    let mut brackets = scan(lines, CommentStyle::CLike).1;
+    brackets.sort_by_key(|r| r.header);
+    brackets
+}
+
 /// Every foldable range for C-like files: braces plus multi-line comments
 /// (`/* ... */` and runs of consecutive `//` lines).
 #[cfg(test)]
@@ -277,14 +285,16 @@ pub fn detect_folds(lines: &[String]) -> Vec<FoldRange> {
 
 /// Brace and comment folds for the given comment/string style.
 pub fn detect_folds_with(lines: &[String], style: CommentStyle) -> Vec<FoldRange> {
-    let (mut ranges, mut comments) = scan(lines, style);
+    let (mut ranges, mut brackets, mut comments) = scan(lines, style);
+    ranges.append(&mut brackets);
     ranges.append(&mut comments);
     ranges.sort_by_key(|r| r.header);
     ranges
 }
 
 /// Python-style folding: a line whose code ends with `:` folds the lines below
-/// it that are indented further, plus runs of `#` comment lines.
+/// it that are indented further, plus runs of `#` comment lines, plus multi-line
+/// `[ … ]` array literals (a line that leaves a bracket open folds until it closes).
 pub fn detect_indent_folds(lines: &[String]) -> Vec<FoldRange> {
     let mut out = Vec::new();
     let indents: Vec<Option<usize>> = lines.iter().map(|line| indent_width(line)).collect();
@@ -324,8 +334,83 @@ pub fn detect_indent_folds(lines: &[String]) -> Vec<FoldRange> {
     {
         out.push(FoldRange::new(start, last));
     }
+    // 多行 `[ … ]` 陣列字面值：一行結束時仍有未閉合的 `[`，折到閉合的那一行。
+    out.extend(detect_bracket_blocks(lines));
     out.sort_by_key(|r| r.header);
     out
+}
+
+/// Multi-line `[ … ]` blocks: a line that ends with an unclosed `[` folds until
+/// the line whose last `]` brings the depth back to zero. Brackets inside
+/// strings and `#` comments are ignored. Only spans of 2+ lines produce a fold.
+pub fn detect_bracket_blocks(lines: &[String]) -> Vec<FoldRange> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut header: Option<usize> = None;
+    for (line_no, line) in lines.iter().enumerate() {
+        let code = strip_python_noise(line);
+        let mut quote: Option<char> = None;
+        let mut escaped = false;
+        for c in code.chars() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match quote {
+                Some(q) => {
+                    if c == '\\' {
+                        escaped = true;
+                    } else if c == q {
+                        quote = None;
+                    }
+                }
+                None => match c {
+                    '"' | '\'' => quote = Some(c),
+                    '[' => depth += 1,
+                    ']' if depth > 0 => depth -= 1,
+                    _ => {}
+                },
+            }
+        }
+        if depth > 0 {
+            if header.is_none() {
+                header = Some(line_no);
+            }
+        } else if let Some(start) = header.take()
+            && line_no > start
+        {
+            out.push(FoldRange::new(start, line_no));
+        }
+    }
+    out
+}
+
+/// Strip a `#` comment from a Python line (string-aware enough for folding:
+/// a `#` inside a quoted string is kept, one outside is treated as a comment).
+fn strip_python_noise(line: &str) -> &str {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (idx, c) in line.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match quote {
+            Some(q) => {
+                if c == '\\' {
+                    escaped = true;
+                } else if c == q {
+                    quote = None;
+                }
+            }
+            None => match c {
+                '"' | '\'' => quote = Some(c),
+                '#' => return &line[..idx],
+                _ => {}
+            },
+        }
+    }
+    line
 }
 
 /// Leading indentation width; `None` for blank lines. Tabs count as four columns.
@@ -353,10 +438,12 @@ fn python_opens_block(line: &str) -> bool {
 /// This is a deliberately small scanner: it understands what C-like and
 /// PowerShell files use for folding, not the full grammar. Unbalanced braces
 /// and unterminated comments simply produce no fold.
-fn scan(lines: &[String], style: CommentStyle) -> (Vec<FoldRange>, Vec<FoldRange>) {
+fn scan(lines: &[String], style: CommentStyle) -> (Vec<FoldRange>, Vec<FoldRange>, Vec<FoldRange>) {
     let mut braces = Vec::new();
+    let mut brackets = Vec::new();
     let mut comments = Vec::new();
     let mut open: Vec<usize> = Vec::new();
+    let mut open_brk: Vec<usize> = Vec::new();
     let mut in_block_comment = false;
     let mut block_open: Option<usize> = None;
     // C++ raw string: `R"delim( ... )delim"` may span lines and contains raw braces.
@@ -515,6 +602,18 @@ fn scan(lines: &[String], style: CommentStyle) -> (Vec<FoldRange>, Vec<FoldRange
                         braces.push(FoldRange::new(header, line_no));
                     }
                 }
+                '[' => {
+                    first_nonspace = false;
+                    open_brk.push(line_no);
+                }
+                ']' => {
+                    first_nonspace = false;
+                    if let Some(header) = open_brk.pop()
+                        && line_no > header
+                    {
+                        brackets.push(FoldRange::new(header, line_no));
+                    }
+                }
                 c if c.is_whitespace() => {}
                 _ => first_nonspace = false,
             }
@@ -535,7 +634,7 @@ fn scan(lines: &[String], style: CommentStyle) -> (Vec<FoldRange>, Vec<FoldRange
     {
         comments.push(FoldRange::new(start, last));
     }
-    (braces, comments)
+    (braces, brackets, comments)
 }
 
 #[cfg(test)]
@@ -732,6 +831,37 @@ mod tests {
     fn test_python_comment_runs_fold() {
         let src = lines("# a\n# b\n\n# single\nx = 1\n# c\n# d\n# e");
         assert_eq!(detect_indent_folds(&src), vec![FoldRange::new(0, 1), FoldRange::new(5, 7)]);
+    }
+
+    #[test]
+    fn test_json_arrays_fold_across_lines() {
+        // 頂層陣列可折疊；同一行內閉合的 [] 不折疊
+        let src = lines("[\n  1,\n  [2, 3],\n  4\n]\nx");
+        assert_eq!(detect_folds(&src), vec![FoldRange::new(0, 4)]);
+        let src = lines("let v = [\n    1,\n    2,\n];\nuse_it(v);");
+        assert_eq!(detect_brackets(&src), vec![FoldRange::new(0, 3)], "only multi-line brackets fold");
+        // 字串與註解裡的 ] 不參與配對
+        let src = lines("let s = \"]\";\n// ]\nlet v = [\n    1,\n];");
+        assert_eq!(detect_brackets(&src), vec![FoldRange::new(2, 4)]);
+    }
+
+    #[test]
+    fn test_python_bracket_blocks_fold() {
+        // 多行陣列字面值折疊；字串與 # 註解裡的 [] 被忽略
+        let src = lines(
+            "a = [\n    1,\n    \"[not folded]\",\n    2,  # ] inside comment\n]\nb = [1, 2]\nrun()",
+        );
+        let ranges = detect_indent_folds(&src);
+        assert!(ranges.contains(&FoldRange::new(0, 4)), "{ranges:?}");
+    }
+
+    #[test]
+    fn test_python_bracket_nested_and_unterminated() {
+        let src = lines("m = [\n    [1,\n    2],\n]\nend()");
+        assert_eq!(detect_bracket_blocks(&src), vec![FoldRange::new(0, 3)]);
+        // 未閉合的 [ 不產生摺疊
+        let src = lines("a = [1,\n2\n");
+        assert!(detect_bracket_blocks(&src).is_empty());
     }
 
     #[test]
