@@ -2646,12 +2646,13 @@ fn test_explorer_tree_expands_and_filter_shows_matching_files() {
     h.run_steps(3);
     h.get_by(|n| n.role() == Role::Tab && n.label().as_deref() == Some("資源管理器")).click();
     h.run_steps(3);
-    // 未篩選時：樹中只有資料夾，不顯示檔案。（get_all_by 零匹配會 panic，故全列舉自行計數）
+    // 純樹形態且未篩選：選中資料夾直接掛出完整內容（子資料夾 + 檔案）。
     let button_labels = |h: &Harness<'static, App>| -> Vec<String> {
         h.get_all_by_role(Role::Button).map(|n| n.accesskit_node().label().unwrap_or_default()).collect()
     };
     assert!(button_labels(&h).iter().any(|l| l == "sub"), "子資料夾 sub 應顯示");
-    assert!(!button_labels(&h).iter().any(|l| l == "a.txt" || l == "b.rs"), "未篩選時不得顯示檔案");
+    assert!(button_labels(&h).iter().any(|l| l == "a.txt"), "未篩選時應顯示全部檔案（a.txt）");
+    assert!(button_labels(&h).iter().any(|l| l == "b.rs"), "未篩選時應顯示全部檔案（b.rs）");
     // 點一下篩選框（畫面上有兩個 TextInput：編輯區搜尋框 + 篩選框；篩選框在左側面板）、輸入 *.txt、按 Enter。
     let input = h.get_all_by_role(Role::TextInput).min_by_key(|n| n.rect().left().to_bits()).unwrap();
     let at = input.rect().center();
@@ -2695,6 +2696,44 @@ fn test_explorer_tree_expands_and_filter_shows_matching_files() {
     }
     h.run_steps(2);
     assert_eq!(h.state().explorer.selected.as_deref(), Some(dir.join("sub").as_path()), "雙擊列表資料夾應進入");
+
+    // 「..」上層列：單擊回到父資料夾（ex-fixture）。
+    h.run_steps(8); // 讓先前點擊滑出雙擊/三擊判定窗口
+    h.get_by(|n| n.role() == Role::Button && n.label().as_deref() == Some("..")).click();
+    h.run_steps(3);
+    assert_eq!(h.state().explorer.selected.as_deref(), Some(dir.as_path()), "「..」應回到上層資料夾");
+
+    // ── 表頭點擊排序：點「修改日期」欄頭切到該欄，再點切換升降序，點「名稱」欄頭復原。
+    let header = h.get_by(|n| n.role() == Role::Button && n.label().as_deref() == Some("名稱|修改日期|類型|大小"));
+    let hr = header.rect();
+    let full = hr.width();
+    let name_col_w = (full - 115.0).max(60.0);
+    let date_click = egui::pos2(hr.left() + 6.0 + name_col_w + 10.0, hr.center().y);
+    let name_click = egui::pos2(hr.left() + 20.0, hr.center().y);
+    let click_at = |h: &mut Harness<'static, App>, pos: egui::Pos2| {
+        h.event(Event::PointerMoved(pos));
+        h.run_steps(1);
+        for pressed in [true, false] {
+            h.event(Event::PointerButton { pos, button: eframe::egui::PointerButton::Primary, pressed, modifiers: Modifiers::default() });
+        }
+        h.run_steps(2);
+    };
+    click_at(&mut h, date_click);
+    assert_eq!(h.state().explorer.sort_column, 1, "點修改日期欄頭應切到該欄排序");
+    assert!(!h.state().explorer.sort_descending, "首次切換為升冪");
+    h.run_steps(8); // 滑出雙擊判定窗口
+    click_at(&mut h, date_click);
+    assert!(h.state().explorer.sort_descending, "再點同欄應切換為降冪");
+    h.run_steps(8);
+    click_at(&mut h, name_click);
+    assert_eq!((h.state().explorer.sort_column, h.state().explorer.sort_descending), (0, false), "點名稱欄頭應回到名稱升冪");
+
+    // ── 取消勾選分欄：樹恢復純樹形態並刷新所選資料夾的篩選檔案葉節點。
+    h.get_by(|n| n.role() == Role::CheckBox && n.label().as_deref() == Some("分欄顯示資料夾內容")).click();
+    h.run_steps(3);
+    assert!(!h.state().explorer.split, "前置：分欄應已關閉");
+    let tree_after_uncheck = button_labels(&h);
+    assert!(tree_after_uncheck.iter().any(|l| l == "a.txt"), "取消分欄後樹應刷新出所選資料夾的檔案：{tree_after_uncheck:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

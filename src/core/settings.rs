@@ -242,6 +242,7 @@ impl Default for FindInFilesOptions {
 
 /// 資源管理器頁籤狀態（跨階段記住位置與外觀）
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct ExplorerOptions {
     /// ▣ 分欄模式（樹下方顯示所選資料夾內容列表）
     pub split: bool,
@@ -253,11 +254,15 @@ pub struct ExplorerOptions {
     pub selected: Option<String>,
     /// 展開中的資料夾（絕對路徑清單）
     pub expanded: Vec<String>,
+    /// 分欄列表排序欄：0=名稱 1=修改日期 2=類型 3=大小
+    pub sort_column: u8,
+    /// 分欄列表是否降冪
+    pub sort_descending: bool,
 }
 
 impl Default for ExplorerOptions {
     fn default() -> Self {
-        Self { split: false, ratio: 0.5, filter: String::new(), selected: None, expanded: Vec::new() }
+        Self { split: false, ratio: 0.5, filter: String::new(), selected: None, expanded: Vec::new(), sort_column: 0, sort_descending: false }
     }
 }
 
@@ -755,6 +760,21 @@ mod tests {
         // 舊版設定檔沒有 explorer 欄位：全部回到預設（不分欄、無篩選、無選中）
         let legacy: Settings = serde_json::from_str(r#"{"tab_size": 8}"#).unwrap();
         assert_eq!(legacy.explorer, ExplorerOptions::default());
+    }
+
+    #[test]
+    fn test_explorer_options_tolerate_missing_new_fields() {
+        // 前一個版本寫出的 explorer 物件沒有排序欄位：必須正常載入，
+        // 不能因缺欄位被判成「設定檔損壞」（那會把使用者的設定改名成 .bak 並回到預設）。
+        let legacy = r#"{"explorer": {"split": true, "ratio": 0.6, "filter": "*.rs", "selected": "D:\\work", "expanded": ["D:\\"]}}"#;
+        let s: Settings = serde_json::from_str(legacy).expect("缺少排序欄位的舊設定必須能載入");
+        assert!(s.explorer.split);
+        assert_eq!(s.explorer.ratio, 0.6);
+        assert_eq!(s.explorer.filter, "*.rs");
+        assert_eq!(s.explorer.selected.as_deref(), Some(r"D:\work"));
+        assert_eq!(s.explorer.expanded, vec![r"D:\".to_string()]);
+        // 缺少的新欄位回退預設：名稱升冪
+        assert_eq!((s.explorer.sort_column, s.explorer.sort_descending), (0, false));
     }
 
     #[test]

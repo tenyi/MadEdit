@@ -7,7 +7,7 @@ mod i18n;
 mod icons;
 mod dialogs;
 mod explorer;
-mod favorites;
+mod shell_icons;mod favorites;
 mod form;
 mod find;
 mod findfiles;
@@ -189,6 +189,8 @@ pub struct App {
     file_view_tab: favorites::FileViewTab,
     /// 資源管理器頁籤的狀態（樹、篩選、分欄）
     explorer: explorer::Explorer,
+    /// Windows 系統檔案圖示快取（資源管理器用）
+    shell_icons: shell_icons::IconCache,
     /// 收藏樹根節點是否展開（只在本次執行期間記住）
     fav_root_open: bool,
     /// 開啟中的預覽列印視窗
@@ -269,6 +271,7 @@ impl App {
             fav_selected: None,
             file_view_tab: favorites::FileViewTab::List,
             explorer: explorer::Explorer::default(),
+            shell_icons: shell_icons::IconCache::default(),
             fav_root_open: true,
             preview: None,
         };

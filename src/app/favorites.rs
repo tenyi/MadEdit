@@ -138,7 +138,7 @@ impl App {
 
             // 一級節點「收藏」；群組是它的子節點。
             let root = self.t("fav.title", "收藏");
-            let resp = group_row(ui, root, 0, root_open, false, 0.0);
+            let resp = group_row(ui, root, 0, root_open, false, 0.0, &RowIcon::Folder);
             if resp.clicked() {
                 *action = Some(FavAction::ToggleRoot);
             }
@@ -164,7 +164,7 @@ impl App {
                         let group = &self.settings.favorites[gi];
                         (group.name.clone(), group.expanded, group.items.len())
                     };
-                    let resp = group_row(ui, &name, count, expanded, selected == Some(gi), GROUP_INDENT);
+                    let resp = group_row(ui, &name, count, expanded, selected == Some(gi), GROUP_INDENT, &RowIcon::Folder);
                     if resp.double_clicked() {
                         *action = Some(FavAction::OpenGroup(gi));
                     } else if resp.clicked() {
@@ -198,7 +198,7 @@ impl App {
                                 let item = &self.settings.favorites[gi].items[ii];
                                 (item.label(names_only), item.path.clone())
                             };
-                            let (resp, _) = item_row(ui, &label, ITEM_INDENT, false, false, "");
+                            let (resp, _) = item_row(ui, &label, ITEM_INDENT, false, false, "", &RowIcon::File);
                             let resp = resp.on_hover_text(path.display().to_string());
                             if resp.clicked() {
                                 *action = Some(FavAction::OpenFavorite(gi, ii));
@@ -227,7 +227,7 @@ impl App {
             // 最近開啟的檔案是與「收藏」並列的另一個一級節點。
             ui.add_space(10.0);
             let recent_len = self.settings.recent_files.len();
-            let resp = group_row(ui, self.t("fav.recent", "最近開啟的檔案"), recent_len, recent_open, false, 0.0);
+            let resp = group_row(ui, self.t("fav.recent", "最近開啟的檔案"), recent_len, recent_open, false, 0.0, &RowIcon::Folder);
             if resp.clicked() {
                 *action = Some(FavAction::ToggleRecent);
             }
@@ -245,7 +245,7 @@ impl App {
                     } else {
                         path.display().to_string()
                     };
-                    let (resp, _) = item_row(ui, &label, RECENT_ITEM_INDENT, false, false, "");
+                    let (resp, _) = item_row(ui, &label, RECENT_ITEM_INDENT, false, false, "", &RowIcon::File);
                     let resp = resp.on_hover_text(path.display().to_string());
                     if resp.clicked() {
                         *action = Some(FavAction::OpenRecent(path.clone()));
@@ -288,7 +288,7 @@ impl App {
                 }
                 let tooltip = tab.doc.path.as_ref().map(|p| crate::core::display_path(p)).unwrap_or_else(|| unsaved.clone());
                 let selected = i == active && preview == preview_active;
-                let (resp, close) = item_row(ui, &label, 6.0, selected, true, &close_label);
+                let (resp, close) = item_row(ui, &label, 6.0, selected, true, &close_label, &RowIcon::None);
                 let resp = resp.on_hover_text(tooltip);
                 if resp.clicked() {
                     *action = Some(FavAction::ActivateView(i, preview));
@@ -579,38 +579,115 @@ fn show_names_item(ui: &mut egui::Ui, app: &App, action: &mut Option<FavAction>)
     }
 }
 
+/// 樹／列表列的裝飾圖示。`Tex` 攜帶 Windows Shell 系統圖示貼圖；
+/// 其餘為向量繪製的備援（非 Windows 平台或 Shell 取圖失敗時使用）。
+#[derive(Clone, Copy)]
+pub(crate) enum RowIcon<'a> {
+    None,
+    Folder,
+    File,
+    Drive,
+    Tex(&'a egui::TextureHandle),
+}
+
+/// 在 `center`（圖示中心）繪製圖示，回傳佔用的寬度（含右側間距）。
+pub(crate) fn paint_row_icon(ui: &mut egui::Ui, center: egui::Pos2, kind: &RowIcon<'_>) -> f32 {
+    const SLOT: f32 = 18.0;
+    let painter = ui.painter();
+    if let RowIcon::Tex(tex) = kind {
+        // Shell 系統圖示貼圖（32px 來源）繪製在 16pt 槽位，高 DPI 清晰。
+        let rect = egui::Rect::from_center_size(center, egui::vec2(16.0, 16.0));
+        painter.image(
+            tex.id(),
+            rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+        return SLOT + 2.0;
+    }
+    if matches!(kind, RowIcon::None) {
+        return 0.0;
+    }
+    let (x, y) = (center.x - SLOT / 2.0, center.y);
+    match kind {
+        RowIcon::None => unreachable!(),
+        RowIcon::Tex(_) => unreachable!(),
+        RowIcon::Folder => {
+            // 仿 Windows 檔案總管黃色資料夾：深色標籤片 + 淺色本體 + 描邊
+            let tab = egui::Rect::from_min_size(egui::pos2(x, y - 5.0), egui::vec2(7.0, 4.0));
+            let body = egui::Rect::from_min_size(egui::pos2(x, y - 3.0), egui::vec2(15.0, 10.0));
+            painter.rect_filled(tab, 1.5, egui::Color32::from_rgb(224, 164, 20));
+            painter.rect_filled(body, 2.0, egui::Color32::from_rgb(255, 213, 79));
+            painter.rect_stroke(body, 2.0, egui::Stroke::new(1.0, egui::Color32::from_rgb(197, 144, 12)), egui::StrokeKind::Outside);
+        }
+        RowIcon::File => {
+            // 白色頁面 + 摺角 + 灰描邊
+            let sheet = egui::Rect::from_min_size(egui::pos2(x + 2.0, y - 6.0), egui::vec2(11.0, 13.0));
+            painter.rect_filled(sheet, 1.0, egui::Color32::from_rgb(252, 252, 252));
+            painter.rect_stroke(sheet, 1.0, egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 150, 155)), egui::StrokeKind::Outside);
+            let fold = [
+                egui::pos2(sheet.right() - 4.0, sheet.top()),
+                egui::pos2(sheet.right(), sheet.top() + 4.0),
+                egui::pos2(sheet.right() - 4.0, sheet.top() + 4.0),
+            ];
+            painter.add(egui::Shape::convex_polygon(
+                vec![fold[0], fold[1], fold[2]],
+                egui::Color32::from_rgb(215, 218, 224),
+                egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 150, 155)),
+            ));
+            for i in 0..3 {
+                let ly = sheet.top() + 6.0 + i as f32 * 2.5;
+                painter.line_segment([egui::pos2(sheet.left() + 2.5, ly), egui::pos2(sheet.right() - 4.5, ly)], egui::Stroke::new(1.0, egui::Color32::from_rgb(190, 195, 205)));
+            }
+        }
+        RowIcon::Drive => {
+            let body = egui::Rect::from_min_size(egui::pos2(x, y - 5.0), egui::vec2(15.0, 10.0));
+            painter.rect_filled(body, 2.0, egui::Color32::from_rgb(225, 228, 235));
+            painter.rect_stroke(body, 2.0, egui::Stroke::new(1.0, egui::Color32::from_rgb(140, 145, 155)), egui::StrokeKind::Outside);
+            painter.line_segment([egui::pos2(body.left() + 2.0, body.bottom() - 2.5), egui::pos2(body.right() - 6.0, body.bottom() - 2.5)], egui::Stroke::new(1.5, egui::Color32::from_rgb(160, 165, 175)));
+            painter.circle_filled(egui::pos2(body.right() - 3.0, body.bottom() - 2.5), 1.2, egui::Color32::from_rgb(96, 176, 96));
+        }
+    }
+    SLOT + 2.0
+}
+
 /// A tree heading: fold arrow, name, and the number of children dimmed at the right.
 /// Reused by the Explorer tab for its directory rows.
-pub(crate) fn group_row(ui: &mut egui::Ui, name: &str, count: usize, expanded: bool, selected: bool, indent: f32) -> egui::Response {
+pub(crate) fn group_row(ui: &mut egui::Ui, name: &str, count: usize, expanded: bool, selected: bool, indent: f32, icon: &RowIcon<'_>) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), egui::Sense::click());
     // 無障礙資訊在裁剪與否都註冊（樹很長時列會被 ScrollArea 裁剪，但節點仍須可查詢）。
     response.widget_info(|| egui::WidgetInfo::selected(egui::accesskit::Role::Button, ui.is_enabled(), selected, name));
     if ui.is_rect_visible(rect) {
-        let visuals = ui.visuals();
+        let weak = ui.visuals().weak_text_color();
+        let strong = ui.visuals().strong_text_color();
+        let hover_fill = ui.visuals().widgets.hovered.weak_bg_fill;
+        let sel_fill = ui.visuals().selection.bg_fill.gamma_multiply(0.35);
+        let painter = ui.painter().clone();
         if selected {
-            ui.painter().rect_filled(rect, 4.0, visuals.selection.bg_fill.gamma_multiply(0.35));
+            painter.rect_filled(rect, 4.0, sel_fill);
         } else if response.hovered() {
-            ui.painter().rect_filled(rect, 4.0, visuals.widgets.hovered.weak_bg_fill);
+            painter.rect_filled(rect, 4.0, hover_fill);
         }
-        let painter = ui.painter();
         let y = rect.center().y;
         let arrow = painter.text(
             egui::pos2(rect.left() + indent + 6.0, y),
             egui::Align2::LEFT_CENTER,
             if expanded { "▾" } else { "▸" },
             egui::FontId::proportional(12.0),
-            visuals.weak_text_color(),
+            weak,
         );
-        let x = arrow.right() + 4.0;
-        let count_galley = (count > 0).then(|| painter.layout_no_wrap(count.to_string(), egui::FontId::proportional(11.0), visuals.weak_text_color()));
+        // 圖示在箭頭與名稱之間（None 時佔 0 寬，版面與原一致）
+        let icon_w = paint_row_icon(ui, egui::pos2(arrow.right() + 11.0, y), icon);
+        let x = arrow.right() + 4.0 + icon_w;
+        let count_galley = (count > 0).then(|| painter.layout_no_wrap(count.to_string(), egui::FontId::proportional(11.0), weak));
         let right = count_galley.as_ref().map_or(rect.right() - 6.0, |g| rect.right() - 6.0 - g.size().x - 8.0);
         let body = egui::TextStyle::Body.resolve(ui.style());
         let mut job = egui::text::LayoutJob { wrap: egui::text::TextWrapping::truncate_at_width((right - x).max(0.0)), ..Default::default() };
-        job.append(name, 0.0, egui::TextFormat::simple(body, visuals.strong_text_color()));
+        job.append(name, 0.0, egui::TextFormat::simple(body, strong));
         let galley = painter.layout_job(job);
-        painter.galley(egui::pos2(x, y - galley.size().y / 2.0), galley, visuals.strong_text_color());
+        painter.galley(egui::pos2(x, y - galley.size().y / 2.0), galley, strong);
         if let Some(count) = count_galley {
-            painter.galley(egui::pos2(rect.right() - 6.0 - count.size().x, y - count.size().y / 2.0), count, visuals.weak_text_color());
+            painter.galley(egui::pos2(rect.right() - 6.0 - count.size().x, y - count.size().y / 2.0), count, weak);
         }
     }
     response
@@ -620,7 +697,7 @@ pub(crate) fn group_row(ui: &mut egui::Ui, name: &str, count: usize, expanded: b
 /// When `closable`, a "×" close button appears at the right end on hover or selection;
 /// it owns its own rectangle (never overlapping the row hit rect) with a derived Id
 /// so the row click and the close click never fight over the same widget state.
-pub(crate) fn item_row(ui: &mut egui::Ui, label: &str, indent: f32, selected: bool, closable: bool, close_label: &str) -> (egui::Response, Option<egui::Response>) {
+pub(crate) fn item_row(ui: &mut egui::Ui, label: &str, indent: f32, selected: bool, closable: bool, close_label: &str, icon: &RowIcon<'_>) -> (egui::Response, Option<egui::Response>) {
     const CLOSE_WIDTH: f32 = 20.0;
     let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), egui::Sense::click());
     response.widget_info(|| egui::WidgetInfo::selected(egui::accesskit::Role::Button, ui.is_enabled(), selected, label));
@@ -629,21 +706,26 @@ pub(crate) fn item_row(ui: &mut egui::Ui, label: &str, indent: f32, selected: bo
     // on top of the row inside it, which would steal "hovered" and make the button flicker.
     let row_hovered = ui.rect_contains_pointer(rect);
     if ui.is_rect_visible(rect) {
-        let visuals = ui.visuals();
+        let sel_fill = ui.visuals().selection.bg_fill.gamma_multiply(0.35);
+        let hover_fill = ui.visuals().widgets.hovered.weak_bg_fill;
+        let weak = ui.visuals().weak_text_color();
+        let painter = ui.painter().clone();
         if selected {
-            ui.painter().rect_filled(rect, 4.0, visuals.selection.bg_fill.gamma_multiply(0.35));
+            painter.rect_filled(rect, 4.0, sel_fill);
         } else if row_hovered {
-            ui.painter().rect_filled(rect, 4.0, visuals.widgets.hovered.weak_bg_fill);
+            painter.rect_filled(rect, 4.0, hover_fill);
         }
         let show_close = closable && (row_hovered || selected);
         let x_w = if closable { CLOSE_WIDTH } else { 0.0 };
         let body = egui::TextStyle::Body.resolve(ui.style());
-        let color = if selected { visuals.strong_text_color() } else { visuals.text_color() };
-        let x = rect.left() + indent + 6.0;
+        let color = if selected { ui.visuals().strong_text_color() } else { ui.visuals().text_color() };
+        // 圖示在文字左側（None 時佔 0 寬）
+        let icon_w = paint_row_icon(ui, egui::pos2(rect.left() + indent + 6.0 + 9.0, rect.center().y), icon);
+        let x = rect.left() + indent + 6.0 + icon_w;
         let mut layout = egui::text::LayoutJob { wrap: egui::text::TextWrapping::truncate_at_width((rect.right() - 6.0 - x_w - x).max(0.0)), ..Default::default() };
         layout.append(label, 0.0, egui::TextFormat::simple(body, color));
-        let galley = ui.painter().layout_job(layout);
-        ui.painter().galley(egui::pos2(x, rect.center().y - galley.size().y / 2.0), galley, color);
+        let galley = painter.layout_job(layout);
+        painter.galley(egui::pos2(x, rect.center().y - galley.size().y / 2.0), galley, color);
         if show_close {
             // Independent interact rect at the right end; Id derived from the row Id.
             let x_rect = egui::Rect::from_min_size(
@@ -655,7 +737,7 @@ pub(crate) fn item_row(ui: &mut egui::Ui, label: &str, indent: f32, selected: bo
             resp.clone().on_hover_text(close_label);
             // No button chrome of its own: only the glyph turns red on hover, like the
             // editor tab's close button.
-            let tint = if resp.hovered() { egui::Color32::from_rgb(232, 17, 35) } else { visuals.weak_text_color() };
+            let tint = if resp.hovered() { egui::Color32::from_rgb(232, 17, 35) } else { weak };
             ui.painter().text(x_rect.center(), egui::Align2::CENTER_CENTER, "×", egui::FontId::proportional(13.0), tint);
             close = Some(resp);
         }

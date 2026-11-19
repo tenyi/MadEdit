@@ -47,6 +47,10 @@ enum Action {
     Enter(PathBuf),
     /// 打開檔案（單擊樹中的檔案葉節點，或下半部列表單擊檔案）。
     Open(PathBuf),
+    /// 單擊資料夾列：樹選中並展開（不切換列表資料夾）。
+    Focus(PathBuf),
+    /// 表頭點擊：排序欄/方向已更新，需重繪並保存。
+    Resort,
 }
 
 pub(crate) struct Explorer {
@@ -59,6 +63,10 @@ pub(crate) struct Explorer {
     pub(crate) ratio: f32,
     /// 目前選中的資料夾。
     pub(crate) selected: Option<PathBuf>,
+    /// 分欄列表排序欄：0=名稱 1=修改日期 2=類型 3=大小。
+    pub(crate) sort_column: u8,
+    /// 分欄列表是否降冪。
+    pub(crate) sort_descending: bool,
     /// 展開中的資料夾。
     pub(crate) expanded: HashSet<PathBuf>,
     /// 讀取過的目錄內容快取；`None` = 讀取失敗（無權限、裝置不存在等）。
@@ -77,6 +85,8 @@ impl Default for Explorer {
             split: false,
             ratio: 0.5,
             selected: None,
+            sort_column: 0,
+            sort_descending: false,
             expanded: HashSet::new(),
             listed: HashMap::new(),
             meta: HashMap::new(),
@@ -170,6 +180,8 @@ impl Explorer {
         settings.explorer.filter = self.filter_applied.clone();
         settings.explorer.selected = self.selected.as_ref().map(|p| p.to_string_lossy().into_owned());
         settings.explorer.expanded = self.expanded.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        settings.explorer.sort_column = self.sort_column;
+        settings.explorer.sort_descending = self.sort_descending;
     }
 
     /// 從設定還原狀態（啟動時呼叫一次）。
@@ -180,6 +192,8 @@ impl Explorer {
         self.filter_applied = settings.explorer.filter.clone();
         self.selected = settings.explorer.selected.as_ref().map(PathBuf::from);
         self.expanded = settings.explorer.expanded.iter().map(PathBuf::from).collect();
+        self.sort_column = settings.explorer.sort_column.min(3);
+        self.sort_descending = settings.explorer.sort_descending;
     }
 }
 
@@ -229,6 +243,8 @@ impl App {
             self.explorer_tree(ui, &mut action, Some(tree_h));
             let split_tip = self.t("ex.split_tip", "拖曳調整上下高度").to_string();
             let (srect, sresp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 7.0), egui::Sense::click_and_drag());
+            // 與左側停靠欄拖拽一致的調整游標風格（垂直方向）
+            let sresp = sresp.on_hover_cursor(egui::CursorIcon::ResizeVertical);
             if sresp.dragged() {
                 // 拖拽分隔條向下（dy>0）→ 樹變高；拖拽向上 → 樹變矮。
                 let dy = sresp.drag_delta().y;
@@ -251,8 +267,8 @@ impl App {
             self.explorer_list(ui, &mut action);
         }
 
-        // 狀態有變（選中位置、展開節點、篩選、分欄、比例）→ 寫回設定即時保存。
-        let moved_selection = matches!(action, Action::Select(_) | Action::Enter(_));
+        // 狀態有變（選中位置、展開節點、篩選、分欄、比例、排序）→ 寫回設定即時保存。
+        let moved_selection = matches!(action, Action::Select(_) | Action::Enter(_) | Action::Focus(_));
         match action {
             Action::None => {}
             Action::Select(p) => {
@@ -274,9 +290,18 @@ impl App {
             Action::Open(p) => {
                 self.open_path(&p);
             }
+            Action::Focus(p) => {
+                // 單擊列表資料夾：樹選中並展開，列表仍停在原資料夾。
+                self.explorer.expanded.insert(p.clone());
+                self.explorer.load_entries(&p);
+                self.explorer.selected = Some(p);
+            }
+            Action::Resort => {
+                // 排序欄/方向已寫入狀態，只需保存。
+                state_changed = true;
+            }
         }
 
-        // 狀態有變（選中位置、展開節點、篩選、分欄、比例）→ 寫回設定即時保存。
         if state_changed || moved_selection {
             self.explorer.save_to_settings(&mut self.settings);
             self.save_settings();
@@ -304,7 +329,15 @@ impl App {
                     .unwrap_or_else(|| path.display().to_string());
                 let expanded = self.explorer.expanded.contains(&path);
                 let selected = self.explorer.selected.as_deref() == Some(path.as_path());
-                let resp = favorites::group_row(ui, &name, 0, expanded, selected, indent);
+                // Windows Shell 系統圖示（取得失敗時回退向量資料夾圖示）；根層（磁碟機）用硬碟圖示。
+                let path_str = path.to_string_lossy().into_owned();
+                let tex = self.shell_icons.get(ui.ctx(), &path_str, true);
+                let icon = match &tex {
+                    Some(t) => favorites::RowIcon::Tex(t),
+                    None if indent == 0.0 => favorites::RowIcon::Drive,
+                    None => favorites::RowIcon::Folder,
+                };
+                let resp = favorites::group_row(ui, &name, 0, expanded, selected, indent, &icon);
                 if resp.clicked() {
                     *action = Action::Select(path.clone());
                 }
@@ -320,15 +353,24 @@ impl App {
                             if e.dir {
                                 dirs.push(path.join(&e.name));
                             }
-                            // 篩選生效時：選中資料夾的匹配檔案以葉節點畫在本節點行與子資料夾之間。
+                            // 選中資料夾掛出內容：
+                            // - 純樹形態（分欄關閉）：子資料夾 + 全部檔案（有篩選時只顯示匹配項）；
+                            // - 分欄形態：樹維持清單，僅在篩選生效時加掛匹配檔案（其餘由下方列表呈現）。
                             else if is_selected
-                                && filtered
-                                && glob_match(&e.name, &self.explorer.filter_applied)
+                                && (!self.explorer.split || filtered)
+                                && (!filtered || glob_match(&e.name, &self.explorer.filter_applied))
                             {
                                 let leaf_indent = indent + INDENT_STEP + FILE_EXTRA_INDENT;
-                                let (fresp, _) = favorites::item_row(ui, &e.name, leaf_indent, false, false, "");
+                                let leaf_path = path.join(&e.name);
+                                let leaf_str = leaf_path.to_string_lossy().into_owned();
+                                let tex = self.shell_icons.get(ui.ctx(), &leaf_str, false);
+                                let icon = match &tex {
+                                    Some(t) => favorites::RowIcon::Tex(t),
+                                    None => favorites::RowIcon::File,
+                                };
+                                let (fresp, _) = favorites::item_row(ui, &e.name, leaf_indent, false, false, "", &icon);
                                 if fresp.clicked() {
-                                    *action = Action::Open(path.join(&e.name));
+                                    *action = Action::Open(leaf_path);
                                 }
                             }
                         }
@@ -370,37 +412,118 @@ impl App {
             self.explorer.load_meta(&selected);
         }
 
+        // 欄位寬度與表頭：表頭固定在 ScrollArea 之外，列表滾動時不隨之捲動。
+        let full_w = ui.available_width();
+        // 自適應欄位：面板窄時依次隱藏 大小 → 類型 → 修改日期，名稱欄永遠保留。
+        let mut date_w = 115.0;
+        let mut type_w = 70.0;
+        let mut size_w = 70.0;
+        let show_size = full_w >= 340.0;
+        if !show_size {
+            size_w = 0.0;
+        }
+        let show_type = show_size || full_w >= 280.0;
+        if !show_type {
+            type_w = 0.0;
+        }
+        let show_date = show_type || full_w >= 200.0;
+        if !show_date {
+            date_w = 0.0;
+        }
+        let name_w = (full_w - date_w - type_w - size_w).max(60.0);
+        let weak = ui.visuals().weak_text_color();
+        // 表頭：可點擊排序（四選一；同欄再點切換升降序），排序中的欄位畫 ▲/▼ 指示。
+        let columns = [(0u8, name_w, name_header), (1, date_w, date_header), (2, type_w, type_header), (3, size_w, size_header)];
+        let (hrect, hresp) = ui.allocate_exact_size(egui::vec2(full_w, ROW_HEIGHT), egui::Sense::click());
+        hresp.widget_info(|| egui::WidgetInfo::labeled(egui::accesskit::Role::Button, true, format!("{name_header}|{date_header}|{type_header}|{size_header}")));
+        if hresp.clicked() {
+            if let Some(px) = hresp.interact_pointer_pos() {
+                let mut x = hrect.left() + 6.0;
+                for (idx, w, _) in columns {
+                    if w <= 0.0 {
+                        continue;
+                    }
+                    if px.x >= x && px.x < x + w {
+                        if self.explorer.sort_column == idx {
+                            self.explorer.sort_descending = !self.explorer.sort_descending;
+                        } else {
+                            self.explorer.sort_column = idx;
+                            self.explorer.sort_descending = false;
+                        }
+                        *action = Action::Resort;
+                        break;
+                    }
+                    x += w;
+                }
+            }
+        }
+        let sort_color = ui.visuals().strong_text_color();
+        let mut x = hrect.left() + 6.0;
+        for (idx, w, title) in columns {
+            if w <= 0.0 {
+                continue;
+            }
+            let sorted = self.explorer.sort_column == idx;
+            let tint = if sorted { sort_color } else { weak };
+            let arrow = if sorted { if self.explorer.sort_descending { " ▼" } else { " ▲" } } else { "" };
+            ui.painter().text(egui::pos2(x + 2.0, hrect.center().y), egui::Align2::LEFT_CENTER, format!("{title}{arrow}"), egui::FontId::proportional(12.0), tint);
+            x += w;
+        }
+
         egui::ScrollArea::vertical().id_salt("ex-list").auto_shrink([false, false]).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
-            let full_w = ui.available_width();
-            // 自適應欄位：面板窄時依次隱藏 大小 → 類型 → 修改日期，名稱欄永遠保留。
-            let mut date_w = 115.0;
-            let mut type_w = 70.0;
-            let mut size_w = 70.0;
-            let show_size = full_w >= 340.0;
-            if !show_size {
-                size_w = 0.0;
-            }
-            let show_type = show_size || full_w >= 280.0;
-            if !show_type {
-                type_w = 0.0;
-            }
-            let show_date = show_type || full_w >= 200.0;
-            if !show_date {
-                date_w = 0.0;
-            }
-            let name_w = (full_w - date_w - type_w - size_w).max(60.0);
-            let weak = ui.visuals().weak_text_color();
-            // 表頭
-            let (hrect, _) = ui.allocate_exact_size(egui::vec2(full_w, ROW_HEIGHT), egui::Sense::hover());
-            let mut x = hrect.left() + 6.0;
-            for (w, title) in [(name_w, name_header), (date_w, date_header), (type_w, type_header), (size_w, size_header)] {
-                if w > 0.0 {
-                    ui.painter().text(egui::pos2(x + 2.0, hrect.center().y), egui::Align2::LEFT_CENTER, title, egui::FontId::proportional(12.0), weak);
-                }
-                x += w;
-            }
             let rows = self.explorer.meta.get(&selected).and_then(|e| e.as_ref());
+            // 排序：資料夾永遠在前；欄內依 sort_column 升降冪。副本排序，不動快取。
+            let mut sorted: Vec<&FileRow> = rows.into_iter().flatten().collect();
+            sorted.sort_by(|a, b| {
+                let cmp = match self.explorer.sort_column {
+                    1 => a.modified.cmp(&b.modified),
+                    2 => {
+                        let ka = if a.dir { folder_type.to_string() } else { std::path::Path::new(&a.name).extension().map(|e| e.to_string_lossy().to_uppercase()).unwrap_or_default() };
+                        let kb = if b.dir { folder_type.to_string() } else { std::path::Path::new(&b.name).extension().map(|e| e.to_string_lossy().to_uppercase()).unwrap_or_default() };
+                        ka.cmp(&kb)
+                    }
+                    3 => a.size.cmp(&b.size),
+                    _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                };
+                let primary = if self.explorer.sort_descending { cmp.reverse() } else { cmp };
+                // 資料夾恆在檔案前（升降冪只影響各群組內的順序）。
+                b.dir.cmp(&a.dir).then_with(|| primary)
+            });
+            // 「…」上層資料夾列：放在所有排序列之前，點擊回上一層。
+            let parent = selected.parent().filter(|p| p != &selected).map(PathBuf::from);
+            if parent.is_some() {
+                let full_rect = egui::Rect::from_min_size(
+                    egui::pos2(ui.max_rect().left(), ui.cursor().top()),
+                    egui::vec2(full_w, ROW_HEIGHT),
+                );
+                if ui.is_rect_visible(full_rect) {
+                    let (row_rect, resp) = ui.allocate_exact_size(egui::vec2(full_w, ROW_HEIGHT), egui::Sense::click());
+                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::accesskit::Role::Button, true, ".."));
+                    let visuals = ui.visuals();
+                    let hover_fill = visuals.widgets.hovered.weak_bg_fill;
+                    let text_color = visuals.text_color();
+                    if resp.hovered() {
+                        ui.painter().rect_filled(row_rect, 2.0, hover_fill);
+                    }
+                    // 「…」固定用向量資料夾圖示（上層可能是磁碟機根，無 Shell 圖示場景）。
+                    let icon_slot = favorites::paint_row_icon(ui, egui::pos2(row_rect.left() + 14.0, row_rect.center().y), &favorites::RowIcon::Folder);
+                    ui.painter().text(
+                        egui::pos2(row_rect.left() + 6.0 + icon_slot, row_rect.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        "..",
+                        egui::FontId::proportional(12.0),
+                        text_color,
+                    );
+                    if resp.clicked() {
+                        if let Some(p) = parent {
+                            *action = Action::Enter(p);
+                        }
+                    }
+                } else {
+                    ui.allocate_rect(full_rect, egui::Sense::hover());
+                }
+            }
             match rows {
                 None => {
                     ui.painter().text(
@@ -411,8 +534,8 @@ impl App {
                         weak,
                     );
                 }
-                Some(rows) => {
-                    if rows.is_empty() {
+                Some(_) => {
+                    if sorted.is_empty() {
                         ui.painter().text(
                             egui::pos2(hrect.left() + 8.0, hrect.max.y + ROW_HEIGHT / 2.0),
                             egui::Align2::LEFT_CENTER,
@@ -421,7 +544,7 @@ impl App {
                             weak,
                         );
                     }
-                    for row in rows {
+                    for row in &sorted {
                         let filtered = self.explorer.filtered();
                         if !row.dir && filtered && !glob_match(&row.name, &self.explorer.filter_applied) {
                             continue;
@@ -444,11 +567,20 @@ impl App {
                         let color = visuals.text_color();
                         let x0 = row_rect.left() + 6.0;
                         let y = row_rect.center().y;
+                        // 名稱欄位含系統圖示
+                        let row_path = selected.join(&row.name);
+                        let row_str = row_path.to_string_lossy().into_owned();
+                        let tex = self.shell_icons.get(ui.ctx(), &row_str, row.dir);
+                        let icon = match &tex {
+                            Some(t) => favorites::RowIcon::Tex(t),
+                            None => if row.dir { favorites::RowIcon::Folder } else { favorites::RowIcon::File },
+                        };
+                        let icon_slot = favorites::paint_row_icon(ui, egui::pos2(x0 + 9.0, y), &icon);
                         // 名稱（截斷至欄寬）
-                        let mut job = egui::text::LayoutJob { wrap: egui::text::TextWrapping::truncate_at_width(name_w - 12.0), ..Default::default() };
+                        let mut job = egui::text::LayoutJob { wrap: egui::text::TextWrapping::truncate_at_width(name_w - 12.0 - icon_slot), ..Default::default() };
                         job.append(&row.name, 0.0, egui::TextFormat::simple(egui::TextStyle::Body.resolve(ui.style()), color));
                         let galley = ui.painter().layout_job(job);
-                        ui.painter().galley(egui::pos2(x0, y - galley.size().y / 2.0), galley, color);
+                        ui.painter().galley(egui::pos2(x0 + icon_slot, y - galley.size().y / 2.0), galley, color);
                         // 修改日期
                         if show_date {
                             let date = row.modified.and_then(|s| chrono::DateTime::from_timestamp(s, 0)).map(|dt| dt.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string()).unwrap_or_else(|| "-".into());
@@ -469,6 +601,11 @@ impl App {
                         let path = selected.join(&row.name);
                         if resp.clicked() && !row.dir {
                             *action = Action::Open(path.clone());
+                        }
+                        // 單擊資料夾：同步樹選中並展開（不切換列表所在資料夾）——這樣關閉分欄後
+                        // 樹能立即顯示該資料夾的內容。
+                        if resp.clicked() && row.dir {
+                            *action = Action::Focus(path.clone());
                         }
                         if resp.double_clicked() && row.dir {
                             *action = Action::Enter(path);
