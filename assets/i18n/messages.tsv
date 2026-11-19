@@ -607,6 +607,19 @@ fav.open_group	Open all files in the group (replaces the open tabs)	打开分组
 fav.open	Open	打开	開く	열기	Öffnen	Abrir	Ouvrir	Apri	Abrir
 fav.recent	Recent Files	最近打开的文件	最近開いたファイル	최근 연 파일	Zuletzt geöffnet	Archivos recientes	Fichiers récents	File recenti	Arquivos recentes
 fav.close_tab	Close this tab	关闭此标签	このタブを閉じる	이 탭 닫기	Diesen Tab schließen	Cerrar esta pestaña	Fermer cet onglet	Chiudi questa scheda	Fechar esta aba
+view.tab_explorer	Explorer	资源管理器	エクスプローラー	탐색기	Explorer	Explorador	Explorateur	Esplora risorse	Explorador
+ex.filter_hint	Filter files, e.g. *.txt	筛选文件，如 *.txt	ファイルを絞り込む（例: *.txt）	파일 필터(예: *.txt)	Dateien filtern, z. B. *.txt	Filtrar archivos, p. ej. *.txt	Filtrer les fichiers, ex. *.txt	Filtra i file, es. *.txt	Filtrar arquivos, ex. *.txt
+ex.apply	Apply filter	执行筛选	絞り込みを実行	필터 적용	Filter anwenden	Aplicar filtro	Appliquer le filtre	Applica filtro	Aplicar filtro
+ex.unreadable	(unreadable)	（无法读取）	（読み取れません）	(읽을 수 없음)	(nicht lesbar)	(no legible)	(illisible)	(non leggibile)	(ilegível)
+ex.split	Split view: show folder contents below	分栏显示文件夹内容	フォルダー内容を下に表示	폴더 내용 아래 표시	Ordnerinhalt unten anzeigen	Mostrar contenido debajo	Afficher le contenu en bas	Mostra contenuto in basso	Mostrar conteúdo abaixo
+ex.split_tip	Drag to resize top and bottom panes	拖拽调整上下高度	ドラッグで上下の高さを調整	높이를 드래그하여 조정	Ziehen, um Höhen anzupassen	Arrastrar para ajustar alturas	Faire glisser pour ajuster	Trascina per regolare	Arraste para ajustar
+ex.name	Name	名称	名前	이름	Name	Nombre	Nom	Nome	Nome
+ex.date	Modified	修改日期	更新日時	수정 날짜	Geändert	Modificado	Modifié	Modificato	Modificado
+ex.type	Type	类型	種類	종류	Typ	Tipo	Type	Tipo	Tipo
+ex.size	Size	大小	サイズ	크기	Größe	Tamaño	Taille	Dimensione	Tamanho
+ex.folder	Folder	文件夹	フォルダー	폴더	Ordner	Carpeta	Dossier	Cartella	Pasta
+ex.file	File	文件	ファイル	파일	Datei	Archivo	Fichier	File	Arquivo
+ex.empty	(empty)	（空）	（空）	(비어 있음)	(leer)	(vacío)	(vide)	(vuoto)	(vazio)
 fav.none	(None)	（无）	（なし）	(없음)	(Keine)	(Ninguno)	(Aucun)	(Nessuno)	(Nenhum)
 fav.group_hint	Double-click opens all files in the group (replaces the open tabs)	双击打开分组中的所有文件（替换当前所有打开）	ダブルクリックでグループ内の全ファイルを開く（現在のタブを置き換え）	더블클릭으로 그룹의 모든 파일 열기(현재 탭 대체)	Doppelklick öffnet alle Dateien der Gruppe (ersetzt offene Tabs)	Doble clic abre todos los archivos del grupo (reemplaza las pestañas abiertas)	Double-clic pour ouvrir tous les fichiers du groupe (remplace les onglets ouverts)	Doppio clic apre tutti i file del gruppo (sostituisce le schede aperte)	Clique duplo abre todos os arquivos do grupo (substitui as abas abertas)
 fav.default_group	Common	常用	よく使う	자주 사용	Häufig	Frecuentes	Fréquents	Frequenti	Frequentes

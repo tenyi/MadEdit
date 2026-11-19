@@ -20,7 +20,7 @@ const RECENT_LIMIT: usize = 15;
 /// thousands of favorites in one click.
 const FOLDER_LIMIT: usize = 500;
 
-const ROW_HEIGHT: f32 = 24.0;
+pub(crate) const ROW_HEIGHT: f32 = 24.0;
 const GROUP_INDENT: f32 = 12.0;
 const ITEM_INDENT: f32 = 30.0;
 const RECENT_ITEM_INDENT: f32 = 18.0;
@@ -31,15 +31,17 @@ const RECENT_ITEM_INDENT: f32 = 18.0;
 pub(super) enum FileViewTab {
     List,
     Open,
+    Explorer,
 }
 
 impl FileViewTab {
-    const ALL: [FileViewTab; 2] = [FileViewTab::List, FileViewTab::Open];
+    const ALL: [FileViewTab; 3] = [FileViewTab::List, FileViewTab::Open, FileViewTab::Explorer];
 
     fn label(self, app: &App) -> &'static str {
         match self {
             FileViewTab::List => app.t("view.tab_list", "列表"),
             FileViewTab::Open => app.t("view.tab_open", "開啟"),
+            FileViewTab::Explorer => app.t("view.tab_explorer", "資源管理器"),
         }
     }
 }
@@ -118,6 +120,7 @@ impl App {
         match self.file_view_tab {
             FileViewTab::List => self.file_view_list(&mut list_ui, &mut action),
             FileViewTab::Open => self.file_view_open_tabs(&mut list_ui, &mut action),
+            FileViewTab::Explorer => self.explorer_panel(&mut list_ui),
         }
         ui.advance_cursor_after_rect(full);
         if let Some(action) = action {
@@ -577,8 +580,10 @@ fn show_names_item(ui: &mut egui::Ui, app: &App, action: &mut Option<FavAction>)
 }
 
 /// A tree heading: fold arrow, name, and the number of children dimmed at the right.
-fn group_row(ui: &mut egui::Ui, name: &str, count: usize, expanded: bool, selected: bool, indent: f32) -> egui::Response {
+/// Reused by the Explorer tab for its directory rows.
+pub(crate) fn group_row(ui: &mut egui::Ui, name: &str, count: usize, expanded: bool, selected: bool, indent: f32) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), egui::Sense::click());
+    // 無障礙資訊在裁剪與否都註冊（樹很長時列會被 ScrollArea 裁剪，但節點仍須可查詢）。
     response.widget_info(|| egui::WidgetInfo::selected(egui::accesskit::Role::Button, ui.is_enabled(), selected, name));
     if ui.is_rect_visible(rect) {
         let visuals = ui.visuals();
@@ -615,7 +620,7 @@ fn group_row(ui: &mut egui::Ui, name: &str, count: usize, expanded: bool, select
 /// When `closable`, a "×" close button appears at the right end on hover or selection;
 /// it owns its own rectangle (never overlapping the row hit rect) with a derived Id
 /// so the row click and the close click never fight over the same widget state.
-fn item_row(ui: &mut egui::Ui, label: &str, indent: f32, selected: bool, closable: bool, close_label: &str) -> (egui::Response, Option<egui::Response>) {
+pub(crate) fn item_row(ui: &mut egui::Ui, label: &str, indent: f32, selected: bool, closable: bool, close_label: &str) -> (egui::Response, Option<egui::Response>) {
     const CLOSE_WIDTH: f32 = 20.0;
     let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), egui::Sense::click());
     response.widget_info(|| egui::WidgetInfo::selected(egui::accesskit::Role::Button, ui.is_enabled(), selected, label));

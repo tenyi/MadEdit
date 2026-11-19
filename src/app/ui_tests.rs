@@ -2606,6 +2606,98 @@ fn test_double_clicking_open_list_row_closes_document() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 資源管理器頁籤：懶載入目錄樹可展開到指定資料夾；篩選（Enter 等價 >）
+/// 只把選中資料夾裡匹配的檔案以葉節點顯示在樹中，未匹配的檔案不出現。
+#[test]
+fn test_explorer_tree_expands_and_filter_shows_matching_files() {
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::NodeT;
+    // fixture 放在 target/ 下：磁碟鏈短、同層目錄少，整棵樹只有幾十行（雙擊計時才不會被渲染拖垮）。
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(r"target\ex-fixture");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("a.txt"), "a").unwrap();
+    std::fs::write(dir.join("b.rs"), "b").unwrap();
+
+    // 每幀 50ms：兩次點擊相距 50ms，落在 egui 的雙擊判定時間內。
+    let mut h = Harness::builder()
+        .allow_missing_glyphs()
+        .with_pixels_per_point(1.0)
+        .with_step_dt(0.05)
+        .with_size([1000.0, 700.0])
+        .build_eframe(|cc| App::new(cc, Vec::new(), None));
+    h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
+    h.state_mut().settings.show_file_view = true;
+    // 注入整條展開鏈（target/ 下各層目錄不多，樹很小）並直接設為選中。
+    {
+        let root = std::path::PathBuf::from(format!("{}{}", dir.components().next().unwrap().as_os_str().to_string_lossy(), std::path::MAIN_SEPARATOR));
+        let mut chain = root.clone();
+        let mut expanded = vec![root];
+        for c in dir.components().filter_map(|c| match c {
+            std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+            _ => None,
+        }) {
+            chain.push(c);
+            expanded.push(chain.clone());
+        }
+        h.state_mut().explorer.expanded = expanded.into_iter().collect();
+        h.state_mut().explorer.selected = Some(dir.clone());
+    }
+    h.run_steps(3);
+    h.get_by(|n| n.role() == Role::Tab && n.label().as_deref() == Some("資源管理器")).click();
+    h.run_steps(3);
+    // 未篩選時：樹中只有資料夾，不顯示檔案。（get_all_by 零匹配會 panic，故全列舉自行計數）
+    let button_labels = |h: &Harness<'static, App>| -> Vec<String> {
+        h.get_all_by_role(Role::Button).map(|n| n.accesskit_node().label().unwrap_or_default()).collect()
+    };
+    assert!(button_labels(&h).iter().any(|l| l == "sub"), "子資料夾 sub 應顯示");
+    assert!(!button_labels(&h).iter().any(|l| l == "a.txt" || l == "b.rs"), "未篩選時不得顯示檔案");
+    // 點一下篩選框（畫面上有兩個 TextInput：編輯區搜尋框 + 篩選框；篩選框在左側面板）、輸入 *.txt、按 Enter。
+    let input = h.get_all_by_role(Role::TextInput).min_by_key(|n| n.rect().left().to_bits()).unwrap();
+    let at = input.rect().center();
+    for pressed in [true, false] {
+        h.event(Event::PointerButton { pos: at, button: eframe::egui::PointerButton::Primary, pressed, modifiers: Modifiers::default() });
+    }
+    h.run_steps(2);
+    type_text(&mut h, "*.txt");
+    h.key_down(egui::Key::Enter);
+    h.run_steps(3);
+    assert_eq!(h.state().explorer.filter_applied, "*.txt", "篩選詞應已生效");
+    // 匹配檔案出現為葉節點；未匹配檔案不出現；子資料夾仍在。
+    let labels = button_labels(&h);
+    assert!(labels.iter().any(|l| l == "a.txt"), "匹配檔案應顯示為葉節點");
+    assert!(!labels.iter().any(|l| l == "b.rs"), "未匹配檔案不得出現");
+    assert!(labels.iter().any(|l| l == "sub"), "子資料夾不受篩選影響");
+
+    // ── 分欄模式：勾選 ▣ 後出現下半部列表（四欄表頭 + 檔案列）；雙擊資料夾進入。
+    h.get_by(|n| n.role() == Role::CheckBox && n.label().as_deref() == Some("分欄顯示資料夾內容")).click();
+    // 等 12 幀（0.6s）：讓先前的點擊滑出 egui 的雙擊判定窗口，否則雙擊會被計為三擊（count=3）。
+    h.run_steps(12);
+    let list_labels = button_labels(&h);
+    // 表頭與列：a.txt 過濾後仍在列表；sub 資料夾也列出（可雙擊進入）。
+    assert!(list_labels.iter().filter(|l| l.as_str() == "a.txt").count() >= 2, "樹葉節點與列表列都應有 a.txt");
+    assert!(!list_labels.iter().any(|l| l == "b.rs"), "列表中未匹配檔案不得出現");
+    // 雙擊列表中的 sub 資料夾：進入 = 選中跳轉。
+    // 限定可視區域：Temp 下可能有恰好也叫 "sub" 的目錄（樹被裁剪也註冊節點）。
+    let sub = h.get_all_by(|n| n.role() == Role::Button && n.label().as_deref() == Some("sub"))
+        .filter(|n| n.rect().top() < 700.0)
+        .max_by_key(|n| n.rect().top().to_bits())
+        .unwrap();
+    let at = sub.rect().center();
+    // 與 test_double_clicking_a_tab_title 完全相同的節奏：press+release 同幀、兩組相鄰。
+    for _ in 0..2 {
+        h.event(Event::PointerMoved(at));
+        h.run_steps(1);
+        for pressed in [true, false] {
+            h.event(Event::PointerButton { pos: at, button: eframe::egui::PointerButton::Primary, pressed, modifiers: Modifiers::default() });
+        }
+        h.run_steps(1);
+    }
+    h.run_steps(2);
+    assert_eq!(h.state().explorer.selected.as_deref(), Some(dir.join("sub").as_path()), "雙擊列表資料夾應進入");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 開啟「其他程式修改時自動重新載入」後，沒有未存檔修改的文件會直接重讀。
 #[test]
 fn test_auto_reload_external_reloads_unmodified_files() {

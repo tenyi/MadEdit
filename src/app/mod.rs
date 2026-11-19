@@ -6,6 +6,7 @@ pub mod commands;
 mod i18n;
 mod icons;
 mod dialogs;
+mod explorer;
 mod favorites;
 mod form;
 mod find;
@@ -186,6 +187,8 @@ pub struct App {
     fav_selected: Option<usize>,
     /// 文件視圖目前顯示的頁籤；預留給「開啟」等新頁籤
     file_view_tab: favorites::FileViewTab,
+    /// 資源管理器頁籤的狀態（樹、篩選、分欄）
+    explorer: explorer::Explorer,
     /// 收藏樹根節點是否展開（只在本次執行期間記住）
     fav_root_open: bool,
     /// 開啟中的預覽列印視窗
@@ -265,6 +268,7 @@ impl App {
             chinese_safe: false,
             fav_selected: None,
             file_view_tab: favorites::FileViewTab::List,
+            explorer: explorer::Explorer::default(),
             fav_root_open: true,
             preview: None,
         };
