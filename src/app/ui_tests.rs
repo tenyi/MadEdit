@@ -2675,8 +2675,8 @@ fn test_explorer_tree_expands_and_filter_shows_matching_files() {
     // 等 12 幀（0.6s）：讓先前的點擊滑出 egui 的雙擊判定窗口，否則雙擊會被計為三擊（count=3）。
     h.run_steps(12);
     let list_labels = button_labels(&h);
-    // 表頭與列：a.txt 過濾後仍在列表；sub 資料夾也列出（可雙擊進入）。
-    assert!(list_labels.iter().filter(|l| l.as_str() == "a.txt").count() >= 2, "樹葉節點與列表列都應有 a.txt");
+    // 分欄時樹是純資料夾清單（檔案只在下方列表出現）：a.txt 僅 1 個節點。
+    assert_eq!(list_labels.iter().filter(|l| l.as_str() == "a.txt").count(), 1, "分欄時 a.txt 只出現在列表");
     assert!(!list_labels.iter().any(|l| l == "b.rs"), "列表中未匹配檔案不得出現");
     // 雙擊列表中的 sub 資料夾：進入 = 選中跳轉。
     // 限定可視區域：Temp 下可能有恰好也叫 "sub" 的目錄（樹被裁剪也註冊節點）。
@@ -2706,10 +2706,9 @@ fn test_explorer_tree_expands_and_filter_shows_matching_files() {
     // ── 表頭點擊排序：點「修改日期」欄頭切到該欄，再點切換升降序，點「名稱」欄頭復原。
     let header = h.get_by(|n| n.role() == Role::Button && n.label().as_deref() == Some("名稱|修改日期|類型|大小"));
     let hr = header.rect();
-    let full = hr.width();
-    let name_col_w = (full - 115.0).max(60.0);
-    let date_click = egui::pos2(hr.left() + 6.0 + name_col_w + 10.0, hr.center().y);
+    // 名稱欄寬 = max(最長檔名自然寬, 120)；fixture 檔名很短，故為 120。
     let name_click = egui::pos2(hr.left() + 20.0, hr.center().y);
+    let date_click = egui::pos2(hr.left() + 6.0 + 120.0 + 10.0, hr.center().y);
     let click_at = |h: &mut Harness<'static, App>, pos: egui::Pos2| {
         h.event(Event::PointerMoved(pos));
         h.run_steps(1);
@@ -2728,12 +2727,102 @@ fn test_explorer_tree_expands_and_filter_shows_matching_files() {
     click_at(&mut h, name_click);
     assert_eq!((h.state().explorer.sort_column, h.state().explorer.sort_descending), (0, false), "點名稱欄頭應回到名稱升冪");
 
+    // ── 欄寬可用滑鼠拖拽調整：把「名稱」欄右緣往右拖 60，名稱欄變寬並記入設定。
+    let hr = h.get_by(|n| n.role() == Role::Button && n.label().as_deref() == Some("名稱|修改日期|類型|大小")).rect();
+    // fixture 檔名很短，名稱欄寬 = 下限 120；邊界在 x = 左緣 + 6 + 120。
+    let edge = egui::pos2(hr.left() + 6.0 + 120.0, hr.center().y);
+    h.event(Event::PointerMoved(edge));
+    h.run_steps(1);
+    h.event(Event::PointerButton { pos: edge, button: eframe::egui::PointerButton::Primary, pressed: true, modifiers: Modifiers::default() });
+    h.run_steps(1);
+    h.event(Event::PointerMoved(egui::pos2(edge.x + 60.0, edge.y)));
+    h.run_steps(1);
+    h.event(Event::PointerButton { pos: egui::pos2(edge.x + 60.0, edge.y), button: eframe::egui::PointerButton::Primary, pressed: false, modifiers: Modifiers::default() });
+    h.run_steps(3);
+    let w = h.state().explorer.col_widths[0];
+    assert!((w - 180.0).abs() < 30.0, "拖拽名稱欄邊界應加寬（得到 {w}）");
+    assert!(h.state().settings.explorer.col_widths.first().copied().unwrap_or(0.0) > 0.0, "拖拽結束應寫入設定");
+
     // ── 取消勾選分欄：樹恢復純樹形態並刷新所選資料夾的篩選檔案葉節點。
     h.get_by(|n| n.role() == Role::CheckBox && n.label().as_deref() == Some("分欄顯示資料夾內容")).click();
     h.run_steps(3);
     assert!(!h.state().explorer.split, "前置：分欄應已關閉");
     let tree_after_uncheck = button_labels(&h);
     assert!(tree_after_uncheck.iter().any(|l| l == "a.txt"), "取消分欄後樹應刷新出所選資料夾的檔案：{tree_after_uncheck:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 「以圖形預覽（SVG）」勾選狀態：勾選後打開 .svg 直接以圖形顯示；
+/// 取消勾選會立即關閉目前的圖形預覽分頁並回到文字。
+#[test]
+fn test_svg_auto_preview_opens_graphic_on_open() {
+    let dir = std::env::temp_dir().join(format!("madedit-svg-auto-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("pic.svg");
+    std::fs::write(&file, r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="#2266aa"/></svg>"##).unwrap();
+
+    let mut h = harness();
+    h.state_mut().settings.svg_auto_preview = true;
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    assert!(h.state().is_svg_preview_tab(), "勾選狀態下打開 svg 應直接顯示圖形");
+    assert!(h.state().tabs[0].svg_preview.is_some(), "應已建立圖形預覽");
+
+    // 取消勾選（等同再點一次選單項）：設定關閉、預覽分頁關閉
+    h.state_mut().pending.push(C::PreviewSvg);
+    h.run_steps(3);
+    assert!(!h.state().settings.svg_auto_preview, "取消勾選應寫回設定");
+    assert!(h.state().tabs[0].svg_preview.is_none(), "取消勾選後應關閉圖形預覽");
+    assert!(!h.state().is_svg_preview_tab());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 「以圖形預覽（圖片）」勾選狀態：勾選後打開 .bmp 直接以圖形顯示；
+/// 取消勾選會關閉圖片預覽分頁。
+#[test]
+fn test_img_auto_preview_opens_graphic_on_open() {
+    // 最小 2×2 24bpp BMP（紅/綠交錯，列需補齊 4 位元組）
+    fn tiny_bmp() -> Vec<u8> {
+        let (w, h, row) = (2u32, 2u32, 8u32);
+        let datasize = row * h;
+        let mut b = Vec::new();
+        b.extend_from_slice(b"BM");
+        b.extend_from_slice(&(54 + datasize).to_le_bytes());
+        b.extend_from_slice(&[0, 0, 0, 0]);
+        b.extend_from_slice(&54u32.to_le_bytes());
+        b.extend_from_slice(&40u32.to_le_bytes());
+        b.extend_from_slice(&(w as i32).to_le_bytes());
+        b.extend_from_slice(&(h as i32).to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&24u16.to_le_bytes());
+        b.extend_from_slice(&0u32.to_le_bytes());
+        b.extend_from_slice(&datasize.to_le_bytes());
+        b.extend_from_slice(&[0u8; 16]);
+        for _ in 0..h {
+            b.extend_from_slice(&[0, 0, 255, 0, 255, 0, 0, 0]);
+        }
+        b
+    }
+    let dir = std::env::temp_dir().join(format!("madedit-img-auto-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("pic.bmp");
+    std::fs::write(&file, tiny_bmp()).unwrap();
+
+    let mut h = harness();
+    h.state_mut().settings.img_auto_preview = true;
+    h.state_mut().open_path(&file);
+    h.run_steps(4);
+    assert!(h.state().is_img_preview_tab(), "勾選狀態下打開 bmp 應直接顯示圖形");
+    assert!(h.state().tabs[0].img_preview.is_some(), "應已建立圖片預覽");
+
+    // 取消勾選：設定關閉、預覽分頁關閉
+    h.state_mut().pending.push(C::PreviewImage);
+    h.run_steps(3);
+    assert!(!h.state().settings.img_auto_preview, "取消勾選應寫回設定");
+    assert!(h.state().tabs[0].img_preview.is_none(), "取消勾選後應關閉圖片預覽");
+    assert!(!h.state().is_img_preview_tab());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -3287,6 +3376,7 @@ fn test_python_and_powershell_files_fold() {
 }
 
 /// 開啟 .svg 後可切換圖形預覽；預覽分頁與編輯分頁並存，Esc/關閉回到編輯。
+/// 選單項是勾選式：勾選狀態寫入設定，之後打開 .svg 直接以圖形顯示。
 #[test]
 fn test_svg_preview_shows_and_closes() {
     let dir = std::env::temp_dir().join(format!("madedit-svg-preview-{}", std::process::id()));
@@ -3300,6 +3390,7 @@ fn test_svg_preview_shows_and_closes() {
     assert!(h.state().tabs[h.state().active].svg_preview.is_none());
     h.state_mut().pending.push(C::PreviewSvg);
     h.run_steps(4);
+    assert!(h.state().settings.svg_auto_preview, "勾選狀態應寫入設定");
     let state = h.state();
     let tab = &state.tabs[state.active];
     assert!(tab.svg_preview.is_some(), "the preview exists after the command");
@@ -3312,14 +3403,19 @@ fn test_svg_preview_shows_and_closes() {
     let tab = &state.tabs[state.active];
     assert!(!state.is_svg_preview_tab(), "Esc closes the preview tab");
     assert!(tab.svg_preview.is_none(), "the preview state is dropped");
-    // 非 .svg 檔：命令只提示
+    // 再點一次取消勾選：設定關閉
+    h.state_mut().pending.push(C::PreviewSvg);
+    h.run_steps(3);
+    assert!(!h.state().settings.svg_auto_preview, "再點一次應取消勾選");
+    // 非 .svg 檔：勾選只影響設定，不會強制開啟圖形預覽
     let txt = dir.join("plain.txt");
     std::fs::write(&txt, "hello").unwrap();
     h.state_mut().open_path(&txt);
     h.run_steps(3);
     h.state_mut().pending.push(C::PreviewSvg);
     h.run_steps(3);
-    assert!(h.query_by_label_contains("圖形預覽僅支援").is_some());
+    assert!(h.state().settings.svg_auto_preview);
+    assert!(!h.state().is_svg_preview_tab());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -3354,9 +3450,24 @@ fn test_tab_context_menu_has_preview_entries() {
         .click_secondary();
     h.run_steps(3);
     assert!(h.query_by_label_contains("以圖形預覽（SVG）").is_some(), "SVG preview entry is in the tab menu");
-    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().is_some_and(|l| l.contains("以圖形預覽"))).click();
+    assert!(h.query_by_label_contains("以圖形預覽（圖片）").is_some(), "圖片預覽項目也在同一選單");
+    // 精確挑 SVG 項目（「以圖形預覽（圖片）」是另一個項目，對 .svg 停用）
+    let svg_item = h
+        .get_all_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref().is_some_and(|l| l.contains("以圖形預覽（SVG）")))
+        .next()
+        .expect("SVG 預覽項目必須存在");
+    svg_item.click();
     h.run_steps(4);
     assert!(h.state().tabs[h.state().active].svg_preview.is_some(), "SVG preview opens from the tab menu");
+    // 勾選狀態同步：開啟設定後，右鍵選單的兩項要顯示 ✔
+    h.state_mut().settings.svg_auto_preview = true;
+    h.state_mut().settings.img_auto_preview = true;
+    h.run_steps(2);
+    h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some(svg_label.as_str()))
+        .click_secondary();
+    h.run_steps(3);
+    assert!(h.query_by_label_contains("✔ 以圖形預覽（SVG）").is_some(), "右鍵選單需同步 SVG 勾選狀態");
+    assert!(h.query_by_label_contains("✔ 以圖形預覽（圖片）").is_some(), "右鍵選單需同步圖片勾選狀態");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

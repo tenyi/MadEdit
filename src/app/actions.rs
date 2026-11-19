@@ -145,8 +145,69 @@ impl App {
         }
     }
 
+    /// 開啟／聚焦目前點陣圖片文件的圖形預覽（bmp/jpg/jpeg/png/gif/webp）
+    pub(super) fn preview_image(&mut self) {
+        if !self.doc().path.as_ref().is_some_and(|p| super::is_raster_image_path(p)) {
+            self.set_status(self.t("img.not_image", "圖形預覽僅支援點陣圖片（BMP/JPEG/PNG/GIF/WebP）"));
+            return;
+        }
+        {
+            let tab = self.tab_mut();
+            let pv = tab.img_preview.get_or_insert_with(super::imgpreview::ImagePreview::default);
+            if pv.placement != super::mdpreview::Placement::Tab {
+                pv.set_placement(super::mdpreview::Placement::Tab);
+            }
+        }
+        self.img_preview_tab_active = true;
+        self.svg_preview_tab_active = false;
+        self.preview_tab_active = false;
+        self.activate_view(self.active, false);
+    }
+
+    /// 顯示點陣圖片預覽分頁或並排面板；圖片自磁碟重新解碼（檔案簽名變更時）。
+    pub fn show_img_preview(&mut self, ui: &mut egui::Ui) {
+        use super::mdpreview::Placement;
+        let ctx = ui.ctx().clone();
+        let lang = self.ui_lang();
+        let tab = self.tab_mut();
+        let Some(mut pv) = tab.img_preview.take() else { return };
+        if let Some(path) = tab.doc.path.clone() {
+            // 版本戳：長度 + 修改時間；hex 編輯未存檔時仍顯示磁碟內容（與檔案簽名一致）。
+            let stamp = std::fs::metadata(&path)
+                .ok()
+                .and_then(|m| Some(m.len() ^ m.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs()))
+                .unwrap_or(0);
+            pv.refresh(&ctx, &path, stamp);
+        }
+        let area = ui.available_rect_before_wrap();
+        let action = match pv.placement {
+            Placement::Tab => pv.ui(ui, lang),
+            placement => {
+                let (panel, half) = if placement == Placement::Right {
+                    (egui::Panel::right("img-preview-right"), area.width() / 2.0)
+                } else {
+                    (egui::Panel::bottom("img-preview-bottom"), area.height() / 2.0)
+                };
+                panel.resizable(true).default_size(half).min_size(120.0).show(ui, |ui| {
+                    let rect = ui.available_rect_before_wrap();
+                    let mut content = ui.new_child(egui::UiBuilder::new().id_salt("img-preview-content").max_rect(rect));
+                    content.shrink_clip_rect(rect);
+                    pv.ui(&mut content, lang)
+                }).inner
+            }
+        };
+        if action == super::imgpreview::ImageAction::None {
+            self.preview_tab_active = pv.placement == Placement::Tab;
+            self.tab_mut().img_preview = Some(pv);
+        } else {
+            self.preview_tab_active = false;
+            self.img_preview_tab_active = false;
+            self.focus_editor = true;
+        }
+    }
+
     /// 開啟／聚焦目前 .svg 文件的圖形預覽
-    fn preview_svg(&mut self) {
+    pub(super) fn preview_svg(&mut self) {
         let is_svg = self.doc().path.as_ref().is_some_and(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")));
         if !is_svg {
             self.set_status(self.t("svg.not_svg", "圖形預覽僅支援 .svg 檔案"));
@@ -856,7 +917,38 @@ impl App {
                 }
                 self.activate_view(self.active, true);
             }
-            C::PreviewSvg => self.preview_svg(),
+            C::PreviewSvg => {
+                // 勾選式開關：記錄到設定；打開 .svg 時若為勾選狀態就直接顯示圖形。
+                self.settings.svg_auto_preview = !self.settings.svg_auto_preview;
+                let enabled = self.settings.svg_auto_preview;
+                self.save_settings();
+                if enabled {
+                    let is_svg = self.doc().path.as_ref().is_some_and(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")));
+                    if is_svg {
+                        self.preview_svg();
+                    }
+                } else if self.is_svg_preview_tab() {
+                    // 取消勾選時立即關閉目前的圖形預覽分頁
+                    self.tab_mut().svg_preview = None;
+                    self.svg_preview_tab_active = false;
+                    self.focus_editor = true;
+                }
+            }
+            C::PreviewImage => {
+                // 勾選式開關：記錄到設定；打開點陣圖片時若為勾選狀態就直接顯示圖形。
+                self.settings.img_auto_preview = !self.settings.img_auto_preview;
+                let enabled = self.settings.img_auto_preview;
+                self.save_settings();
+                if enabled {
+                    if self.doc().path.as_ref().is_some_and(|p| super::is_raster_image_path(p)) {
+                        self.preview_image();
+                    }
+                } else if self.is_img_preview_tab() {
+                    self.tab_mut().img_preview = None;
+                    self.img_preview_tab_active = false;
+                    self.focus_editor = true;
+                }
+            }
             C::PreviewHtml => {
                 let html = print::preview_html(self.doc(), false);
                 if let Err(e) = print::open_html(&format!("preview-{}", self.doc().display_name()), &html) {

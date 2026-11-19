@@ -195,6 +195,7 @@ commands! {
     PreviewMarkdown => "menuPreviewMarkdown", "以 Markdown 預覽", "";
     PreviewHtml => "menuPreviewHtml", "以 HTML 預覽", "";
     PreviewSvg => "menuPreviewSvg", "以圖形預覽（SVG）", "";
+    PreviewImage => "menuPreviewImage", "以圖形預覽（圖片）", "";
     FoldToggle => "menuFoldToggle", "折疊/展開(&F)", "Ctrl+Shift+OpenBracket";
     FoldAll => "menuFoldAll", "全部折疊(&A)", "";
     UnfoldAll => "menuUnfoldAll", "全部展開(&L)", "";

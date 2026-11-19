@@ -258,11 +258,13 @@ pub struct ExplorerOptions {
     pub sort_column: u8,
     /// 分欄列表是否降冪
     pub sort_descending: bool,
+    /// 分欄列表欄寬 [名稱, 修改日期, 類型, 大小]；名稱 0 = 依內容自動
+    pub col_widths: Vec<f32>,
 }
 
 impl Default for ExplorerOptions {
     fn default() -> Self {
-        Self { split: false, ratio: 0.5, filter: String::new(), selected: None, expanded: Vec::new(), sort_column: 0, sort_descending: false }
+        Self { split: false, ratio: 0.5, filter: String::new(), selected: None, expanded: Vec::new(), sort_column: 0, sort_descending: false, col_widths: Vec::new() }
     }
 }
 
@@ -283,6 +285,10 @@ pub struct Settings {    pub auto_check_updates: bool,
     pub output_log_to_file: bool,
     /// 「執行輸出」面板是否顯示（檢視 → 運行輸出）：記住使用者最後的顯示/隱藏狀態
     pub show_script_output: bool,
+    /// 以圖形預覽（SVG）勾選狀態：開啟時，打開 .svg 直接以圖形顯示
+    pub svg_auto_preview: bool,
+    /// 以圖形預覽（圖片）勾選狀態：開啟時，打開 .bmp/.jpg/.jpeg 等直接以圖形顯示
+    pub img_auto_preview: bool,
     /// 等寬模式：每個字元依固定格子寬度排列（關閉時依字型實際字寬排列）
     pub fixed_width: bool,
     pub tab_size: usize,
@@ -408,6 +414,8 @@ impl Default for Settings {
             ui_font_family: String::new(),
             output_log_to_file: false,
             show_script_output: false,
+            svg_auto_preview: false,
+            img_auto_preview: false,
             fixed_width: false,
             tab_size: 4,
             indent_size: 4,
@@ -751,12 +759,14 @@ mod tests {
         s.explorer.filter = "*.rs".into();
         s.explorer.selected = Some(r"D:\work".into());
         s.explorer.expanded = vec![r"D:\".into(), r"D:\work".into()];
+        s.explorer.col_widths = vec![180.0, 115.0, 60.0, 80.0];
         let back: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert!(back.explorer.split);
         assert_eq!(back.explorer.ratio, 0.7);
         assert_eq!(back.explorer.filter, "*.rs");
         assert_eq!(back.explorer.selected.as_deref(), Some(r"D:\work"));
         assert_eq!(back.explorer.expanded, vec![r"D:\".to_string(), r"D:\work".to_string()]);
+        assert_eq!(back.explorer.col_widths, vec![180.0, 115.0, 60.0, 80.0], "欄寬要寫入並讀回設定");
         // 舊版設定檔沒有 explorer 欄位：全部回到預設（不分欄、無篩選、無選中）
         let legacy: Settings = serde_json::from_str(r#"{"tab_size": 8}"#).unwrap();
         assert_eq!(legacy.explorer, ExplorerOptions::default());
@@ -775,6 +785,21 @@ mod tests {
         assert_eq!(s.explorer.expanded, vec![r"D:\".to_string()]);
         // 缺少的新欄位回退預設：名稱升冪
         assert_eq!((s.explorer.sort_column, s.explorer.sort_descending), (0, false));
+    }
+
+    #[test]
+    fn test_svg_auto_preview_defaults_off_and_roundtrips() {
+        assert!(!Settings::default().svg_auto_preview, "預設不自動開啟圖形預覽");
+        let mut s = Settings::default();
+        s.svg_auto_preview = true;
+        s.img_auto_preview = true;
+        let back: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert!(back.svg_auto_preview, "勾選狀態必須寫入並讀回設定");
+        assert!(back.img_auto_preview, "圖片預覽勾選狀態必須寫入並讀回設定");
+        // 舊版設定檔沒有這個欄位：維持關閉
+        let legacy: Settings = serde_json::from_str(r#"{"tab_size": 8}"#).unwrap();
+        assert!(!legacy.svg_auto_preview);
+        assert!(!legacy.img_auto_preview);
     }
 
     #[test]

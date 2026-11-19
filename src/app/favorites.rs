@@ -138,7 +138,7 @@ impl App {
 
             // 一級節點「收藏」；群組是它的子節點。
             let root = self.t("fav.title", "收藏");
-            let resp = group_row(ui, root, 0, root_open, false, 0.0, &RowIcon::Folder);
+            let resp = group_row(ui, root, 0, root_open, false, 0.0, &RowIcon::Folder, None);
             if resp.clicked() {
                 *action = Some(FavAction::ToggleRoot);
             }
@@ -164,7 +164,7 @@ impl App {
                         let group = &self.settings.favorites[gi];
                         (group.name.clone(), group.expanded, group.items.len())
                     };
-                    let resp = group_row(ui, &name, count, expanded, selected == Some(gi), GROUP_INDENT, &RowIcon::Folder);
+                    let resp = group_row(ui, &name, count, expanded, selected == Some(gi), GROUP_INDENT, &RowIcon::Folder, None);
                     if resp.double_clicked() {
                         *action = Some(FavAction::OpenGroup(gi));
                     } else if resp.clicked() {
@@ -198,7 +198,7 @@ impl App {
                                 let item = &self.settings.favorites[gi].items[ii];
                                 (item.label(names_only), item.path.clone())
                             };
-                            let (resp, _) = item_row(ui, &label, ITEM_INDENT, false, false, "", &RowIcon::File);
+                            let (resp, _) = item_row(ui, &label, ITEM_INDENT, false, false, "", &RowIcon::File, None);
                             let resp = resp.on_hover_text(path.display().to_string());
                             if resp.clicked() {
                                 *action = Some(FavAction::OpenFavorite(gi, ii));
@@ -227,7 +227,7 @@ impl App {
             // 最近開啟的檔案是與「收藏」並列的另一個一級節點。
             ui.add_space(10.0);
             let recent_len = self.settings.recent_files.len();
-            let resp = group_row(ui, self.t("fav.recent", "最近開啟的檔案"), recent_len, recent_open, false, 0.0, &RowIcon::Folder);
+            let resp = group_row(ui, self.t("fav.recent", "最近開啟的檔案"), recent_len, recent_open, false, 0.0, &RowIcon::Folder, None);
             if resp.clicked() {
                 *action = Some(FavAction::ToggleRecent);
             }
@@ -245,7 +245,7 @@ impl App {
                     } else {
                         path.display().to_string()
                     };
-                    let (resp, _) = item_row(ui, &label, RECENT_ITEM_INDENT, false, false, "", &RowIcon::File);
+                    let (resp, _) = item_row(ui, &label, RECENT_ITEM_INDENT, false, false, "", &RowIcon::File, None);
                     let resp = resp.on_hover_text(path.display().to_string());
                     if resp.clicked() {
                         *action = Some(FavAction::OpenRecent(path.clone()));
@@ -288,7 +288,7 @@ impl App {
                 }
                 let tooltip = tab.doc.path.as_ref().map(|p| crate::core::display_path(p)).unwrap_or_else(|| unsaved.clone());
                 let selected = i == active && preview == preview_active;
-                let (resp, close) = item_row(ui, &label, 6.0, selected, true, &close_label, &RowIcon::None);
+                let (resp, close) = item_row(ui, &label, 6.0, selected, true, &close_label, &RowIcon::None, None);
                 let resp = resp.on_hover_text(tooltip);
                 if resp.clicked() {
                     *action = Some(FavAction::ActivateView(i, preview));
@@ -653,8 +653,11 @@ pub(crate) fn paint_row_icon(ui: &mut egui::Ui, center: egui::Pos2, kind: &RowIc
 
 /// A tree heading: fold arrow, name, and the number of children dimmed at the right.
 /// Reused by the Explorer tab for its directory rows.
-pub(crate) fn group_row(ui: &mut egui::Ui, name: &str, count: usize, expanded: bool, selected: bool, indent: f32, icon: &RowIcon<'_>) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), egui::Sense::click());
+/// `width`: 列的最小內容寬度（None = 填滿可用寬度）。橫向捲動的樹／列表傳入自然寬度，
+/// 讓長路徑撐開內容並出現橫向捲軸。
+pub(crate) fn group_row(ui: &mut egui::Ui, name: &str, count: usize, expanded: bool, selected: bool, indent: f32, icon: &RowIcon<'_>, width: Option<f32>) -> egui::Response {
+    let row_w = width.unwrap_or(ui.available_width()).max(ui.available_width());
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(row_w, ROW_HEIGHT), egui::Sense::click());
     // 無障礙資訊在裁剪與否都註冊（樹很長時列會被 ScrollArea 裁剪，但節點仍須可查詢）。
     response.widget_info(|| egui::WidgetInfo::selected(egui::accesskit::Role::Button, ui.is_enabled(), selected, name));
     if ui.is_rect_visible(rect) {
@@ -697,9 +700,10 @@ pub(crate) fn group_row(ui: &mut egui::Ui, name: &str, count: usize, expanded: b
 /// When `closable`, a "×" close button appears at the right end on hover or selection;
 /// it owns its own rectangle (never overlapping the row hit rect) with a derived Id
 /// so the row click and the close click never fight over the same widget state.
-pub(crate) fn item_row(ui: &mut egui::Ui, label: &str, indent: f32, selected: bool, closable: bool, close_label: &str, icon: &RowIcon<'_>) -> (egui::Response, Option<egui::Response>) {
+pub(crate) fn item_row(ui: &mut egui::Ui, label: &str, indent: f32, selected: bool, closable: bool, close_label: &str, icon: &RowIcon<'_>, width: Option<f32>) -> (egui::Response, Option<egui::Response>) {
     const CLOSE_WIDTH: f32 = 20.0;
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), egui::Sense::click());
+    let row_w = width.unwrap_or(ui.available_width()).max(ui.available_width());
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(row_w, ROW_HEIGHT), egui::Sense::click());
     response.widget_info(|| egui::WidgetInfo::selected(egui::accesskit::Role::Button, ui.is_enabled(), selected, label));
     let mut close = None;
     // Pointer-in-rect instead of response.hovered(): the close button's interact rect sits

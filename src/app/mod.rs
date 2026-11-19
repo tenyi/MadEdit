@@ -20,6 +20,7 @@ mod mdpreview;
 mod preview;
 mod print;
 mod svgpreview;
+mod imgpreview;
 mod runner;
 #[cfg(windows)]
 mod titlebar;
@@ -70,11 +71,13 @@ pub struct Tab {
     pub md_preview: Option<mdpreview::MarkdownPreview>,
     /// 此分頁的 SVG 圖形預覽（檢視 > 預覽為 > 圖形）
     pub svg_preview: Option<svgpreview::SvgPreview>,
+    /// 此分頁的點陣圖片預覽（檢視 > 預覽為 > 圖形（圖片））
+    pub img_preview: Option<imgpreview::ImagePreview>,
 }
 
 impl Tab {
     fn new(doc: Document) -> Self {
-        Self { doc, view: ViewState::default(), hex: HexViewState::default(), disk_changed: false, md_preview: None, svg_preview: None }
+        Self { doc, view: ViewState::default(), hex: HexViewState::default(), disk_changed: false, md_preview: None, svg_preview: None, img_preview: None }
     }
 }
 
@@ -85,6 +88,14 @@ fn same_target(a: &Path, b: &Path) -> bool {
         (Ok(x), Ok(y)) => x == y,
         _ => a == b,
     }
+}
+
+/// 路徑是否為點陣圖片（可自動以圖形預覽）：bmp／jpg／jpeg／png／gif／webp。
+pub(crate) fn is_raster_image_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| matches!(e.to_ascii_lowercase().as_str(), "bmp" | "jpg" | "jpeg" | "png" | "gif" | "webp"))
+        .unwrap_or(false)
 }
 
 /// 需要使用者確認的動作
@@ -121,6 +132,8 @@ pub struct App {
     preview_tab_active: bool,
     /// 目前選取的是 SVG 圖形預覽分頁（與 Markdown 預覽分頁互斥）
     svg_preview_tab_active: bool,
+    /// 目前選取的是點陣圖片預覽分頁
+    img_preview_tab_active: bool,
     prev_active: usize,
     prev_preview_tab: bool,
     fonts: FontManager,
@@ -226,6 +239,7 @@ impl App {
             empty_tab: std::sync::OnceLock::new(),
             preview_tab_active: false,
             svg_preview_tab_active: false,
+            img_preview_tab_active: false,
             prev_active: 0,
             prev_preview_tab: false,
             fonts: FontManager::new(),
@@ -444,13 +458,20 @@ impl App {
         self.svg_preview_tab_active && self.tabs.get(self.active).is_some_and(|tab| tab.svg_preview.is_some())
     }
 
+    /// 目前是否顯示點陣圖片預覽分頁
+    pub(crate) fn is_img_preview_tab(&self) -> bool {
+        self.img_preview_tab_active && self.tabs.get(self.active).is_some_and(|tab| tab.img_preview.is_some())
+    }
+
     fn tab_pages(&self) -> Vec<(usize, bool)> {
         self.tabs.iter().enumerate().flat_map(|(i, tab)| {
             let preview = tab.md_preview.as_ref().is_some_and(|pv| pv.placement == mdpreview::Placement::Tab);
             let svg = tab.svg_preview.is_some();
+            let img = tab.img_preview.is_some();
             std::iter::once((i, false))
                 .chain(preview.then_some((i, true)))
                 .chain(svg.then_some((i, false)))
+                .chain(img.then_some((i, false)))
         }).collect()
     }
 
@@ -528,6 +549,14 @@ impl App {
                 self.settings.add_recent_file(canon);
                 let shown = crate::core::display_path(&path);
                 self.set_status(if notes.is_empty() { self.tf("msg.opened", "已開啟 {q}", None, Some(&shown)) } else { notes.join("；") });
+                // 設定勾選「以圖形預覽（SVG）」時，打開 .svg 直接以圖形顯示
+                if self.settings.svg_auto_preview && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")) {
+                    self.preview_svg();
+                }
+                // 設定勾選「以圖形預覽（圖片）」時，打開 bmp/jpg/jpeg 等直接以圖形顯示
+                if self.settings.img_auto_preview && is_raster_image_path(&path) {
+                    self.preview_image();
+                }
                 true
             }
             Err(e) => {
@@ -1120,15 +1149,23 @@ impl App {
                             ui.ctx().copy_text(crate::core::display_path(p));
                             ui.close();
                         }
-                        // 預覽為：Markdown／HTML／圖形（僅對應類型的檔案可用）
+                        // 預覽為：Markdown／HTML／圖形（僅對應類型的檔案可用）；
+                        // 「圖形（SVG）」「圖形（圖片）」是勾選式設定，勾選狀態要同步顯示。
                         let is_md = t.doc.is_markdown();
                         let is_svg = t.doc.path.as_ref().is_some_and(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")));
+                        let is_img = t.doc.path.as_ref().is_some_and(|p| is_raster_image_path(p));
                         if is_md || is_svg || t.doc.path.is_some() {
                             ui.separator();
                             ui.label(egui::RichText::new(self.t("menu.preview_as", "預覽為")).weak());
-                            for (c, enabled) in [(C::PreviewMarkdown, is_md), (C::PreviewHtml, true), (C::PreviewSvg, is_svg)] {
+                            let entries = [
+                                (C::PreviewMarkdown, is_md, false),
+                                (C::PreviewHtml, true, false),
+                                (C::PreviewSvg, is_svg, self.settings.svg_auto_preview),
+                                (C::PreviewImage, is_img, self.settings.img_auto_preview),
+                            ];
+                            for (c, enabled, checked) in entries {
                                 if ui
-                                    .add_enabled(enabled, egui::Button::new(menus::check_label(false, &self.cmd_text(c))))
+                                    .add_enabled(enabled, egui::Button::new(menus::check_label(checked, &self.cmd_text(c))))
                                     .clicked()
                                 {
                                     menu_cmd = Some((i, c));
@@ -1590,14 +1627,15 @@ impl eframe::App for App {
         }
         self.update_banner(ui);
         if show_bars && self.settings.show_file_view {
-            // 寬度依視窗大小收斂，避免擠掉編輯區。
-            let want = self.settings.file_view_width.clamp(160.0, 420.0).min((ui.available_width() - 180.0).max(160.0));
+            // 寬度依視窗大小收斂，避免擠掉編輯區；上限放寬到 800（深目錄可見更多層級）。
+            let max_w = (ui.available_width() - 180.0).max(160.0);
+            let want = self.settings.file_view_width.clamp(160.0, 800.0).min(max_w);
             let shown = egui::Panel::left("file-view")
                 .frame(egui::Frame::new())
                 .resizable(true)
                 .default_size(want)
                 .min_size(160.0)
-                .max_size(420.0)
+                .max_size(max_w.min(800.0))
                 .show(ui, |ui| self.file_view_panel(ui));
             let width = shown.response.rect.width();
             if (width - self.settings.file_view_width).abs() > 1.0 {
@@ -1626,6 +1664,9 @@ impl eframe::App for App {
         if self.tabs.get(self.active).and_then(|tab| tab.svg_preview.as_ref()).is_some_and(|pv| pv.docked()) {
             self.show_svg_preview(ui);
         }
+        if self.tabs.get(self.active).and_then(|tab| tab.img_preview.as_ref()).is_some_and(|pv| pv.docked()) {
+            self.show_img_preview(ui);
+        }
         // 分隔線的拖曳範圍會跨入編輯區；留出抓取空間，避免稍後建立的捲軸搶走事件。
         let mut editor_margin = egui::Margin::ZERO;
         if let Some(pv) = self.tabs.get(self.active).and_then(|tab| tab.md_preview.as_ref()) {
@@ -1644,6 +1685,14 @@ impl eframe::App for App {
                 mdpreview::Placement::Tab => {}
             }
         }
+        if let Some(pv) = self.tabs.get(self.active).and_then(|tab| tab.img_preview.as_ref()) {
+            let gap = ui.style().interaction.resize_grab_radius_side.ceil() as i8 + 1;
+            match pv.placement {
+                mdpreview::Placement::Right => editor_margin.right = gap,
+                mdpreview::Placement::Bottom => editor_margin.bottom = gap,
+                mdpreview::Placement::Tab => {}
+            }
+        }
         // Opaque panel color: the find / go-to bars and the gaps around them must not show the
         // window's clear color, which is dark even in light mode.
         let editor_frame = egui::Frame::new().inner_margin(editor_margin).fill(ui.visuals().panel_fill);
@@ -1654,6 +1703,8 @@ impl eframe::App for App {
                 self.show_markdown_preview(ui);
             } else if self.is_svg_preview_tab() {
                 self.show_svg_preview(ui);
+            } else if self.is_img_preview_tab() {
+                self.show_img_preview(ui);
             } else {
                 self.disk_banner(ui);
                 self.find_bar(ui);
