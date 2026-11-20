@@ -754,29 +754,97 @@ pub(super) fn text(
     max_w
 }
 
+/// 滾動條繪製：完全比照【資源管理器】的 egui floating 滾動條規格——
+/// 平時隱藏；指針進入編輯區顯示細滑塊（2px，半透明）；移到滾動條上變粗（10px）、
+/// 滑塊全亮（前景色，暗色主題下即白色）並顯示淡淡的軌道。粗細與透明度都帶漸變動畫。
 pub(super) fn scrollbars(
     ui: &egui::Ui,
     frame: &Frame,
     v_thumb: Rect,
     horizontal: Option<&HorizontalBar>,
 ) {
-    let painter = ui.painter_at(frame.full);
+    let style = &ui.style().spacing.scroll;
     let visuals = ui.visuals();
-    let track_color = visuals.extreme_bg_color;
-    let thumb_color = visuals.widgets.inactive.bg_fill;
-    painter.rect_filled(frame.vbar, CornerRadius::ZERO, track_color);
-    painter.rect_filled(
-        v_thumb,
-        CornerRadius::same(3),
-        if frame.vbar_resp.dragged() {
-            visuals.widgets.active.bg_fill
+    // 分層判定：outer = 指針在編輯區內；bar = 指針売在「該方向」的滾動條上（或正在拖動）。
+    // 橫豎各自的粗細、透明度獨立動畫——hover 豎條只有豎條變粗，與 egui floating 一致。
+    let outer_hover = ui
+        .input(|i| i.pointer.latest_pos())
+        .is_some_and(|p| frame.full.contains(p));
+    let v_bar = frame.vbar_resp.hovered() || frame.vbar_resp.dragged();
+    let h_bar = frame.hbar_resp.hovered() || frame.hbar_resp.dragged();
+    let v_t = ui.ctx().animate_bool_responsive(frame.id.with("vbar_hover"), v_bar);
+    let h_t = ui.ctx().animate_bool_responsive(frame.id.with("hbar_hover"), h_bar);
+    let outer_t = ui.ctx().animate_bool_responsive(frame.id.with("outer_hover"), outer_hover);
+    if (v_t <= 0.0 && h_t <= 0.0) && outer_t <= 0.0 {
+        return;
+    }
+    let lerp = egui::emath::lerp;
+    // 滑塊用強調前景色（暗色主題下近白、淺色主題下近黑），與資源管理器觀感一致
+    let handle_color = visuals.strong_text_color();
+    let radius = CornerRadius::same(4);
+    let painter = ui.painter_at(frame.full);
+    let margin = style.bar_inner_margin;
+    // 內容沒有溢出（滑塊佔滿全條）時不顯示該方向的滾動條
+    let v_overflow = v_thumb.height() < frame.vbar.height() - 2.0;
+    // 豎向：寬度上限與 egui 相同（bar_width 10px），只扣靠邊一側的 bar_inner_margin（4px）
+    let v_width = lerp(style.floating_width..=style.bar_width, v_t).min((frame.vbar.width() - margin).max(1.0));
+    let v_handle_opacity = if v_bar {
+        style.interact_handle_opacity
+    } else {
+        lerp(style.dormant_handle_opacity..=style.active_handle_opacity, outer_t)
+    };
+    let v_bg_opacity = if v_bar {
+        style.interact_background_opacity
+    } else if outer_hover {
+        style.active_background_opacity
+    } else {
+        0.0
+    };
+    let v_x = (frame.vbar.right() - margin - v_width)..=(frame.vbar.right() - margin);
+    if v_bg_opacity > 0.0 && v_overflow {
+        painter.rect_filled(
+            Rect::from_x_y_ranges(v_x.clone(), frame.vbar.y_range()),
+            radius,
+            visuals.extreme_bg_color.gamma_multiply(v_bg_opacity),
+        );
+    }
+    if v_overflow {
+        painter.rect_filled(
+            Rect::from_x_y_ranges(v_x, v_thumb.y_range()),
+            radius,
+            handle_color.gamma_multiply(v_handle_opacity),
+        );
+    }
+    // 橫向：獨立動畫（無橫向溢出就不顯示）
+    if let Some(bar) = horizontal
+        && bar.max_scroll > 0.5
+    {
+        let h_width = lerp(style.floating_width..=style.bar_width, h_t).min(bar.track.height().max(1.0));
+        let h_handle_opacity = if h_bar {
+            style.interact_handle_opacity
         } else {
-            thumb_color
-        },
-    );
-    painter.rect_filled(frame.hbar, CornerRadius::ZERO, track_color);
-    if let Some(bar) = horizontal {
-        painter.rect_filled(bar.thumb, CornerRadius::same(3), thumb_color);
+            lerp(style.dormant_handle_opacity..=style.active_handle_opacity, outer_t)
+        };
+        let h_bg_opacity = if h_bar {
+            style.interact_background_opacity
+        } else if outer_hover {
+            style.active_background_opacity
+        } else {
+            0.0
+        };
+        let h_y = (bar.track.bottom() - margin - h_width)..=(bar.track.bottom() - margin);
+        if h_bg_opacity > 0.0 {
+            painter.rect_filled(
+                Rect::from_x_y_ranges(bar.track.x_range(), h_y.clone()),
+                radius,
+                visuals.extreme_bg_color.gamma_multiply(h_bg_opacity),
+            );
+        }
+        painter.rect_filled(
+            Rect::from_x_y_ranges(bar.thumb.x_range(), h_y),
+            radius,
+            handle_color.gamma_multiply(h_handle_opacity),
+        );
     }
 }
 
