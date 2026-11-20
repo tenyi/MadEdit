@@ -1,0 +1,28 @@
+%YAML 1.2
+---
+# MadEdit-authored syntax for .gitignore / .ignore / .dockerignore files
+# (no upstream source; modeled on gitignore-pattern semantics).
+# Line comments start with '#', '!' negates a pattern, the rest is
+# highlighted with glob operators, character classes and path separators.
+name: Git Ignore
+file_extensions:
+  - .gitignore
+  - gitignore
+  - .ignore
+  - ignore
+  - .dockerignore
+scope: source.gitignore
+contexts:
+  main:
+    - match: '#.*$'
+      scope: comment.line.number-sign.gitignore
+    - match: '!(?=\S)'
+      scope: keyword.operator.negation.gitignore
+    - match: '\\.'
+      scope: constant.character.escape.gitignore
+    - match: '\[\^?\]?[^\]]*\]?'
+      scope: constant.other.character-class.set.gitignore
+    - match: '\*\*/|\*\*|[*)?]'
+      scope: keyword.operator.glob.gitignore
+    - match: '/'
+      scope: punctuation.separator.path.gitignore

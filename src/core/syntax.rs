@@ -126,6 +126,11 @@ const SQUIRREL_SYNTAX: &str = include_str!("../../assets/syntaxes/Squirrel.subli
 /// 內建的 INI 語法（Apache-2.0，jwortmann/ini-syntax）；授權全文見 `assets/syntaxes/INI.LICENSE.txt`。
 const INI_SYNTAX: &str = include_str!("../../assets/syntaxes/INI.sublime-syntax");
 
+/// 內建的 Git Ignore（`.gitignore`／`.ignore`／`.dockerignore`）語法。syntect 預設集沒有；
+/// MadEdit 隨附的是自行撰寫的等效 YAML 定義，內容對應 gitignore 模式語意，見
+/// `assets/syntaxes/GitIgnore.sublime-syntax` 檔頭說明。
+const GITIGNORE_SYNTAX: &str = include_str!("../../assets/syntaxes/GitIgnore.sublime-syntax");
+
 fn load_syntaxes(config_dir: Option<&Path>) -> SyntaxSet {
     let defaults = SyntaxSet::load_defaults_newlines();
     let mut builder = defaults.into_builder();
@@ -133,6 +138,7 @@ fn load_syntaxes(config_dir: Option<&Path>) -> SyntaxSet {
         ("PowerShell", POWERSHELL_SYNTAX),
         ("Squirrel", SQUIRREL_SYNTAX),
         ("INI", INI_SYNTAX),
+        ("Git Ignore", GITIGNORE_SYNTAX),
     ] {
         match SyntaxDefinition::load_from_str(text, true, Some(name)) {
             Ok(definition) => builder.add(definition),
@@ -1043,6 +1049,28 @@ contexts:
     }
 
     #[test]
+    fn test_bundled_gitignore_syntax_loads_and_highlights() {
+        let ps = load_syntaxes(None);
+        for file in [".gitignore", "gitignore", ".ignore", "ignore", ".dockerignore"] {
+            assert_eq!(detect_syntax_in(&ps, Path::new(file), ""), "Git Ignore", "{file}");
+        }
+        assert!(syntax_names().iter().any(|name| name == "Git Ignore"), "the syntax menu must list Git Ignore");
+        let syntax = ps.find_syntax_by_name("Git Ignore").expect("bundled Git Ignore syntax");
+        let pushes = |line: &str, needle: &str| {
+            let mut state = ParseState::new(syntax);
+            let ops = state.parse_line(line, &ps).unwrap();
+            ops.iter().any(|(_, op)| matches!(op, ScopeStackOp::Push(scope) if scope.to_string().contains(needle)))
+        };
+        assert!(pushes("# build output\n", "comment.line"), "number-sign comments must be recognized");
+        assert!(pushes("!keep.log\n", "operator.negation"), "negation must be recognized");
+        assert!(pushes("build/**/*.tmp\n", "operator.glob"), "glob operators must be recognized");
+        assert!(pushes("data/[0-9].bin\n", "character-class"), "character classes must be recognized");
+        assert!(pushes(r"logs/\*.log", "character.escape"), "escaped stars must be recognized");
+        assert!(pushes("target/debug/\n", "separator.path"), "path separators must be recognized");
+        assert_eq!(comment_tokens("Git Ignore"), (Some("#"), None));
+    }
+
+    #[test]
     fn test_ini_theme_colors_distinguish_key_value_and_section() {
         use std::str::FromStr;
         for name in [default_theme_name(false), default_theme_name(true)] {
@@ -1373,3 +1401,4 @@ contexts:
         }
     }
 }
+
