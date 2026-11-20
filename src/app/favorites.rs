@@ -62,6 +62,8 @@ enum FavAction {
     OpenGroup(usize),
     OpenFavorite(usize, usize),
     OpenRecent(PathBuf),
+    /// Remove a file from the recent list (the file itself is untouched).
+    RemoveRecent(PathBuf),
     /// Close an editor tab (or its Markdown preview page) listed in the 「開啟」 view.
     CloseView(usize, bool),
     ActivateView(usize, bool),
@@ -198,10 +200,15 @@ impl App {
                                 let item = &self.settings.favorites[gi].items[ii];
                                 (item.label(names_only), item.path.clone())
                             };
-                            let (resp, _) = item_row(ui, &label, ITEM_INDENT, false, false, "", &RowIcon::File, None);
+                            let remove_label = self.t("fav.remove_favorite", "移除此收藏");
+                            let (resp, remove) = item_row(ui, &label, ITEM_INDENT, false, true, &remove_label, &RowIcon::File, None);
                             let resp = resp.on_hover_text(path.display().to_string());
                             if resp.clicked() {
                                 *action = Some(FavAction::OpenFavorite(gi, ii));
+                            }
+                            // 懸停在列尾的紅色「×」：只把這一項從收藏移除，不刪除檔案。
+                            if remove.is_some_and(|c| c.clicked()) {
+                                *action = Some(FavAction::DeleteItem(gi, ii));
                             }
                             resp.context_menu(|ui| {
                                 ui.set_min_width(menus::SUBMENU_MIN_WIDTH);
@@ -245,10 +252,15 @@ impl App {
                     } else {
                         path.display().to_string()
                     };
-                    let (resp, _) = item_row(ui, &label, RECENT_ITEM_INDENT, false, false, "", &RowIcon::File, None);
+                    let remove_label = self.t("fav.remove_recent", "從最近清單移除");
+                    let (resp, remove) = item_row(ui, &label, RECENT_ITEM_INDENT, false, true, &remove_label, &RowIcon::File, None);
                     let resp = resp.on_hover_text(path.display().to_string());
                     if resp.clicked() {
                         *action = Some(FavAction::OpenRecent(path.clone()));
+                    }
+                    // 懸停在列尾的紅色「×」：只從最近清單移除這一項，不刪除檔案。
+                    if remove.is_some_and(|c| c.clicked()) {
+                        *action = Some(FavAction::RemoveRecent(path.clone()));
                     }
                 }
             }
@@ -324,6 +336,10 @@ impl App {
             }
             FavAction::OpenRecent(path) => {
                 self.open_path(&path);
+            }
+            FavAction::RemoveRecent(path) => {
+                self.settings.recent_files.retain(|p| p != &path);
+                self.save_settings();
             }
             FavAction::CloseView(i, preview) => {
                 if i < self.tabs.len() {

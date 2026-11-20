@@ -2395,6 +2395,35 @@ fn test_file_view_lists_groups_and_adds_the_active_file() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 「列表」頁：收藏列與最近清單列尾的 ×（懸停顯示）只移除該條目，不刪除檔案本身。
+#[test]
+fn test_file_view_list_remove_buttons_clear_favorites_and_recent() {
+    let mut h = harness();
+    {
+        let s = &mut h.state_mut().settings;
+        s.show_file_view = true;
+        s.favorites_recent_expanded = true;
+        let mut group = FavoriteGroup::new("常用");
+        group.add(std::path::PathBuf::from("G:\\tmp\\fav-a.txt"));
+        s.favorites.push(group);
+        s.favorites[0].expanded = true;
+        s.recent_files.push(std::path::PathBuf::from("G:\\tmp\\recent-a.txt"));
+    }
+    h.run_steps(3);
+    // 收藏列懸停 → 列尾 × 出現 → 點擊只移除收藏條目
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("fav-a.txt")).hover();
+    h.run_steps(3);
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("移除此收藏")).click();
+    h.run_steps(3);
+    assert!(h.state().settings.favorites[0].items.is_empty(), "點擊列尾 × 後收藏條目應被移除");
+    // 最近清單同樣處理
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("recent-a.txt")).hover();
+    h.run_steps(3);
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("從最近清單移除")).click();
+    h.run_steps(3);
+    assert!(h.state().settings.recent_files.is_empty(), "點擊列尾 × 後最近條目應被移除");
+}
+
 /// 開啟整組收藏時，已不存在的檔案直接略過，不會逐一詢問是否建立新檔。
 #[test]
 fn test_opening_a_favorite_group_skips_missing_files_without_a_create_prompt() {

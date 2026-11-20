@@ -603,6 +603,8 @@ fav.rename_group	Rename Group…	重命名分组…	グループ名を変更…	
 fav.delete_group	Delete Group	删除分组	グループを削除	그룹 삭제	Gruppe löschen	Eliminar grupo	Supprimer le groupe	Elimina gruppo	Excluir grupo
 fav.rename_item	Rename File…	重命名文件…	ファイル名を変更…	파일 이름 바꾸기…	Datei umbenennen…	Renombrar archivo…	Renommer le fichier…	Rinomina file…	Renomear arquivo…
 fav.delete_item	Delete Selected Item	删除选定项目	選択項目を削除	선택 항목 삭제	Ausgewähltes Element löschen	Eliminar elemento seleccionado	Supprimer l’élément sélectionné	Elimina elemento selezionato	Excluir item selecionado
+fav.remove_favorite	Remove from favorites	移除此收藏	お気に入りから削除	즐겨찾기에서 제거	Aus Favoriten entfernen	Quitar de favoritos	Retirer des favorits	Rimuovi dai preferiti	Remover dos favoritos
+fav.remove_recent	Remove from recent list	从最近列表移除	最近のリストから削除	최근 목록에서 제거	Aus der Liste der letzten Dateien entfernen	Quitar de la lista de recientes	Retirer de la liste des récents	Rimuovi dall’elenco dei recenti	Remover da lista de recentes
 fav.open_group	Open all files in the group (replaces the open tabs)	打开分组中的所有文件（替换当前所有打开）	グループ内の全ファイルを開く（現在のタブを置き換え）	그룹의 모든 파일 열기(현재 탭 대체)	Alle Dateien der Gruppe öffnen (ersetzt offene Tabs)	Abrir todos los archivos del grupo (reemplaza las pestañas abiertas)	Ouvrir tous les fichiers du groupe (remplace les onglets ouverts)	Apri tutti i file del gruppo (sostituisce le schede aperte)	Abrir todos os arquivos do grupo (substitui as abas abertas)
 fav.open	Open	打开	開く	열기	Öffnen	Abrir	Ouvrir	Apri	Abrir
 fav.recent	Recent Files	最近打开的文件	最近開いたファイル	최근 연 파일	Zuletzt geöffnet	Archivos recientes	Fichiers récents	File recenti	Arquivos recentes

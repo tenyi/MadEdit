@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Code folding (View > Code Folding): click the gutter triangles to collapse `{ }` blocks or multi-line comments (consecutive `//` lines, `/* … */`) in C-like files, indentation blocks in Python (plus `#` runs), and braces/comments in PowerShell (`#`, `<# … #>`, here-strings skipped), with `⋯ N lines` on the header, Fold / Unfold (Ctrl+Shift+`[`), Fold All / Unfold All, and automatic unfolding around the caret. Enabled by default.
 - Multi-line `[ … ]` arrays fold like braces: in C/C++/JSON/Java/JavaScript and the other brace-based languages a line that leaves a `[` open folds until the line that closes it (brackets inside strings and comments are ignored), and Python folds multi-line array literals the same way.
 - INI files (`.ini`, `.cfg`, `.conf`) open with bundled highlighting for sections, keys, values and `;` comments.
+- `.gitignore` (plus `.ignore` and `.dockerignore`) files open with bundled highlighting: `#` comments, `!` negation, glob operators (`*`, `?`, `**`), `[a-z]` character classes, `\` escapes and path separators are colored; `#` works as the line-comment command.
 - Tools > Run Script (F5) runs the current file, or only the selection, and streams stdout/stderr into a resizable "Script Output" panel with exit code, elapsed time and a Stop button. `.nut` uses `ZSSQConsole.exe`, `.py` uses `python -u`, `.lua` uses `lua`; output is decoded as UTF-8 or GBK. F5 previously opened the previous window, which moved to F10.
 - A selection run writes the temporary file in the document's own encoding (a GBK script stays GBK), and the elapsed time stops counting after the run finishes.
 - Options > General has "Automatically reload files changed by other programs". When enabled, a file that was changed on disk and has no unsaved edits is reloaded without the banner; files with unsaved edits still show the usual prompt.
@@ -32,6 +33,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - The File View panel gains an "Explorer" tab: a lazily loaded drive/folder tree (a folder is read only when first expanded) with a filter box that applies only after clicking ">" (or pressing Enter). The filter matches the selected folder's file names only (`*` / `?` wildcards, `;`-separated): matching files appear as leaf rows under the selected folder, unselected folders stay a pure folder tree, and single-clicking a file opens it. A split-view toggle shows the selected folder's contents below the tree — a Name / Modified / Type / Size list (columns adapt to the panel width) with a draggable splitter; double-clicking a folder in the list enters it. Rows show the real Windows shell icons (folders, files by type, drives), a ".." row at the top returns to the parent folder, and clicking a column header sorts by that column (four-way choice, second click reverses, ▲/▼ marks the active column). The list header stays fixed while the list scrolls.
 
 ### Changed
+- In the File View panel's List tab, hovering a favorites entry or a recent-file entry shows a red "×" at the end of the row: clicking it removes only that entry from the favorites/recent list (the file on disk is untouched).
+- Duplicate Line (Edit menu) also accepts `Ctrl+D` (it keeps `Ctrl+Shift+D`), and Cut (`Ctrl+X`) behaves like Visual Studio in text mode: with no selection it cuts the whole current line; with a selection it cuts as before. Hex mode and read-only documents are unaffected.
 - Windows: the menu bar now lives in a custom-drawn title bar together with the app icon and the window buttons (minimize / maximize / close), like VS Code. The bar is 1.5× the menu height, is draggable, and double-clicking toggles maximize; edge resizing and Aero Snap still work. The zoom controls, theme toggle and quick search stay on the bar's right side. Other platforms keep the native title bar and menu bar. Because the window buttons are ordinary EGUI widgets, Windows 11 does not show the Snap Layouts flyout when hovering the maximize button.
 - Editor tabs and the File View panel's tab now use a flat, content-connected style with rounded top corners only (like Windows 11 Explorer), instead of detached rounded buttons, so the selected tab merges with the pane below it.
 - Closing the last tab leaves an empty workspace: MadEdit neither creates an untitled document nor exits, and the editor area offers New and Open.
@@ -57,6 +60,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - 代碼折疊（檢視 > 代碼折疊）：點行號右側小三角可折疊 C 系檔案的 `{ }` 區塊或多行註解（連續 `//` 行、`/* … */`）、Python 的縮排區塊（含 `#` 註解群組），以及 PowerShell 的 `{ }` 與 `#`、`<# … #>` 註解（here-string 會跳過），折疊行顯示「⋯ N 行」；另有折疊/展開（Ctrl+Shift+`[`）、全部折疊、全部展開，游標所在區塊會自動展開。預設開啟。
 - 多行 `[ … ]` 陣列比照大括號折疊：C/C++/JSON/Java/JavaScript 等大括號語系中，一行結束時仍有未閉合的 `[`，折到閉合它的那一行（字串與註解裡的括號會忽略）；Python 的多行陣列字面值同樣可折疊。
 - INI 檔案（`.ini`、`.cfg`、`.conf`）內建高亮：節區、鍵、值與 `;` 註解都會著色。
+- `.gitignore`（含 `.ignore`、`.dockerignore`）內建高亮：`#` 註解、`!` 否定、萬用字元（`*`、`?`、`**`）、`[a-z]` 字元組、`\` 轉義與路徑分隔都會著色，`#` 同時是行註解命令。
 - 「工具 > 執行腳本」（F5）可執行目前檔案或僅執行選取片段，並把 stdout/stderr 串流到可調整大小的「執行輸出」面板，顯示退出碼、耗時與「停止」按鈕。`.nut` 使用 `ZSSQConsole.exe`、`.py` 使用 `python -u`、`.lua` 使用 `lua`；輸出以 UTF-8 或 GBK 解碼。F5 原本是「上一個視窗」，該功能改到 F10。
 - 執行選取片段時，暫存檔沿用文件本身編碼（GBK 腳本仍是 GBK）；執行結束後耗時不再繼續增加。
 - 「工具 > 選項 > 一般」新增「其他程式修改時自動重新載入」：開啟後，磁碟上被修改且沒有未儲存編輯的檔案會直接重新載入，不再顯示提示；有未儲存編輯的檔案仍保留原本的提示流程。
@@ -73,6 +77,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - 檔案檢視面板新增「資源管理器」頁籤：懶載入的磁碟／資料夾樹（資料夾首次展開時才讀取），附篩選框——按「>」或 Enter 後才生效，只匹配**選中資料夾**的檔名（`*`／`?` 萬用字元，可用 `;` 分隔多個）：匹配的檔案以葉節點顯示在選中資料夾下，未選中的節點維持純資料夾樹；單擊檔案葉節點即開啟該檔案。勾選分欄開關後，樹下方以「名稱／修改日期／類型／大小」列表顯示所選資料夾內容（欄位隨面板寬度自適應），並可用拖拽分隔條調整上下高度；雙擊列表中的資料夾即進入。列前置**真實 Windows 系統圖示**（資料夾、依副檔名的檔案、磁碟機）；列表首項「..」單擊回上層；點擊列頭依該欄排序（四選一，再點切換升降冪，作用中的欄位以 ▲/▼ 標示）；列表標題行固定，不隨列表捲動。
 
 #### 變更
+- 「文件視圖」面板的「列表」頁中，滑鼠懸停在收藏條目或最近開啟條目上時，列尾會出現紅色「×」：點擊只把該條目從收藏／最近清單移除（不會刪除磁碟上的檔案）。
+- 「複製整行」（編輯選單）新增 `Ctrl+D` 快捷鍵（原有 `Ctrl+Shift+D` 保留）；文字模式下「剪下」（`Ctrl+X`）比照 Visual Studio：沒有選取時剪下目前整行，有選取時行為不變。十六進位模式與唯讀文件不受影響。
 - Windows：選單列移進自繪標題欄，與應用程式圖示、視窗按鈕（最小化／最大化／關閉）同一列（類似 VS Code）。標題欄高度為選單高度的 1.5 倍，可拖動、雙擊可最大化／還原，邊緣縮放與 Aero Snap 貼邊正常。字型縮放、主題切換與快速搜尋保留在同一列右側。其他平台維持原生標題列與選單列。視窗按鈕是一般 EGUI 控件，因此 Windows 11 懸停最大化按鈕時不會顯示 Snap Layouts 浮層。
 - 編輯器分頁與「文件視圖」面板的分頁改為上緣圓角、下緣與內容相連的扁平樣式（類似 Windows 11 檔案總管），不再是有分離感的圓角按鈕；選取的分頁會與下方內容連成一體。
 - 關閉最後一個分頁後改為空白工作區：不再自動建立未命名文件，也不會結束程式；編輯區提供「新增」與「開啟」按鈕。
