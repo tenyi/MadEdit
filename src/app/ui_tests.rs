@@ -3021,7 +3021,8 @@ fn test_squirrel_script_opens_with_the_bundled_syntax() {
     let mut h = harness();
     h.state_mut().open_path(&file);
     h.run_steps(3);
-    assert_eq!(h.state().doc().syntax, "Squirrel");
+    // .nut 在狀態欄顯示為 nut（高亮仍是內建的 Squirrel 語法）
+    assert_eq!(h.state().doc().syntax, "nut");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

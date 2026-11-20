@@ -1,4 +1,5 @@
-//! 腳本運行器：依副檔名選擇直譯器（.nut → ZSSQConsole、.py → python、.lua → lua），
+//! 腳本運行器：依副檔名選擇直譯器（.nut → nut、.py → python、.lua → lua、
+//! .ps1/.bat → PowerShell/cmd；`*.ztr.toml` → ztr --ztr.toml），
 //! 後台執行目前檔案（或選中的片段），輸出串流到底部「運行輸出」面板。
 //!
 //! Windows 主控台程式常以 GBK/ANSI 輸出，逐行解碼時先試嚴格 UTF-8，失敗則以 GBK 解碼。
@@ -466,17 +467,17 @@ pub fn write_selection_temp(name: &str, bytes: &[u8]) -> std::io::Result<PathBuf
     Ok(path)
 }
 
-/// 依副檔名選擇直譯器。`.nut` 優先使用 MadEdit.exe 同目錄的 ZSSQConsole.exe（如用戶提供的
-/// Squirrel 主控台封裝），其餘 `.py`、`.lua` 依賴系統 PATH。回傳（程式、前置參數）。
+/// 依副檔名選擇直譯器。`.nut` 優先使用 MadEdit.exe 同目錄的 nut.exe（Squirrel 主控台），
+/// 找不到才依賴 PATH；其餘 `.py`、`.lua` 依賴系統 PATH。回傳（程式、前置參數）。
 pub fn interpreter_for(ext: &str) -> Option<(String, Vec<String>)> {
     match ext {
         ".nut" => {
             let exe = std::env::current_exe()
                 .ok()
-                .and_then(|p| p.parent().map(|d| d.join("ZSSQConsole.exe")))
+                .and_then(|p| p.parent().map(|d| d.join("nut.exe")))
                 .filter(|p| p.exists())
                 .map(|p| p.display().to_string())
-                .unwrap_or_else(|| "ZSSQConsole.exe".into());
+                .unwrap_or_else(|| "nut".into());
             Some((exe, Vec::new()))
         }
         ".py" => Some(("python".into(), vec!["-u".into()])),
@@ -494,6 +495,10 @@ impl App {
     pub fn run_script(&mut self) {
         if self.runner.running {
             self.runner.stop();
+        }
+        // `*.ztr.toml`：ztr 壓縮配置檔，直接在所在目錄執行 `ztr --ztr.toml <檔名>`。
+        if self.run_ztr_config() {
+            return;
         }
         let ext = self
             .doc()
@@ -557,6 +562,49 @@ impl App {
         let file = crate::core::favorites::clean_path(file);
         args.push(file.display().to_string());
         let cwd = file.parent().map(|p| p.to_path_buf());
+        self.launch_runner(program, args, cwd.as_deref());
+    }
+
+    /// `*.ztr.toml` 的 F5：在該檔所在目錄執行 `ztr --ztr.toml <檔名>`（無子命令＝壓縮當前目錄）。
+    /// 回傳 true 表示文件是 ztr 配置檔（無論是否成功啟動）；false 交回一般腳本流程。
+    fn run_ztr_config(&mut self) -> bool {
+        let Some(path) = self.doc().path.clone() else {
+            return false;
+        };
+        let is_ztr = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(crate::core::syntax::is_ztr_config_name);
+        if !is_ztr {
+            return false;
+        }
+        if self.doc().is_modified() {
+            let i = self.active;
+            if !self.save_tab(i, false) || self.doc().is_modified() {
+                // 儲存失敗或被取消：是 ztr 配置檔這一點不變，但不再啟動
+                return true;
+            }
+        }
+        // cmd 等外部程式不認得 `\\?\` verbatim 路徑，先清掉前綴；以檔名傳參，工作目錄即其所在目錄
+        let file = crate::core::favorites::clean_path(path);
+        let Some(dir) = file.parent().map(|p| p.to_path_buf()) else {
+            return true;
+        };
+        let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        // 優先使用 MadEdit.exe 同目錄的 ztr.exe（可與 MadEdit 捆綁發佈），找不到才依賴 PATH
+        let program = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("ztr.exe")))
+            .filter(|p| p.exists())
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "ztr".into());
+        let args = vec!["--ztr.toml".to_string(), name];
+        self.launch_runner(program, args, Some(&dir));
+        true
+    }
+
+    /// 啟動子程序前清空輸出面板與記錄檔；啟動失敗立即清理臨時檔並顯示錯誤。
+    fn launch_runner(&mut self, program: String, args: Vec<String>, cwd: Option<&std::path::Path>) {
         self.runner.show = true;
         self.runner.lines.clear();
         self.runner.text.clear();
@@ -568,7 +616,7 @@ impl App {
             let hint = format!("{} {e}", self.t("run.log_fail", "無法開啟記錄檔："));
             self.set_status(hint);
         }
-        if let Err(e) = self.runner.start_process(&program, &args, cwd.as_deref()) {
+        if let Err(e) = self.runner.start_process(&program, &args, cwd) {
             // 啟動失敗時不會有 Done 事件，立即清掉暫存檔
             if let Some(tmp) = self.runner.temp_file.take() {
                 let _ = std::fs::remove_file(tmp);
@@ -855,7 +903,8 @@ mod tests {
     #[test]
     fn test_interpreter_mapping_by_extension() {
         let (nut, nut_args) = interpreter_for(".nut").expect("nut");
-        assert!(nut.to_lowercase().ends_with("zssqconsole.exe") || nut == "ZSSQConsole.exe", "{nut}");
+        // 優先 MadEdit.exe 同目錄的 nut.exe；測試環境沒有該檔時回退 PATH 名
+        assert!(nut.to_lowercase().ends_with("nut.exe") || nut == "nut", "{nut}");
         assert!(nut_args.is_empty());
         let (py, py_args) = interpreter_for(".py").expect("py");
         assert_eq!(py, "python");
@@ -874,6 +923,18 @@ mod tests {
     }
 
     #[test]
+    fn test_ztr_config_name_detection() {
+        use crate::core::syntax::is_ztr_config_name;
+        assert!(is_ztr_config_name("pure-code.ztr.toml"));
+        assert!(is_ztr_config_name("PURE-CODE.ZTR.TOML"));
+        assert!(is_ztr_config_name(".ztr.toml"));
+        // 一般 toml 不是 ztr 配置檔
+        assert!(!is_ztr_config_name("ztr.toml"));
+        assert!(!is_ztr_config_name("config.toml"));
+        assert!(!is_ztr_config_name("x.ztr.toml.bak"));
+    }
+
+    #[test]
     fn test_selection_temp_file_keeps_content_and_extension() {
         let bytes = "print(\"hi\");\n".as_bytes();
         let tmp = write_selection_temp("madedit_test_selection.nut", bytes).expect("write temp");
@@ -885,7 +946,7 @@ mod tests {
     #[test]
     fn test_selection_temp_file_preserves_gbk_bytes() {
         // 選取片段沿用原檔編碼：GBK 檔案寫出的暫存檔必須仍是 GBK 位元組，
-        // 否則 ZSSQConsole 之類的 ANSI 直譯器會把中文當成亂碼。
+        // 否則 nut.exe 之類的 ANSI 直譯器會把中文當成亂碼。
         let text = "print(\"中文输出测试\");\n";
         let bytes = encoding::encode_text(text, encoding_rs::GBK, false).expect("gbk encodable");
         assert_ne!(bytes, text.as_bytes());

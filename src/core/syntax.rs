@@ -314,6 +314,12 @@ pub fn default_theme_name(is_dark: bool) -> &'static str {
     if is_dark { "base16-ocean.dark" } else { "InspiredGitHub" }
 }
 
+/// `*.ztr.toml` 是 ztr 壓縮工具的配置檔（`ztr --ztr.toml <檔名>`）；F5 與語法檢測據此識別，
+/// 狀態欄腳本／語法類型顯示為 `ztr`，高亮沿用 TOML（YAML）語法。
+pub fn is_ztr_config_name(name: &str) -> bool {
+    name.to_ascii_lowercase().ends_with(".ztr.toml")
+}
+
 /// 依名稱找語法，並處理 syntect 預設集沒有的語言（以相近語法代替）
 fn find_syntax(name: &str) -> Option<&'static SyntaxReference> {
     let ps = syntax_set();
@@ -324,6 +330,9 @@ fn find_syntax(name: &str) -> Option<&'static SyntaxReference> {
         "TypeScript" => ps.find_syntax_by_name("JavaScript"),
         "TOML" => ps.find_syntax_by_name("YAML"),
         "Shell" => ps.find_syntax_by_extension("sh"),
+        // ztr 配置檔沿用 TOML 的語法高亮；nut 顯示沿用 Squirrel 的語法高亮
+        "ztr" => ps.find_syntax_by_name("YAML"),
+        "nut" => ps.find_syntax_by_name("Squirrel"),
         _ => ps.find_syntax_by_token(name),
     })
 }
@@ -334,6 +343,14 @@ pub fn detect_syntax(path: &Path, first_line: &str) -> String {
 }
 
 fn detect_syntax_in(ps: &SyntaxSet, path: &Path, first_line: &str) -> String {
+    // ztr 配置檔（*.ztr.toml）顯示為專屬類型 ztr（高亮沿用 YAML，見 find_syntax）；
+    // Squirrel 腳本（*.nut）顯示為 nut（高亮沿用 Squirrel）。
+    if path.file_name().and_then(|n| n.to_str()).is_some_and(is_ztr_config_name) {
+        return "ztr".to_string();
+    }
+    if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("nut")) {
+        return "nut".to_string();
+    }
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -364,20 +381,20 @@ fn detect_syntax_in(ps: &SyntaxSet, path: &Path, first_line: &str) -> String {
 pub fn comment_tokens(syntax: &str) -> (Option<&'static str>, Option<(&'static str, &'static str)>) {
     let line = match syntax {
         "Python" | "Ruby" | "Perl" | "YAML" | "TOML" | "R" | "Makefile" | "Shell" | "PowerShell"
-        | "Bourne Again Shell (bash)" | "Tcl" | "Ruby on Rails" | "Git Ignore" => Some("#"),
+        | "Bourne Again Shell (bash)" | "Tcl" | "Ruby on Rails" | "Git Ignore" | "ztr" => Some("#"),
         "SQL" | "Lua" | "Haskell" | "Literate Haskell" => Some("--"),
         "Lisp" | "Clojure" => Some(";"),
         "LaTeX" | "TeX" | "Erlang" | "MATLAB" => Some("%"),
         "Batch File" => Some("REM "),
         "INI" => Some(";"),
         "HTML" | "XML" | "Markdown" | "CSS" | "Plain Text" => None,
-        "Squirrel" => Some("//"),
+        "Squirrel" | "nut" => Some("//"),
         _ => Some("//"),
     };
     let block = match syntax {
         "HTML" | "XML" | "Markdown" => Some(("<!--", "-->")),
         "PowerShell" => Some(("<#", "#>")),
-        "Squirrel" | "CSS" | "C" | "C++" | "C#" | "Java" | "JavaScript" | "Rust" | "Go" | "Objective-C"
+        "Squirrel" | "nut" | "CSS" | "C" | "C++" | "C#" | "Java" | "JavaScript" | "Rust" | "Go" | "Objective-C"
         | "Scala" | "PHP" | "D" | "Groovy" => Some(("/*", "*/")),
         _ => None,
     };
@@ -1004,8 +1021,10 @@ contexts:
     #[test]
     fn test_bundled_squirrel_syntax_loads_and_highlights() {
         let ps = load_syntaxes(None);
-        assert_eq!(detect_syntax_in(&ps, Path::new("script.nut"), ""), "Squirrel");
+        // .nut 在狀態欄顯示為 nut（高亮與選單仍是 Squirrel 語法）
+        assert_eq!(detect_syntax_in(&ps, Path::new("script.nut"), ""), "nut");
         assert!(syntax_names().iter().any(|name| name == "Squirrel"), "the syntax menu must list Squirrel");
+        assert_eq!(find_syntax("nut").map(|s| s.name.as_str()), Some("Squirrel"));
         let syntax = ps.find_syntax_by_name("Squirrel").expect("bundled Squirrel syntax");
         let pushes = |line: &str, needle: &str| {
             let mut state = ParseState::new(syntax);
@@ -1027,7 +1046,9 @@ contexts:
         assert!(pushes("ds.MoveNext();\n", "support.function"), "dataset methods after a dot must be recognized");
         // 同名區域變數不應被標成函式（open 不是呼叫）
         assert!(!pushes("local open = 1;\n", "support.function"), "plain identifiers must stay unscoped");
-        assert_eq!(comment_tokens("Squirrel"), (Some("//"), Some(("/*", "*/"))));    }
+        assert_eq!(comment_tokens("Squirrel"), (Some("//"), Some(("/*", "*/"))));
+        assert_eq!(comment_tokens("nut"), (Some("//"), Some(("/*", "*/"))));
+    }
 
     #[test]
     fn test_bundled_ini_syntax_loads_and_highlights() {
@@ -1068,6 +1089,16 @@ contexts:
         assert!(pushes(r"logs/\*.log", "character.escape"), "escaped stars must be recognized");
         assert!(pushes("target/debug/\n", "separator.path"), "path separators must be recognized");
         assert_eq!(comment_tokens("Git Ignore"), (Some("#"), None));
+    }
+
+    #[test]
+    fn test_ztr_config_syntax_name_and_highlighting() {
+        let ps = load_syntaxes(None);
+        // 狀態欄顯示 ztr；高亮沿用 YAML
+        assert_eq!(detect_syntax_in(&ps, Path::new("G:\\x\\pure-code.ztr.toml"), ""), "ztr");
+        assert_eq!(detect_syntax_in(&ps, Path::new("plain.toml"), ""), "YAML");
+        assert_eq!(find_syntax("ztr").map(|s| s.name.as_str()), Some("YAML"));
+        assert_eq!(comment_tokens("ztr"), (Some("#"), None));
     }
 
     #[test]

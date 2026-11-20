@@ -56,7 +56,7 @@ pub fn fold_kind(name: &str) -> Option<FoldKind> {
         "Python" => return Some(FoldKind::Indent),
         "PowerShell" => return Some(FoldKind::Braces(CommentStyle::PowerShell)),
         "C" | "C++" | "C#" | "Java" | "JavaScript" | "TypeScript" | "Go" | "Rust" | "PHP"
-        | "Squirrel" | "D" | "Groovy" | "Scala" | "Objective-C" | "JSON" | "CSS" => {
+        | "Squirrel" | "nut" | "D" | "Groovy" | "Scala" | "Objective-C" | "JSON" | "CSS" => {
             return Some(FoldKind::Braces(CommentStyle::CLike));
         }
         _ => {}
