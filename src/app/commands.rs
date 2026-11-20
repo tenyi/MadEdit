@@ -91,7 +91,7 @@ commands! {
     Delete => "menuDelete", "刪除(&D)", "";
     CutLine => "menuCutLine", "剪下整行(&I)", "Ctrl+Shift+L";
     DeleteLine => "menuDeleteLine", "刪除整行(&L)", "Ctrl+L|Ctrl+Y";
-    DuplicateLine => "menuDuplicateLine", "複製整行", "Ctrl+Shift+D";
+    DuplicateLine => "menuDuplicateLine", "複製整行", "Ctrl+Shift+D|Ctrl+D";
     MoveLinesUp => "menuMoveLinesUp", "整行上移", "Alt+ArrowUp";
     MoveLinesDown => "menuMoveLinesDown", "整行下移", "Alt+ArrowDown";
     JoinLines => "menuJoinLines", "合併行", "Ctrl+J";

@@ -384,7 +384,13 @@ impl App {
         self.tabs[i].view.unfold_all();
     }
 
-    fn dispatch(&mut self, ctx: &egui::Context, c: C) {        // 關閉所有分頁後仍保留視窗；沒有文件時只放行開檔、外觀與設定類命令。
+    /// VS 風格快捷鍵：文字模式下沒有選取時，Ctrl+X（剪下）剪下整行
+    fn cut_maps_to_cut_line(c: C, hex: bool, editable: bool, sel: &Selection) -> bool {
+        c == C::Cut && !hex && editable && sel.is_empty() && !sel.is_block()
+    }
+
+    fn dispatch(&mut self, ctx: &egui::Context, c: C) {
+        // 關閉所有分頁後仍保留視窗；沒有文件時只放行開檔、外觀與設定類命令。
         if self.tabs.is_empty() && !c.works_without_document() {
             self.set_status(self.t("st.no_document", "沒有開啟的檔案"));
             return;
@@ -394,6 +400,12 @@ impl App {
         }
         let editable = !self.doc().read_only && !self.is_preview_tab();
         let hex = self.doc().mode == EditMode::Hex;
+        // VS 風格：文字模式且沒有選取時，Ctrl+X（剪下）剪下整行
+        let c = if Self::cut_maps_to_cut_line(c, hex, editable, &self.doc().editor.selection) {
+            C::CutLine
+        } else {
+            c
+        };
         match c {
             // ── 檔案 ──
             C::New => self.new_document(),
@@ -1357,4 +1369,22 @@ fn run_astyle(text: &str, options: &str) -> Result<String, String> {
         return Err(String::from_utf8_lossy(&out.stderr).into_owned());
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string())
+}
+
+#[cfg(test)]
+mod cut_line_tests {
+    use super::*;
+
+    #[test]
+    fn test_cut_without_selection_maps_to_cut_line() {
+        let caret = Selection::caret(TextPosition::new(0, 0));
+        assert!(App::cut_maps_to_cut_line(C::Cut, false, true, &caret));
+        assert!(!App::cut_maps_to_cut_line(C::Copy, false, true, &caret));
+        // 有選取時維持一般剪下行為
+        let sel = Selection::new(TextPosition::new(0, 0), TextPosition::new(0, 3));
+        assert!(!App::cut_maps_to_cut_line(C::Cut, false, true, &sel));
+        // 十六進位模式或唯讀不轉換
+        assert!(!App::cut_maps_to_cut_line(C::Cut, true, true, &caret));
+        assert!(!App::cut_maps_to_cut_line(C::Cut, false, false, &caret));
+    }
 }
