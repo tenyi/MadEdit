@@ -1103,6 +1103,11 @@ impl App {
         let mut active_rect = None;
         // 激活分頁變化時（例如從「開啟」清單點選），若該分頁超出可見範圍則自動捲動到可見。
         let want_tab_scroll = self.tab_scroll_done != Some((self.active, preview_active));
+        // 拖動分頁調整順序（MTT 風格）：拖動期間不改變順序，只做純繪製預覽——
+        // 來源分頁浮起跟隨指針（帶陰影、置頂），鄰居動畫滑開一個空位；鬆手才提交搬移。
+        let mut drag_stopped_flag = false;
+        // 每個分頁的 (索引, 矩形, 繪製形狀區間起訖)，供幀末平移形狀實現拖動預覽
+        let mut tab_shapes: Vec<(usize, egui::Rect, egui::layers::ShapeIdx, egui::layers::ShapeIdx)> = Vec::new();
         egui::ScrollArea::horizontal().id_salt("tabs").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
@@ -1118,14 +1123,24 @@ impl App {
                     let selected = i == self.active && !preview_active;
                     let tooltip = t.doc.path.as_ref().map(|p| crate::core::display_path(p)).unwrap_or_else(|| unsaved.clone());
                     let close_name = format!("{close_tip} {}", t.doc.display_name());
+                    let shape_from = next_shape_idx(ui);
                     let form::FlatTab { rect, body, close: close_btn } =
                         form::flat_tab(ui, ("doc-tab", i), &name, selected, content_bg, Some(&close_name));
+                    let shape_to = next_shape_idx(ui);
+                    tab_shapes.push((i, rect, shape_from, shape_to));
                     if selected {
                         active_rect = Some(rect);
                     }
                     let body = body.on_hover_text(tooltip);
                     if body.clicked() {
                         activate = Some((i, false));
+                    }
+                    // 拖動排序：按下即記錄來源分頁；繪製預覽在 for 迴圈後統一處理
+                    if body.drag_started() {
+                        egui::DragAndDrop::set_payload(ui.ctx(), i);
+                    }
+                    if body.drag_stopped() {
+                        drag_stopped_flag = true;
                     }
                     // 左鍵雙擊分頁標題即關閉這個分頁（未儲存的變更仍會先詢問）。
                     if body.middle_clicked() || body.double_clicked() {
@@ -1187,13 +1202,23 @@ impl App {
                         let name = format!("{} — {preview_title}", t.doc.display_name());
                         let selected = i == self.active && preview_active;
                         let close_name = format!("{close_preview_tip} {}", t.doc.display_name());
+                        let shape_from = next_shape_idx(ui);
                         let form::FlatTab { rect, body, close: close_btn } =
                             form::flat_tab(ui, ("preview-tab", i), &name, selected, content_bg, Some(&close_name));
+                        let shape_to = next_shape_idx(ui);
+                        tab_shapes.push((i, rect, shape_from, shape_to));
                         if selected {
                             active_rect = Some(rect);
                         }
                         if body.clicked() {
                             activate = Some((i, true));
+                        }
+                        // 預覽分頁同樣可拖動（與其文件分頁一起移動）
+                        if body.drag_started() {
+                            egui::DragAndDrop::set_payload(ui.ctx(), i);
+                        }
+                        if body.drag_stopped() {
+                            drag_stopped_flag = true;
                         }
                         // 雙擊預覽分頁標題同樣關閉它。
                         if body.middle_clicked() || body.double_clicked() || close_btn.is_some_and(|btn| btn.clicked()) {
@@ -1202,6 +1227,8 @@ impl App {
                     }
                 }
                 ui.add_space(8.0);
+                // 拖動預覽：來源分頁浮起跟隨指針，鄰居滑開空位（不改變實際順序）
+                paint_tab_drag(ui, &tab_shapes, strip);
                 // 激活分頁變化的那一幀，把它捲動到可見（帶 [usize; bool] 之外再取一次 rect 以免借用衝突）
                 if want_tab_scroll
                     && let Some(rect) = active_rect
@@ -1218,6 +1245,46 @@ impl App {
             self.tab_scroll_done = Some((self.active, preview_active));
         }
         form::tab_strip_baseline(ui, strip, active_rect);
+        // ── 拖動結束：鬆手才提交搬移（繪製預覽不改變順序）──
+        let drag_payload = egui::DragAndDrop::payload::<usize>(ui.ctx()).map(|p| *p);
+        if let Some(src) = drag_payload
+            && drag_stopped_flag
+            && let Some(from) = tab_shapes.iter().position(|&(i, ..)| i == src)
+            && let Some(pos) = ui.ctx().input(|i| i.pointer.interact_pos())
+            && strip.contains(pos)
+        {
+            // 指針所在位置 = 插入空位（以分頁中點為界）
+            let to = tab_shapes
+                .iter()
+                .position(|&(_, r, ..)| pos.x < r.center().x)
+                .unwrap_or(self.tabs.len());
+            // 移除來源後再插入：gap 在來源右側時索引要減一
+            let dst = if to > from { to - 1 } else { to };
+            if dst != from {
+                let tab = self.tabs.remove(from);
+                self.tabs.insert(dst, tab);
+                // 激活索引跟著搬移的分頁走
+                let a = self.active;
+                self.active = if a == from {
+                    dst
+                } else if from < a && a <= dst {
+                    a - 1
+                } else if dst <= a && a < from {
+                    a + 1
+                } else {
+                    a
+                };
+                // 搬移後本幀繪製時記錄的 activate／close 索引已過期，丟棄以免誤觸
+                activate = None;
+                close = None;
+                close_preview = None;
+                menu_cmd = None;
+            }
+        }
+        // 拖動結束清掉 payload；拖動期間游標保持預設（分頁本身在跟隨指針）
+        if drag_stopped_flag {
+            egui::DragAndDrop::clear_payload(ui.ctx());
+        }
         if let Some((i, preview)) = activate {
             self.activate_view(i, preview);
         }
@@ -1238,8 +1305,7 @@ impl App {
         }
     }
 
-    fn status_bar(&mut self, ui: &mut egui::Ui) {
-        if self.tabs.is_empty() {
+    fn status_bar(&mut self, ui: &mut egui::Ui) {        if self.tabs.is_empty() {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(self.t("st.no_document", "沒有開啟的檔案")).weak());
                 if let Some((msg, _)) = &self.status {
@@ -1869,5 +1935,107 @@ impl App {
                 });
             });
         });
+    }
+}
+
+/// 目前圖層的下一個形狀索引（記錄每個分頁的繪製區間，供拖動預覽平移形狀）。
+fn next_shape_idx(ui: &egui::Ui) -> egui::layers::ShapeIdx {
+    ui.ctx().graphics_mut(|graphics| graphics.entry(ui.layer_id()).next_idx())
+}
+
+/// 拖動預覽（MTT 風格，純繪製、不改變實際順序）：
+/// 來源分頁浮起跟隨指針（帶陰影、置頂），鄰居以動畫滑開一個與來源等寬的空位。
+/// 來源與鄰居的形狀是在 `tab_bar` 裡記錄的繪製區間，這裡按偏移量平移它們。
+fn paint_tab_drag(
+    ui: &egui::Ui,
+    tabs: &[(usize, egui::Rect, egui::layers::ShapeIdx, egui::layers::ShapeIdx)],
+    strip: egui::Rect,
+) {
+    let Some(source) = egui::DragAndDrop::payload::<usize>(ui.ctx()).map(|p| *p) else {
+        return;
+    };
+    let Some(src_pos) = tabs.iter().position(|&(i, ..)| i == source) else {
+        return;
+    };
+    let Some(pointer) = ui.input(|i| i.pointer.interact_pos()) else {
+        return;
+    };
+    let released = ui.input(|i| i.pointer.primary_released());
+    // 指針離開分頁列（如拖到編輯區）時不顯示鄰居滑動，只保留來源跟隨
+    let row = tabs.first().zip(tabs.last()).map(|(f, l)| f.1.union(l.1));
+    let gap = row
+        .filter(|row| row.contains(pointer) && !released)
+        .map(|_| tabs.iter().position(|&(_, r, ..)| pointer.x < r.center().x).unwrap_or(tabs.len()));
+    let mut lifted = Vec::new();
+    for (pos, &(index, rect, from, to)) in tabs.iter().enumerate() {
+        let is_source = pos == src_pos;
+        let delta = if is_source {
+            // 跟隨指針：保持按下時的抓取偏移，橫向限制在分頁列內
+            let origin = ui.input(|i| i.pointer.press_origin()).unwrap_or(rect.center());
+            let x = (rect.left() + pointer.x - origin.x).clamp(strip.left(), (strip.right() - rect.width()).max(strip.left()));
+            egui::vec2(x - rect.left(), 0.0)
+        } else {
+            match gap {
+                Some(gap) => {
+                    let target = neighbor_offset(pos, src_pos, gap, tabs);
+                    let animated = ui.ctx().animate_value_with_time(egui::Id::unique(("tab-drag", index)), target, 0.12);
+                    egui::vec2(animated, 0.0)
+                }
+                None => egui::Vec2::ZERO,
+            }
+        };
+        if delta == egui::Vec2::ZERO && !is_source {
+            continue;
+        }
+        ui.ctx().graphics_mut(|graphics| {
+            let list = graphics.entry(ui.layer_id());
+            for shape in from.0..to.0 {
+                list.mutate_shape(egui::layers::ShapeIdx(shape), |entry| {
+                    entry.shape.translate(delta);
+                    if is_source {
+                        lifted.push(entry.clone());
+                        entry.shape = egui::Shape::Noop;
+                    }
+                });
+            }
+        });
+        if is_source {
+            // 浮起的來源分頁加陰影，最後重新加入以覆蓋滑動中的鄰居
+            let raised = rect.translate(delta);
+            let painter = ui.painter();
+            painter.add(
+                egui::epaint::Shadow {
+                    offset: [0, 2],
+                    blur: 8,
+                    spread: 1,
+                    color: egui::Color32::from_black_alpha(65),
+                }
+                .as_shape(raised, 8),
+            );
+        }
+    }
+    for entry in lifted {
+        ui.ctx().graphics_mut(|graphics| {
+            graphics
+                .entry(ui.layer_id())
+                .add(entry.clip_rect, entry.shape);
+        });
+    }
+}
+
+/// 鄰居位移量：來源左側 index∈[gap,src) 右移一個槽位，右側 index∈(src,gap) 左移一個槽位。
+/// 槽位寬度 = 來源寬度 + 與下一格之間的間距（參考 MTT-File-Manager 的同名實現）。
+fn neighbor_offset(
+    index: usize,
+    source: usize,
+    gap: usize,
+    tabs: &[(usize, egui::Rect, egui::layers::ShapeIdx, egui::layers::ShapeIdx)],
+) -> f32 {
+    if index < source && index >= gap {
+        tabs[source].1.width() + (tabs[index + 1].1.left() - tabs[index].1.right())
+    } else if index > source && index < gap {
+        -(tabs[source].1.width() + (tabs[index].1.left() - tabs[index - 1].1.right()))
+    } else {
+        0.0
     }
 }

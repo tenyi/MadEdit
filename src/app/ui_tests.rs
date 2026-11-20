@@ -3041,6 +3041,38 @@ fn test_ini_file_opens_with_the_bundled_syntax() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 編輯器分頁支援拖動排序：把右邊的分頁拖到左邊，順序與激活狀態一起跟著走。
+#[test]
+fn test_dragging_a_tab_reorders_tabs() {
+    let dir = std::env::temp_dir().join(format!("madedit-tab-drag-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let first = dir.join("one.txt");
+    let second = dir.join("two.txt");
+    std::fs::write(&first, "one").unwrap();
+    std::fs::write(&second, "two").unwrap();
+
+    let mut h = harness();
+    h.state_mut().open_path(&first);
+    h.state_mut().open_path(&second);
+    h.run_steps(3);
+    let names = |h: &Harness<'static, App>| -> Vec<String> { h.state().tabs.iter().map(|t| t.doc.display_name().to_string()).collect() };
+    assert_eq!(names(&h), vec!["one.txt", "two.txt"]);
+    assert_eq!(h.state().active, 1, "前置：two.txt 是激活分頁");
+    // 按下 two.txt → 拖到 one.txt 上 → 放開
+    let src = h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some("two.txt")).rect();
+    let dst = h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some("one.txt")).rect();
+    h.event(Event::PointerButton { pos: src.center(), button: egui::PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+    h.run_steps(2);
+    h.event(Event::PointerMoved(dst.center()));
+    h.run_steps(2);
+    h.event(Event::PointerButton { pos: dst.center(), button: egui::PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+    h.run_steps(2);
+    assert_eq!(names(&h), vec!["two.txt", "one.txt"], "拖動後順序應改變");
+    assert_eq!(h.state().active, 0, "激活狀態應跟著被拖動的分頁走");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 運行腳本：直譯器輸出串流到底部面板，並顯示退出碼。
 /// 直譯器用系統必備的 cmd（僅 Windows 測試），不依賴 ZSSQConsole/python 是否安裝。
 #[cfg(windows)]

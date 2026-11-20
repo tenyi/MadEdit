@@ -473,7 +473,8 @@ pub fn flat_tab(
     });
     let body_rect = close_rect.map_or(rect, |close| egui::Rect::from_min_max(rect.min, egui::pos2(close.left() - 2.0, rect.bottom())));
     let tab_id = ui.scope_id().with(&id_salt);
-    let body = ui.interact(body_rect, tab_id, Sense::click());
+    // click_and_drag：編輯器分頁列用 drag 事件實現拖動排序，一般點擊、雙擊行為不變
+    let body = ui.interact(body_rect, tab_id, Sense::click_and_drag());
     body.widget_info(|| WidgetInfo::selected(Role::Tab, ui.is_enabled(), selected, label));
     let close = close_rect.map(|close| {
         let response = ui.interact(close, tab_id.with("close"), Sense::click());
