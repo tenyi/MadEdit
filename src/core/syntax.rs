@@ -314,10 +314,10 @@ pub fn default_theme_name(is_dark: bool) -> &'static str {
     if is_dark { "base16-ocean.dark" } else { "InspiredGitHub" }
 }
 
-/// `*.ztr.toml` 是 ztr 壓縮工具的配置檔（`ztr --ztr.toml <檔名>`）；F5 與語法檢測據此識別，
+/// `*.ztrtoml` 是 ztr 壓縮工具的配置檔（`ztr --ztrtoml <檔名>`）；F5 與語法檢測據此識別，
 /// 狀態欄腳本／語法類型顯示為 `ztr`，高亮沿用 TOML（YAML）語法。
 pub fn is_ztr_config_name(name: &str) -> bool {
-    name.to_ascii_lowercase().ends_with(".ztr.toml")
+    name.to_ascii_lowercase().ends_with(".ztrtoml")
 }
 
 /// 依名稱找語法，並處理 syntect 預設集沒有的語言（以相近語法代替）
@@ -343,7 +343,7 @@ pub fn detect_syntax(path: &Path, first_line: &str) -> String {
 }
 
 fn detect_syntax_in(ps: &SyntaxSet, path: &Path, first_line: &str) -> String {
-    // ztr 配置檔（*.ztr.toml）顯示為專屬類型 ztr（高亮沿用 YAML，見 find_syntax）；
+    // ztr 配置檔（*.ztrtoml）顯示為專屬類型 ztr（高亮沿用 YAML，見 find_syntax）；
     // Squirrel 腳本（*.nut）顯示為 nut（高亮沿用 Squirrel）。
     if path.file_name().and_then(|n| n.to_str()).is_some_and(is_ztr_config_name) {
         return "ztr".to_string();
@@ -1095,8 +1095,11 @@ contexts:
     fn test_ztr_config_syntax_name_and_highlighting() {
         let ps = load_syntaxes(None);
         // 狀態欄顯示 ztr；高亮沿用 YAML
-        assert_eq!(detect_syntax_in(&ps, Path::new("G:\\x\\pure-code.ztr.toml"), ""), "ztr");
+        assert_eq!(detect_syntax_in(&ps, Path::new("G:\\x\\pure-code.ztrtoml"), ""), "ztr");
+        assert_eq!(detect_syntax_in(&ps, Path::new("G:\\x\\PURE-CODE.ZTRTOML"), ""), "ztr");
         assert_eq!(detect_syntax_in(&ps, Path::new("plain.toml"), ""), "YAML");
+        // 舊式雙點名稱不再視為 ztr 配置檔
+        assert_eq!(detect_syntax_in(&ps, Path::new("x.ztr.toml"), ""), "YAML");
         assert_eq!(find_syntax("ztr").map(|s| s.name.as_str()), Some("YAML"));
         assert_eq!(comment_tokens("ztr"), (Some("#"), None));
     }

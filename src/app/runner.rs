@@ -1,5 +1,5 @@
 //! 腳本運行器：依副檔名選擇直譯器（.nut → nut、.py → python、.lua → lua、
-//! .ps1/.bat → PowerShell/cmd；`*.ztr.toml` → ztr --ztr.toml），
+//! .ps1/.bat → PowerShell/cmd；`*.ztrtoml` → ztr --ztrtoml），
 //! 後台執行目前檔案（或選中的片段），輸出串流到底部「運行輸出」面板。
 //!
 //! Windows 主控台程式常以 GBK/ANSI 輸出，逐行解碼時先試嚴格 UTF-8，失敗則以 GBK 解碼。
@@ -496,7 +496,7 @@ impl App {
         if self.runner.running {
             self.runner.stop();
         }
-        // `*.ztr.toml`：ztr 壓縮配置檔，直接在所在目錄執行 `ztr --ztr.toml <檔名>`。
+        // `*.ztrtoml`：ztr 壓縮配置檔，直接在所在目錄執行 `ztr --ztrtoml <檔名>`。
         if self.run_ztr_config() {
             return;
         }
@@ -565,7 +565,7 @@ impl App {
         self.launch_runner(program, args, cwd.as_deref());
     }
 
-    /// `*.ztr.toml` 的 F5：在該檔所在目錄執行 `ztr --ztr.toml <檔名>`（無子命令＝壓縮當前目錄）。
+    /// `*.ztrtoml` 的 F5：在該檔所在目錄執行 `ztr --ztrtoml <檔名>`（無子命令＝壓縮當前目錄）。
     /// 回傳 true 表示文件是 ztr 配置檔（無論是否成功啟動）；false 交回一般腳本流程。
     fn run_ztr_config(&mut self) -> bool {
         let Some(path) = self.doc().path.clone() else {
@@ -598,7 +598,7 @@ impl App {
             .filter(|p| p.exists())
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "ztr".into());
-        let args = vec!["--ztr.toml".to_string(), name];
+        let args = vec!["--ztrtoml".to_string(), name];
         self.launch_runner(program, args, Some(&dir));
         true
     }
@@ -925,13 +925,14 @@ mod tests {
     #[test]
     fn test_ztr_config_name_detection() {
         use crate::core::syntax::is_ztr_config_name;
-        assert!(is_ztr_config_name("pure-code.ztr.toml"));
-        assert!(is_ztr_config_name("PURE-CODE.ZTR.TOML"));
-        assert!(is_ztr_config_name(".ztr.toml"));
-        // 一般 toml 不是 ztr 配置檔
+        assert!(is_ztr_config_name("pure-code.ztrtoml"));
+        assert!(is_ztr_config_name("PURE-CODE.ZTRTOML"));
+        assert!(is_ztr_config_name(".ztrtoml"));
+        // 一般 toml 與舊式雙點名稱不是 ztr 配置檔
         assert!(!is_ztr_config_name("ztr.toml"));
         assert!(!is_ztr_config_name("config.toml"));
-        assert!(!is_ztr_config_name("x.ztr.toml.bak"));
+        assert!(!is_ztr_config_name("x.ztr.toml"));
+        assert!(!is_ztr_config_name("x.ztrtoml.bak"));
     }
 
     #[test]
