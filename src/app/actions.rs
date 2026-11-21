@@ -923,6 +923,10 @@ impl App {
                 if !ctx.is_loader_installed(super::mdpreview::DiagramLoader::ID) {
                     super::mdpreview::DiagramLoader::install(ctx, self.fonts.diagram_font());
                 }
+                // 帶查詢串的遠端 SVG（GitHub 徽章等）：內建 SvgLoader 不認得 `?` 後的副檔名，補位載入
+                if !ctx.is_loader_installed(super::mdpreview::RemoteSvgLoader::ID) {
+                    super::mdpreview::RemoteSvgLoader::install(ctx, self.fonts.diagram_font());
+                }
                 let pv = self.tab_mut().md_preview.get_or_insert_with(super::mdpreview::MarkdownPreview::new);
                 if pv.placement != super::mdpreview::Placement::Tab {
                     pv.set_placement(super::mdpreview::Placement::Tab);

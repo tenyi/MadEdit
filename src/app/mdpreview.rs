@@ -846,8 +846,75 @@ pub struct DiagramLoader {
     cache: Mutex<HashMap<(String, SizeHint), Rasterized>>,
 }
 
-/// A rasterized diagram, or the error message shown in its place.
+/// 帶查詢串的遠端 SVG 載入器（例如 GitHub 徽章 `badge.svg?branch=main`）。
+/// egui 內建 SvgLoader 以 URI 副檔名判斷，但其 `has_extension` 只按 `#` 分割、不處理 `?`，
+/// 帶查詢串時副檔名會被判成 `svg?branch=main` 而拒載；此載入器補位：去掉查詢串後
+/// 以 `.svg` 結尾的 http(s) URI 由這裡取位元組並用 resvg 點陣化。
+pub struct RemoteSvgLoader {
+    options: resvg::usvg::Options<'static>,
+    cache: Mutex<HashMap<(String, SizeHint), Rasterized>>,
+}
+
 type Rasterized = Result<Arc<egui::ColorImage>, String>;
+
+impl RemoteSvgLoader {
+    pub const ID: &'static str = egui::generate_loader_id!(RemoteSvgLoader);
+
+    pub fn install(ctx: &egui::Context, font: Option<(String, fontique::Blob<u8>)>) {
+        let mut options = resvg::usvg::Options::default();
+        if let Some((name, blob)) = font {
+            let db = options.fontdb_mut();
+            db.load_font_source(resvg::usvg::fontdb::Source::Binary(Arc::new(blob)));
+            db.set_sans_serif_family(&name);
+            db.set_monospace_family(&name);
+        }
+        ctx.add_image_loader(Arc::new(Self { options, cache: Mutex::new(HashMap::new()) }));
+    }
+}
+
+impl ImageLoader for RemoteSvgLoader {
+    fn id(&self) -> &str {
+        Self::ID
+    }
+
+    fn load(&self, ctx: &egui::Context, uri: &str, size_hint: SizeHint) -> ImageLoadResult {
+        // 只接「帶查詢串、去查詢後以 .svg 結尾」的 URI；其餘（含無查詢串的 .svg）交給內建載入器
+        let base = uri.split('#').next().unwrap_or(uri);
+        let Some((path, query)) = base.split_once('?') else {
+            return Err(LoadError::NotSupported);
+        };
+        if query.is_empty() || !path.to_ascii_lowercase().ends_with(".svg") {
+            return Err(LoadError::NotSupported);
+        }
+        let key = (uri.to_owned(), size_hint);
+        let result = if let Some(r) = self.cache.lock().get(&key) {
+            r.clone()
+        } else {
+            match ctx.try_load_bytes(uri) {
+                Ok(BytesPoll::Ready { bytes, .. }) => {
+                    let r = egui_extras::image::load_svg_bytes_with_size(&bytes, size_hint, &self.options).map(Arc::new);
+                    self.cache.lock().insert(key, r.clone());
+                    r
+                }
+                Ok(BytesPoll::Pending { size }) => return Ok(ImagePoll::Pending { size }),
+                Err(e) => return Err(e),
+            }
+        };
+        result.map(|image| ImagePoll::Ready { image }).map_err(LoadError::Loading)
+    }
+
+    fn forget(&self, uri: &str) {
+        self.cache.lock().retain(|(u, _), _| u != uri);
+    }
+
+    fn forget_all(&self) {
+        self.cache.lock().clear();
+    }
+
+    fn byte_size(&self) -> usize {
+        self.cache.lock().values().filter_map(|r| r.as_ref().ok()).map(|img| img.pixels.len() * 4).sum()
+    }
+}
 
 impl DiagramLoader {
     pub const ID: &'static str = egui::generate_loader_id!(DiagramLoader);
@@ -1416,6 +1483,27 @@ mod tests {
     }
 
     /// 圖表載入器只放一個字型也能畫出文字：有字型時的點陣圖要比沒有字型時多出文字筆畫
+    /// 帶查詢串的遠端 SVG 由 RemoteSvgLoader 點陣化；無查詢串的 .svg 不歸它管
+    #[test]
+    fn test_remote_svg_loader_handles_query_strings() {
+        let ctx = egui::Context::default();
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><rect width="20" height="10" fill="#f0f"/></svg>"##;
+        let uri = "https://example.com/badge.svg?branch=main";
+        ctx.include_bytes(uri.to_string(), svg.as_bytes().to_vec());
+        RemoteSvgLoader::install(&ctx, None);
+        match ctx.try_load_image(&uri.to_string(), SizeHint::default()).unwrap() {
+            ImagePoll::Ready { image } => assert_eq!(image.size, [20, 10]),
+            ImagePoll::Pending { .. } => panic!("本地 include_bytes 應同步點陣化"),
+        }
+        // 無查詢串的 .svg 交給內建 SvgLoader（本載入器拒載）
+        let plain = "https://example.com/plain.svg";
+        ctx.include_bytes(plain.to_string(), svg.as_bytes().to_vec());
+        assert!(
+            ctx.try_load_image(&plain.to_string(), SizeHint::default()).is_err(),
+            "無查詢串的 .svg 不應由 RemoteSvgLoader 處理"
+        );
+    }
+
     #[test]
     fn test_diagram_loader_draws_text_with_single_font() {
         let Some(font) = crate::app::fonts::FontManager::new().diagram_font() else {

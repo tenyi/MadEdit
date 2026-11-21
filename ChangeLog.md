@@ -49,6 +49,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - The horizontal separator line between the menu bar and the toolbar is gone, as are all separators around the title bar's quick controls (font zoom, theme toggle, quick search); at fractional scale factors the title bar height now snaps to whole physical pixels, which removes the thin dark line that could show at the panel seam on 100% / 125% displays.
 
 ### Fixed
+- Markdown preview: remote SVG images whose URL carries a query string (like GitHub Actions and Zenodo badges, `…badge.svg?branch=main`) now render instead of failing with "No matching ImageLoader": a supplemental loader recognizes `.svg` paths behind query parameters and rasterizes them with resvg. Remote image fetching itself requires the new `egui_extras/http` / `egui_commonmark/fetch` features.
 - Windows: paths shown to the user no longer carry the `\\?\` prefix that `canonicalize` adds. The tab tooltip, Copy Full Path, the File View list, the open/create status messages, the "create this file?" prompt and the print header now show `D:\work\a.txt` instead of `\\?\D:\work\a.txt`.
 
 ### 繁體中文
@@ -96,6 +97,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - 選單列與工具列之間的橫向分隔線移除，標題欄快捷控件（字型縮放、主題切換、快速搜尋）周圍的豎向分隔線也一併移除；標題欄高度在非整數縮放比例（100%／125% 等）下吸附到整數物理像素，消除面板接縫處可能出現的細黑線。
 
 #### 修正
+- Markdown 預覽：URL 帶查詢串的遠端 SVG 圖片（如 GitHub Actions／Zenodo 徽章 `…badge.svg?branch=main`）現在能正常顯示，不再報「No matching ImageLoader」——補位載入器會辨識查詢串後仍以 `.svg` 結尾的路徑並用 resvg 點陣化。遠端圖片抓取本身依賴新增的 `egui_extras/http`／`egui_commonmark/fetch` 特性。
 - Windows：顯示給使用者的路徑不再帶 `canonicalize` 產生的 `\\?\` 前綴。分頁提示、「複製完整路徑」、文件視圖清單、開啟／建立的狀態訊息、「是否建立新檔案」詢問與列印頁首都改成 `D:\work\a.txt` 這種寫法，不再是 `\\?\D:\work\a.txt`。
 
 ## [0.6.9] - 2026-11-10
