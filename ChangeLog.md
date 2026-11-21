@@ -49,6 +49,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - The horizontal separator line between the menu bar and the toolbar is gone, as are all separators around the title bar's quick controls (font zoom, theme toggle, quick search); at fractional scale factors the title bar height now snaps to whole physical pixels, which removes the thin dark line that could show at the panel seam on 100% / 125% displays.
 
 ### Fixed
+- Markdown preview: SVG images are no longer rasterized at their natural size — some packing-record SVGs measure tens of thousands of pixels and froze the interface for minutes (and oversized ones crashed the renderer on the GPU texture-size limit). SVGs now render at a size bounded by the texture limit and are downscaled proportionally when needed.
+- Markdown preview: relative-path images inside HTML `<img src="data/logo.jpeg">` tags (common in README headers) now resolve against the document's folder and render as images with their `height` attribute honored (falling back to fit-to-width), so sizes match the README's intent like in VSCode. GIF files animate (the `egui_extras/gif` loader feature is now enabled). Code-block examples are untouched.
 - Markdown preview: remote SVG images whose URL carries a query string (like GitHub Actions and Zenodo badges, `…badge.svg?branch=main`) now render instead of failing with "No matching ImageLoader": a supplemental loader recognizes `.svg` paths behind query parameters and rasterizes them with resvg. Remote image fetching itself requires the new `egui_extras/http` / `egui_commonmark/fetch` features.
 - Windows: paths shown to the user no longer carry the `\\?\` prefix that `canonicalize` adds. The tab tooltip, Copy Full Path, the File View list, the open/create status messages, the "create this file?" prompt and the print header now show `D:\work\a.txt` instead of `\\?\D:\work\a.txt`.
 
@@ -97,6 +99,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - 選單列與工具列之間的橫向分隔線移除，標題欄快捷控件（字型縮放、主題切換、快速搜尋）周圍的豎向分隔線也一併移除；標題欄高度在非整數縮放比例（100%／125% 等）下吸附到整數物理像素，消除面板接縫處可能出現的細黑線。
 
 #### 修正
+- Markdown 預覽：SVG 圖片不再按原生尺寸點陣化——部分打包記錄 SVG 原生尺寸高達數萬像素，會讓介面凍結數分鐘，超過 GPU 紋理上限的還會直接崩潰；現在渲染尺寸以紋理上限為界，必要時等比縮小。
+- Markdown 預覽：HTML `<img src="data/logo.jpeg">` 標籤內的相對路徑圖片（README 頁首常見）現在會以文件所在資料夾解析並按 `height` 屬性的高度等比顯示（無 height 時自適應寬度），尺寸與 README 原意（如 VSCode）一致；GIF 檔會播放動畫（啟用 `egui_extras/gif` 載入器特性）；程式碼區塊裡的 `<img>` 範例不受影響。
 - Markdown 預覽：URL 帶查詢串的遠端 SVG 圖片（如 GitHub Actions／Zenodo 徽章 `…badge.svg?branch=main`）現在能正常顯示，不再報「No matching ImageLoader」——補位載入器會辨識查詢串後仍以 `.svg` 結尾的路徑並用 resvg 點陣化。遠端圖片抓取本身依賴新增的 `egui_extras/http`／`egui_commonmark/fetch` 特性。
 - Windows：顯示給使用者的路徑不再帶 `canonicalize` 產生的 `\\?\` 前綴。分頁提示、「複製完整路徑」、文件視圖清單、開啟／建立的狀態訊息、「是否建立新檔案」詢問與列印頁首都改成 `D:\work\a.txt` 這種寫法，不再是 `\\?\D:\work\a.txt`。
 

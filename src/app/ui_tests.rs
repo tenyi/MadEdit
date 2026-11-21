@@ -1,4 +1,4 @@
-//! 以 egui_kittest 模擬鍵盤與輸入法事件的整合測試（不開視窗、不需 GPU）
+﻿//! 以 egui_kittest 模擬鍵盤與輸入法事件的整合測試（不開視窗、不需 GPU）
 
 use eframe::egui::{self, Event, ImeEvent, Key, Modifiers};
 use egui_kittest::Harness;
@@ -4171,3 +4171,20 @@ fn temp_bench_output_panel() {
         );
     }
 }
+
+
+
+#[test]
+fn tmp_timing_real_readme() {
+    let path = std::path::Path::new(r"G:\back\share\sparrow\里程碑备份\sparrow\README.md");
+    let mut h = harness();
+    h.state_mut().open_path(path);
+    h.run_steps(3);
+    h.state_mut().pending.push(crate::app::commands::C::PreviewMarkdown);
+    for i in 0..6 {
+        let t = std::time::Instant::now();
+        h.run_steps(2);
+        println!("step {i}: {:?}", t.elapsed());
+    }
+}
+

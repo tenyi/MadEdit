@@ -1,4 +1,4 @@
-//! App 內的 Markdown 預覽視窗：以 `egui_commonmark` 繪製 Markdown，
+﻿//! App 內的 Markdown 預覽視窗：以 `egui_commonmark` 繪製 Markdown，
 //! 其中 ```mermaid 區塊交給 `fermaid` 轉成 SVG，再由 `egui_extras` 的 SVG 載入器顯示。
 //!
 //! 預覽內容會隨文件版本（`Document::version`）自動更新。
@@ -219,6 +219,21 @@ fn is_relative_image_url(url: &str) -> bool {
         && !(b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':')
 }
 
+/// 從 HTML 標籤字串取屬性值（雙引號、單引號與無引號都支援），例如 `height`、`src`
+fn html_attr(tag: &str, name: &str) -> Option<String> {
+    let re = regex::Regex::new(&format!(r#"(?is)\b{}\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))"#, regex::escape(name))).unwrap();
+    re.captures(tag).and_then(|c| {
+        c.get(2).or_else(|| c.get(3)).or_else(|| c.get(4)).map(|g| g.as_str().trim_matches('"').trim_matches('\'').to_owned())
+    })
+}
+
+/// 解析數值屬性（如 `height="200"`、`height=270/`），只取前導數字（容忍 `px`、`/` 等尾巴）
+fn html_numeric_attr(tag: &str, name: &str) -> Option<f32> {
+    let raw = html_attr(tag, name)?;
+    let digits: String = raw.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+    digits.parse().ok()
+}
+
 /// 將本機圖片轉成明確的 file URI；百分比編碼由既有非同步檔案載入器處理。
 fn image_uri(url: &str, base_dir: Option<&Path>) -> String {
     if url.contains("://") || url.starts_with("data:") || url.starts_with('#') {
@@ -247,6 +262,18 @@ pub fn rewrite_image_paths(md: &str, base_dir: Option<&Path>) -> (String, Vec<St
     let mut uris = Vec::new();
     let mut events = Parser::new(md).into_offset_iter();
     while let Some((ev, range)) = events.next() {
+        // HTML 區塊（如 README 的 <img src="data/logo.jpeg" height=80>）：渲染由 render_html_fragment
+        // 接手（見 show() 的 render_html_fn），這裡只收集解析後的圖片 URI 供錯誤提示與重新載入
+        if matches!(ev, Event::Html(_) | Event::InlineHtml(_)) {
+            let seg = &md[range.clone()];
+            let re_img = regex::Regex::new(r#"(?is)<img\b[^>]*>"#).unwrap();
+            for m in re_img.find_iter(seg) {
+                if let Some(src) = html_attr(m.as_str(), "src") {
+                    uris.push(image_uri(&src, base_dir));
+                }
+            }
+            continue;
+        }
         let Event::Start(Tag::Image { dest_url, title, .. }) = ev else { continue };
         let uri = image_uri(&dest_url, base_dir);
         uris.push(uri.clone());
@@ -487,7 +514,7 @@ impl MarkdownPreview {
         let mut items = Vec::new();
         let source_lines = text.lines().count();
         let mut image_uris = Vec::new();
-        let has_images = text.contains("![");
+        let has_images = text.contains("![") || text.contains("<img");
         let definitions = if has_images { reference_definitions(&pulldown_cmark::Parser::new(text)) } else { String::new() };
         for piece in split_mermaid(text) {
             match piece.seg {
@@ -496,7 +523,8 @@ impl MarkdownPreview {
                     let m = if definitions.is_empty() { m } else { format!("{m}\n\n{definitions}") };
                     for (off, end, block) in split_blocks(&m) {
                         // 先記錄原文行號再改寫圖片，參照標題中的換行不會改變同步位置。
-                        let block = if has_images && block.contains("![") {
+                        // HTML <img> 標籤（README 頁首常見）不含 ![，也要重寫。
+                        let block = if has_images && (block.contains("![") || block.contains("<img")) {
                             let (block, uris) = rewrite_image_paths(&block, key.base_dir.as_deref());
                             image_uris.extend(uris);
                             block
@@ -723,7 +751,10 @@ impl MarkdownPreview {
                             ui.spacing_mut().interact_size.x = 0.0;
                             let cache = std::rc::Rc::clone(&self.math);
                             let math = move |ui: &mut egui::Ui, tex: &str, inline: bool| cache.show(ui, tex, inline);
-                            let viewer = CommonMarkViewer::new().explicit_image_uri_scheme(true).render_math_fn(Some(&math));
+                            // HTML 區塊由我們渲染：<img> 標籤（含 height 屬性）才能以圖片顯示
+                            let base_dir = self.built.as_ref().and_then(|k| k.base_dir.clone());
+                            let html = move |ui: &mut egui::Ui, html: &str| render_html_fragment(ui, html, base_dir.as_deref());
+                            let viewer = CommonMarkViewer::new().explicit_image_uri_scheme(true).render_math_fn(Some(&math)).render_html_fn(Some(&html));
                             if matches!(item.content, Content::Quote(_)) {
                                 quote_frame(ui, |ui| {
                                     viewer.show(ui, &mut self.cache, m);
@@ -848,11 +879,13 @@ pub struct DiagramLoader {
 
 /// 帶查詢串的遠端 SVG 載入器（例如 GitHub 徽章 `badge.svg?branch=main`）。
 /// egui 內建 SvgLoader 以 URI 副檔名判斷，但其 `has_extension` 只按 `#` 分割、不處理 `?`，
-/// 帶查詢串時副檔名會被判成 `svg?branch=main` 而拒載；此載入器補位：去掉查詢串後
-/// 以 `.svg` 結尾的 http(s) URI 由這裡取位元組並用 resvg 點陣化。
+/// 帶查詢串時副檔名會被判成 `svg?branch=main` 而拒載；此載入器補位：以 `.svg` 結尾的
+/// http(s)／file URI 由這裡取位元組並用 resvg 點陣化。點陣化結果超過 GPU 紋理邊長上限時
+/// 等比縮小，否則 egui 貼上超大紋理時會直接崩潰（記錄 SVG 原生尺寸常超過 2048）。
 pub struct RemoteSvgLoader {
-    options: resvg::usvg::Options<'static>,
-    cache: Mutex<HashMap<(String, SizeHint), Rasterized>>,
+    options: Arc<resvg::usvg::Options<'static>>,
+    /// （uri, 尺寸提示）→ Pending＝背景點陣化中
+    cache: Arc<Mutex<HashMap<(String, SizeHint), std::task::Poll<Rasterized>>>>,
 }
 
 type Rasterized = Result<Arc<egui::ColorImage>, String>;
@@ -868,8 +901,77 @@ impl RemoteSvgLoader {
             db.set_sans_serif_family(&name);
             db.set_monospace_family(&name);
         }
-        ctx.add_image_loader(Arc::new(Self { options, cache: Mutex::new(HashMap::new()) }));
+        ctx.add_image_loader(Arc::new(Self { options: Arc::new(options), cache: Arc::new(Mutex::new(HashMap::new())) }));
     }
+}
+
+/// HTML 片段的自訂渲染：處理 <img> 標籤（含 height 屬性，等比縮放到指定高度、相對路徑
+/// 以文件所在資料夾解析），其餘標籤剝掉後以純文字顯示。egui_commonmark 預設把 HTML 當
+/// 純文字，<img> 永遠不會被當成圖片載入。
+fn render_html_fragment(ui: &mut egui::Ui, html: &str, base_dir: Option<&Path>) {
+    let re_img = regex::Regex::new(r#"(?is)<img\b[^>]*>"#).unwrap();
+    let re_tags = regex::Regex::new(r#"(?is)</?[a-z][a-z0-9-]*\b[^>]*>|<!--[\s\S]*?-->"#).unwrap();
+    let mut last = 0usize;
+    for m in re_img.find_iter(html) {
+        let tag = m.as_str();
+        // 標籤前的純文字（剝除標籤後）照常顯示
+        let before = re_tags.replace_all(&html[last..m.start()], "");
+        if !before.trim().is_empty() {
+            ui.label(before.trim());
+        }
+        if let Some(src) = html_attr(tag, "src") {
+            let uri = image_uri(&src, base_dir);
+            let height = html_numeric_attr(tag, "height");
+            match height {
+                Some(h) if h >= 1.0 => {
+                    // 以 height 屬性為目標高度請 loader 點陣化，顯示時保持寬高比
+                    let hint = egui::load::SizeHint::Height(h.ceil() as u32);
+                    match ui.ctx().try_load_texture(&uri, Default::default(), hint) {
+                        Ok(egui::load::TexturePoll::Ready { texture }) => {
+                            let size = texture.size;
+                            let w = if size[1] > 0.0 { size[0] * (h / size[1]) } else { h };
+                            ui.add(egui::Image::from_texture(texture).fit_to_exact_size(egui::vec2(w, h)));
+                        }
+                        Ok(egui::load::TexturePoll::Pending { .. }) => {
+                            // 載入中的佔位框
+                            let size = egui::vec2(ui.available_width().min(h * 4.0), h);
+                            let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+                            ui.painter().rect_filled(rect, 4.0, ui.visuals().extreme_bg_color);
+                        }
+                        Err(_) => {
+                            ui.label(RichText::new(format!("⚠ {uri}")).weak());
+                        }
+                    }
+                }
+                _ => {
+                    // 無 height 屬性：依可用寬度等比縮放（與 VSCode 預覽一致），不超過自然尺寸
+                    let avail = ui.available_width();
+                    ui.add(egui::Image::new(egui::ImageSource::Uri(uri.into())).max_width(avail));
+                }
+            }
+        }
+        last = m.end();
+    }
+    let tail = re_tags.replace_all(&html[last..], "");
+    if !tail.trim().is_empty() {
+        ui.label(tail.trim());
+    }
+}
+
+/// SVG 點陣化結果超過 GPU 紋理邊長上限時等比縮小（egui 貼圖前會斷言邊長，超限即崩潰）
+fn clamp_texture_size(ctx: &egui::Context, img: egui::ColorImage) -> Arc<egui::ColorImage> {
+    let max = ctx.input(|i| i.max_texture_side).max(1) as usize;
+    let [w, h] = img.size;
+    if w <= max && h <= max {
+        return Arc::new(img);
+    }
+    let scale = max as f32 / w.max(h) as f32;
+    let nw = ((w as f32 * scale) as usize).max(1) as u32;
+    let nh = ((h as f32 * scale) as usize).max(1) as u32;
+    let src = image::RgbaImage::from_raw(w as u32, h as u32, img.pixels.iter().flat_map(|c| c.to_srgba_unmultiplied()).collect::<Vec<u8>>())
+        .expect("ColorImage 尺寸與像素數一致");
+    let resized = image::imageops::resize(&src, nw, nh, image::imageops::FilterType::Triangle);
+    Arc::new(egui::ColorImage::from_rgba_unmultiplied([nw as usize, nh as usize], resized.as_raw()))
 }
 
 impl ImageLoader for RemoteSvgLoader {
@@ -878,29 +980,75 @@ impl ImageLoader for RemoteSvgLoader {
     }
 
     fn load(&self, ctx: &egui::Context, uri: &str, size_hint: SizeHint) -> ImageLoadResult {
-        // 只接「帶查詢串、去查詢後以 .svg 結尾」的 URI；其餘（含無查詢串的 .svg）交給內建載入器
+        // 接所有以 .svg 結尾的 http(s)／file URI（含帶查詢串的）；其他協定交給內建載入器
         let base = uri.split('#').next().unwrap_or(uri);
-        let Some((path, query)) = base.split_once('?') else {
-            return Err(LoadError::NotSupported);
-        };
-        if query.is_empty() || !path.to_ascii_lowercase().ends_with(".svg") {
+        let path = base.split('?').next().unwrap_or(base);
+        let ok = path.starts_with("http") && path.to_ascii_lowercase().ends_with(".svg")
+            || base.starts_with("file://") && base.to_ascii_lowercase().ends_with(".svg");
+        if !ok {
             return Err(LoadError::NotSupported);
         }
-        let key = (uri.to_owned(), size_hint);
-        let result = if let Some(r) = self.cache.lock().get(&key) {
-            r.clone()
-        } else {
-            match ctx.try_load_bytes(uri) {
-                Ok(BytesPoll::Ready { bytes, .. }) => {
-                    let r = egui_extras::image::load_svg_bytes_with_size(&bytes, size_hint, &self.options).map(Arc::new);
-                    self.cache.lock().insert(key, r.clone());
-                    r
+        let key = (uri.to_owned(), size_hint.clone());
+        if let Some(std::task::Poll::Ready(r)) = self.cache.lock().get(&key) {
+            let r = r.clone();
+            return r.map(|image| ImagePoll::Ready { image }).map_err(LoadError::Loading);
+        }
+        match ctx.try_load_bytes(uri) {
+            Ok(BytesPoll::Ready { bytes, .. }) => {
+                // 只排程一次；點陣化在背景執行緒進行，完成後 request_repaint
+                let already = {
+                    let mut cache = self.cache.lock();
+                    let existed = cache.contains_key(&key);
+                    cache.insert(key.clone(), std::task::Poll::Pending);
+                    existed
+                };
+                if !already {
+                    let options = Arc::clone(&self.options);
+                    let cache = Arc::clone(&self.cache);
+                    let bytes = bytes.clone();
+                    let ctx2 = ctx.clone();
+                    let key2 = key.clone();
+                    let _ = std::thread::Builder::new()
+                        .name(format!("madedit-svg-load({uri:?})"))
+                        .spawn(move || {
+                            // 先解析自然尺寸：記錄類 SVG 可能大達數萬像素（曾見 66437×22000），
+                            // 按原尺寸點陣化會花費數十秒到數分鐘。呼叫端已給出夠小的目標
+                            // （如 HTML 的 height=200）就直接用；否則等比壓到紋理上限內。
+                            let hint = match size_hint {
+                                SizeHint::Scale(f) => {
+                                    let scale = f.into_inner();
+                                    let capped = resvg::usvg::Tree::from_data(&bytes, &options).ok().and_then(|tree| {
+                                        let size = tree.size();
+                                        let max = ctx2.input(|i| i.max_texture_side) as f32;
+                                        let render = scale.min((max / size.width()).min(max / size.height()));
+                                        (render < scale).then(|| SizeHint::Scale(render.ord()))
+                                    });
+                                    capped.unwrap_or(size_hint)
+                                }
+                                other => other,
+                            };
+                            let r = egui_extras::image::load_svg_bytes_with_size(&bytes, hint, &options)
+                                .map(|img| clamp_texture_size(&ctx2, img));
+                            let repaint = {
+                                let mut cache = cache.lock();
+                                if let Some(entry) = cache.get_mut(&key2) {
+                                    *entry = std::task::Poll::Ready(r);
+                                    true
+                                } else {
+                                    false
+                                }
+                            };
+                            // 不在鎖內呼叫 ctx（避免死鎖），寫回完成後再要求重繪
+                            if repaint {
+                                ctx2.request_repaint();
+                            }
+                        });
                 }
-                Ok(BytesPoll::Pending { size }) => return Ok(ImagePoll::Pending { size }),
-                Err(e) => return Err(e),
+                Ok(ImagePoll::Pending { size: None })
             }
-        };
-        result.map(|image| ImagePoll::Ready { image }).map_err(LoadError::Loading)
+            Ok(BytesPoll::Pending { size }) => Ok(ImagePoll::Pending { size }),
+            Err(e) => Err(e),
+        }
     }
 
     fn forget(&self, uri: &str) {
@@ -912,7 +1060,7 @@ impl ImageLoader for RemoteSvgLoader {
     }
 
     fn byte_size(&self) -> usize {
-        self.cache.lock().values().filter_map(|r| r.as_ref().ok()).map(|img| img.pixels.len() * 4).sum()
+        0 // 背景點陣化：像素數在背景執行緒完成後才有，簡化回報（egui 快取清理不受影響）
     }
 }
 
@@ -950,7 +1098,25 @@ impl ImageLoader for DiagramLoader {
         } else {
             match ctx.try_load_bytes(uri) {
                 Ok(BytesPoll::Ready { bytes, .. }) => {
-                    let r = egui_extras::image::load_svg_bytes_with_size(&bytes, size_hint, &self.options).map(Arc::new);
+                    // 先解析自然尺寸：記錄類 SVG 可能大達數萬像素（曾見 66437×22000）。
+                    // 呼叫端已給出夠小的目標（如 HTML 的 height=200）就直接用它——幾十毫秒
+                    // 就能點陣化完；只有「按自然尺寸渲染」的要求才等比壓到紋理上限內，
+                    // 否則會花費數十秒到數分鐘並凍結 UI。
+                    let hint = match size_hint {
+                        SizeHint::Scale(f) => {
+                            let scale = f.into_inner();
+                            let capped = resvg::usvg::Tree::from_data(&bytes, &self.options).ok().and_then(|tree| {
+                                let size = tree.size();
+                                let max = ctx.input(|i| i.max_texture_side) as f32;
+                                let render = scale.min((max / size.width()).min(max / size.height()));
+                                (render < scale).then(|| SizeHint::Scale(render.ord()))
+                            });
+                            capped.unwrap_or(size_hint)
+                        }
+                        other => other,
+                    };
+                    let r = egui_extras::image::load_svg_bytes_with_size(&bytes, hint, &self.options)
+                        .map(|img| clamp_texture_size(ctx, img));
                     self.cache.lock().insert(key, r.clone());
                     r
                 }
@@ -1177,6 +1343,31 @@ mod tests {
         assert_eq!(rewrite_image_paths("![a](a.png)", None).0, "![a](a.png)");
         // 連結（非圖片）不受影響
         assert_eq!(rewrite_image_paths("[a](a.md)", Some(base)).0, "[a](a.md)");
+    }
+
+    /// README 常見的 HTML <img> 標籤：內容原樣保留（渲染由 render_html_fragment 接手），
+    /// 但相對路徑會解析成 file:// 絕對路徑登記，供錯誤提示與重新載入使用
+    #[test]
+    fn test_html_numeric_attr_tolerates_trailing_slash_and_px() {
+        assert_eq!(html_numeric_attr("<img height=200/>", "height"), Some(200.0));
+        assert_eq!(html_numeric_attr("<img height=\"80px\">", "height"), Some(80.0));
+        assert_eq!(html_numeric_attr("<img src='x'>", "height"), None);
+    }
+
+    #[test]
+    fn test_rewrite_html_img_tags_resolves_relative_paths() {
+        let base = Path::new("/proj");
+        let md = "<p>\n<img src=\"data/logo.jpeg\" align=\"right\" alt=\"logo\" height=80>\n</p>\n";
+        let (out, uris) = rewrite_image_paths(md, Some(base));
+        assert_eq!(out, md, "HTML 內容原樣保留");
+        assert_eq!(uris, vec!["file:///proj/data/logo.jpeg"]);
+        // 遠端位址原樣登記
+        let (out, uris) = rewrite_image_paths("<img src='https://x.com/a.png'>", Some(base));
+        assert_eq!(out, "<img src='https://x.com/a.png'>");
+        assert_eq!(uris, vec!["https://x.com/a.png"]);
+        // 程式碼區塊裡的 HTML 不登記
+        let md = "```html\n<img src=\"data/logo.jpeg\">\n```\n";
+        assert_eq!(rewrite_image_paths(md, Some(base)), (md.to_string(), Vec::new()));
     }
 
     #[test]
@@ -1482,8 +1673,7 @@ mod tests {
         }
     }
 
-    /// 圖表載入器只放一個字型也能畫出文字：有字型時的點陣圖要比沒有字型時多出文字筆畫
-    /// 帶查詢串的遠端 SVG 由 RemoteSvgLoader 點陣化；無查詢串的 .svg 不歸它管
+    /// 帶查詢串與不帶查詢串的遠端 SVG 都由 RemoteSvgLoader 點陣化；超過紋理上限會等比縮小
     #[test]
     fn test_remote_svg_loader_handles_query_strings() {
         let ctx = egui::Context::default();
@@ -1491,19 +1681,51 @@ mod tests {
         let uri = "https://example.com/badge.svg?branch=main";
         ctx.include_bytes(uri.to_string(), svg.as_bytes().to_vec());
         RemoteSvgLoader::install(&ctx, None);
-        match ctx.try_load_image(&uri.to_string(), SizeHint::default()).unwrap() {
-            ImagePoll::Ready { image } => assert_eq!(image.size, [20, 10]),
-            ImagePoll::Pending { .. } => panic!("本地 include_bytes 應同步點陣化"),
-        }
-        // 無查詢串的 .svg 交給內建 SvgLoader（本載入器拒載）
+        let poll = |uri: &str| {
+            for _ in 0..100 {
+                if let Ok(ImagePoll::Ready { image }) = ctx.try_load_image(uri, SizeHint::default()) {
+                    return Some(image);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            None
+        };
+        let image = poll(uri).expect("應在期限內點陣化");
+        assert_eq!(image.size, [20, 10]);
+        // 無查詢串的 .svg 一樣處理（egui 內建 SvgLoader 之外再保險一層）
         let plain = "https://example.com/plain.svg";
         ctx.include_bytes(plain.to_string(), svg.as_bytes().to_vec());
-        assert!(
-            ctx.try_load_image(&plain.to_string(), SizeHint::default()).is_err(),
-            "無查詢串的 .svg 不應由 RemoteSvgLoader 處理"
-        );
+        assert!(ctx.try_load_image(&plain.to_string(), SizeHint::default()).is_ok());
     }
 
+    /// 原生尺寸超過 GPU 紋理邊長上限的 SVG 會等比縮小，不讓 egui 貼圖斷言崩潰
+    #[test]
+    fn test_remote_svg_loader_clamps_oversized_svg() {
+        let ctx = egui::Context::default();
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="3000"><rect width="4000" height="3000" fill="#0f0"/></svg>"##;
+        let uri = "file:///G:/records/final_best_mao.svg";
+        ctx.include_bytes(uri.to_string(), svg.as_bytes().to_vec());
+        RemoteSvgLoader::install(&ctx, None);
+        let poll2 = |uri: &str| {
+            for _ in 0..100 {
+                if let Ok(ImagePoll::Ready { image }) = ctx.try_load_image(uri, SizeHint::default()) {
+                    return Some(image);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            None
+        };
+        match poll2(uri) {
+            Some(image) => {
+                let max = ctx.input(|i| i.max_texture_side) as usize;
+                assert!(image.size[0] <= max && image.size[1] <= max, "{:?}", image.size);
+                assert_eq!(image.size[0] * 3, image.size[1] * 4, "應保持 4:3 等比");
+            }
+            _ => panic!("應在期限內點陣化"),
+        }
+    }
+
+    /// 圖表載入器只放一個字型也能畫出文字：有字型時的點陣圖要比沒有字型時多出文字筆畫
     #[test]
     fn test_diagram_loader_draws_text_with_single_font() {
         let Some(font) = crate::app::fonts::FontManager::new().diagram_font() else {
@@ -1528,3 +1750,31 @@ mod tests {
         assert!(diff > 100, "文字未繪製（差異像素 {diff}）");
     }
 }
+
+
+
+#[test]
+fn tmp_time_each_image() {
+    use std::time::Instant;
+    let path = std::path::Path::new(r"G:\back\share\sparrow\里程碑备份\sparrow\README.md");
+    let ctx = egui::Context::default();
+    egui_extras::install_image_loaders(&ctx);
+    RemoteSvgLoader::install(&ctx, None);
+    let text = std::fs::read_to_string(path).unwrap();
+    let mut preview = MarkdownPreview::new();
+    preview.refresh(&ctx, &text, 0, false, path.parent().map(|p| p.to_path_buf()));
+    let uris = std::mem::take(&mut preview.image_uris);
+    for uri in uris {
+        let t = Instant::now();
+        let mut r = String::from("?");
+        for _ in 0..3 {
+            match ctx.try_load_image(&uri, SizeHint::default()) {
+                Ok(ImagePoll::Ready { image }) => { r = format!("ready {:?}", image.size); break; }
+                Ok(ImagePoll::Pending { .. }) => { std::thread::sleep(std::time::Duration::from_millis(50)); r = "pending".into(); }
+                Err(e) => { r = format!("err {e}"); break; }
+            }
+        }
+        println!("{:?} {} {uri}", t.elapsed(), r);
+    }
+}
+
