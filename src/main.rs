@@ -49,6 +49,12 @@ fn main() -> eframe::Result {
         .with_inner_size([size.0.max(400.0), size.1.max(300.0)])
         .with_min_inner_size([400.0, 300.0])
         .with_drag_and_drop(true);
+    // Windows：去掉系統標題欄，由 egui 繪製（圖示 + 選單列 + 視窗按鈕），
+    // 縮放邊框與拖動由 window_subclass（src/app/titlebar.rs）以 WM_NCHITTEST 補回。
+    #[cfg(windows)]
+    {
+        viewport = viewport.with_decorations(false);
+    }
     if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../assets/madedit-icon.png")) {
         viewport = viewport.with_icon(icon);
     }

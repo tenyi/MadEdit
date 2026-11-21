@@ -35,7 +35,7 @@ The original C++ / wxWidgets **MadEdit** is a classic tool for many developers a
 
 ### 3. Multi-encoding support and corruption protection
 - Built on `encoding_rs` plus a custom UTF-16 codec. Supports **UTF-8, UTF-8 BOM, UTF-16LE, UTF-16BE, Big5, GB18030, Shift_JIS, EUC-KR, windows-1252, ISO-8859-1** and more.
-- **Smart detection on open**: a BOM is recognized first; without a BOM, strict UTF-8 is tried, then it falls back to the configurable fallback encoding (Big5 by default). New documents use UTF-8 by default.
+- **Smart detection on open**: a BOM is recognized first; without a BOM, strict UTF-8 is tried, then the content is inspected to recognize Big5, GBK/GB18030, Shift_JIS, EUC-KR, EUC-JP and similar encodings, so a GBK `.ini` file opens as GBK instead of being decoded with the configured fallback. The fallback encoding (Big5 by default) is used only when detection cannot decide. New documents use UTF-8 by default.
 - **Lossless safeguard**: if a file contains bytes that cannot be decoded losslessly, the status bar warns and overwriting is refused. **Reinterpret** and **Convert Encoding** are available.
 
 ### 4. Large file engine
@@ -55,10 +55,16 @@ The original C++ / wxWidgets **MadEdit** is a classic tool for many developers a
 
 ### 6. The original MadEdit command set
 - **Single instance**: launching MadEdit again sends files to the existing window and brings it forward. Files open in tabs; reopening a file selects its existing tab. Launching without files restores the existing window. Instances using different `MADEDIT_CONFIG_DIR` directories remain independent.
-- **File**: multi-document tabs, save a copy, save all, recent files, read-only flag, printing and in-app print preview (A4 pages, paging, zoom), session persistence.
+- **File**: multi-document tabs, save a copy, save all, recent files, read-only flag, printing and in-app print preview (A4 pages, paging, zoom), session persistence. Closing the last tab leaves an empty workspace instead of creating an untitled file or exiting. Options > General can automatically reload files changed by other programs, but only when they have no unsaved edits.
 - **Edit**: bookmark line operations, hex string conversion, indent, comment, change case, full/half width, tabs to spaces and back, increment numbers, sort, column alignment.
 - **Search**: plain text / case / whole word / Regex / Hex find and replace, find and replace in multiple files, jump to matching bracket.
-- **View**: word wrap, line numbers, bookmark gutter, ruler, control characters, current line, column guide lines, System / Light / Dark theme, Markdown / HTML preview.
+- **View**: word wrap, line numbers, bookmark gutter, ruler, control characters, current line, column guide lines, System / Light / Dark theme, Markdown / HTML preview. An `.svg` file can also be previewed as a graphic (View > Preview as > Graphic): a resvg-rendered image in a tab or docked panel, with zoom controls, live refresh on save and light/dark themes.
+- **File View panel**: "View > File View" docks a left panel with tabs (List and Open) holding a Favorites tree. Right-click the Favorites root to add a group, a folder's files, individual files, the active file or all open files, or to switch between names and full paths; right-click a group to rename or delete it, and double-click it to open every file in the group. The Open tab lists every editor tab, so files can be switched even when the tab bar is crowded. Recently opened files are listed below. Favorites live in `settings.json`; removing one never touches the file on disk.
+- **PowerShell**: `.ps1`, `.psm1` and `.psd1` files open with full syntax highlighting, bundled with the app and available offline; no extra configuration is needed.
+- **Squirrel**: `.nut` scripts (Squirrel, the scripting language used by many games, <https://squirrel-lang.org/>) open with bundled syntax highlighting for classes, functions, keywords, strings and comments. The user's ADO database, Win32 and MFC extensions (for example `ADOSQLCommand`, `ADODataset`, `AttachToDB`, `MB_OK`, `CString`) are included too, with distinct colors for types, functions and constants.
+- **INI**: `.ini`, `.cfg` and `.conf` files open with bundled highlighting for sections, keys, values and `;` comments.
+- **Code folding**: View > Code Folding collapses `{ }` blocks and multi-line comments in C-like files (`.c`, `.cpp`, `.h`, `.java`, `.js`, `.rs`, `.go`, `.php`, `.nut`, `.json`, …), blocks by indentation in Python (plus runs of `#` comments), and braces/comments in PowerShell (`#`, `<# … #>`, here-strings are skipped). Small triangles to the right of the line numbers collapse a range; the header line shows `⋯ N lines`, and clicking it again expands. Fold / Unfold (Ctrl+Shift+`[`), Fold All and Unfold All are in the same menu, the caret's block unfolds automatically, and a collapsed block survives edits inside the surrounding code. Enabled by default; turn it off in Options > Edit or the View menu.
+- **Run scripts**: Tools > Run Script (F5) executes the current file and streams its output into a resizable "Script Output" panel at the bottom, with exit code, elapsed time (frozen once the run ends) and a Stop button. With text selected, only the selection runs: it is written to a temporary file in the document's own encoding (so a GBK script stays GBK for ANSI interpreters); otherwise the whole file runs, and modified files are saved first. The interpreter follows the extension: `.nut` uses `nut.exe` (next to `MadEdit.exe`, or on `PATH`), `.py` uses `python -u`, `.lua` uses `lua`. Console output is decoded as UTF-8 when valid and as GBK otherwise, so localized messages are not garbled.
 - **Custom syntax and themes**: place Sublime Text `.sublime-syntax` definitions in `syntaxes/` and TextMate `.tmTheme` files in `themes/`, beside `settings.json` (Help > About shows its path; `MADEDIT_CONFIG_DIR` can override the directory). Subfolders are supported; symlinks are skipped. Restart MadEdit after installing files.
   - Custom definitions take precedence over bundled extension matches and approximate language fallbacks. Choose them from View > Syntax; themes appear in the Syntax Highlighting dialog using the file name without `.tmTheme`. A matching name overrides a bundled resource.
   - Malformed files are skipped individually with a diagnostic on stderr; valid resources and built-ins remain available.
@@ -271,7 +277,7 @@ To try packaging without creating a Release, run the Release workflow manually f
 
 ## 🙏 Acknowledgements
 
-Thanks to Alston Chen, the author of the original **MadEdit**, to Minggang Li, the maintainer of **MadEdit-Mod**, and to all contributors. The icons, toolbar icons, Simplified/Traditional Chinese tables and spelling dictionaries in this project all come from the original. This rewrite would not exist without their years of work.
+Thanks to Alston Chen, the author of the original **MadEdit**, to Minggang Li, the maintainer of **MadEdit-Mod**, and to all contributors. The icons, toolbar icons, Simplified/Traditional Chinese tables and spelling dictionaries in this project all come from the original. PowerShell syntax highlighting uses the MIT-licensed [PowerShell package for Sublime Text](https://github.com/SublimeText/PowerShell). This rewrite would not exist without their years of work.
 
 ---
 

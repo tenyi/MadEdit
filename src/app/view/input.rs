@@ -385,6 +385,8 @@ pub(super) fn interact(
     let text_rect = frame.text_rect;
     let gutter_rect = frame.gutter_rect;
     let mark_w = frame.mark_w;
+    let num_w = frame.num_w;
+    let fold_w = frame.fold_w;
     let id = frame.id;
     let response = &frame.response;
     let gutter_resp = &frame.gutter_resp;
@@ -415,10 +417,13 @@ pub(super) fn interact(
     // ── 鍵盤與輸入法 ──
     if focused {
         let events = ctx.input(|i| i.events.clone());
+        // Ctrl+Shift+[ 之類的快捷鍵在部分鍵盤上同時產生「{」文字事件；有 Ctrl 時不插入文字，
+        // 否則快捷鍵會把符號打進文件（AltGr 是 Ctrl+Alt，保留其文字輸入）。
+        let suppress_text = ctx.input(|i| i.modifiers.command && !i.modifiers.alt);
         let mut actions: Vec<EdAction> = Vec::new();
         for ev in &events {
             match ev {
-                Event::Text(t) if !t.chars().any(|c| c.is_control()) => {
+                Event::Text(t) if !suppress_text && !t.chars().any(|c| c.is_control()) => {
                     view.preedit = None;
                     actions.push(EdAction::Insert(t.clone()));
                 }
@@ -447,12 +452,20 @@ pub(super) fn interact(
                 _ => {}
             }
         }
+        let lines_before = doc.editor.lines.len();
+        let caret_line_before = doc.editor.selection.head.line;
         for a in actions {
             apply_action(doc, view, &a, settings, widths, lay);
             // 編輯後立即重建換行快取，後續動作與本幀繪製才不會用舊的斷行位置索引新內容
             view.update_wrap(doc, lay, widths);
             view.clear_frame_layout();
             out.actions.push(a);
+        }
+        // 行數改變時同步折疊範圍；跨過範圍的編輯由 FoldModel 自行丟棄
+        let lines_after = doc.editor.lines.len();
+        if lines_after != lines_before && view.has_folds() {
+            let at = caret_line_before.min(doc.editor.selection.head.line);
+            view.folds.on_line_delta(at, lines_after as isize - lines_before as isize);
         }
         if doc.mode == EditMode::Column && !doc.editor.selection.is_block() {
             // 列塊模式下游標一律為矩形（零寬）選取，方向鍵與輸入都以欄為單位
@@ -603,7 +616,25 @@ pub(super) fn interact(
             view.row_info(ed, r.min(view.row_count(ed).saturating_sub(1)))
                 .0
         };
-        if gutter_resp.clicked() && settings.show_bookmarks && p.x < gutter_rect.left() + mark_w {
+        if gutter_resp.clicked()
+            && settings.code_folding
+            && fold_w > 0.0
+            && p.x >= gutter_rect.left() + mark_w + num_w
+            && p.x < gutter_rect.left() + mark_w + num_w + fold_w
+        {
+            // 折疊手柄（行號右側、緊貼文字）：點三角折疊/展開該行區塊
+            let line = row_at(view, &doc.editor, p);
+            if view.toggle_fold_at(line) == Some(true) {
+                // 游標若剛好落在折疊區內，移到折疊頭；否則下一幀會為了顯示游標而自動展開
+                if let Some(header) = view.fold_header_for_line(doc.editor.selection.head.line) {
+                    doc.editor.move_caret_to(TextPosition::new(header, 0), false);
+                }
+                view.clear_frame_layout();
+            }
+        } else if gutter_resp.clicked()
+            && settings.show_bookmarks
+            && p.x < gutter_rect.left() + mark_w
+        {
             let line = row_at(view, &doc.editor, p);
             doc.editor.move_caret_to(TextPosition::new(line, 0), false);
             doc.editor.toggle_bookmark();
@@ -704,7 +735,11 @@ pub(super) fn interact(
         doc.version,
         doc.editor.selection.head_vcol,
     );
-    if view.last_caret != Some(caret_key) || view.ensure_visible {
+    if view.skip_caret_scroll {
+        // 剛重新載入：沿用原本的捲動位置，只同步游標鍵，不把畫面拉回游標。
+        view.skip_caret_scroll = false;
+        view.last_caret = Some(caret_key);
+    } else if view.last_caret != Some(caret_key) || view.ensure_visible {
         if view.drag.is_none() || matches!(view.drag, Some(Drag::Select | Drag::Block)) {
             view.scroll_to_caret(
                 &doc.editor,
@@ -813,6 +848,31 @@ pub(super) fn context_menu(
             {
                 out.commands.push(c);
                 ui.close();
+            }
+        }
+        // 預覽為：Markdown／HTML／圖形（僅對應類型的檔案可用）。
+        // 「圖形（SVG）」「圖形（圖片）」是勾選式設定，勾選狀態要同步顯示。
+        let is_md = doc.is_markdown();
+        let is_svg = doc.path.as_ref().is_some_and(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")));
+        let is_img = doc.path.as_ref().is_some_and(|p| crate::app::is_raster_image_path(p));
+        if is_md || is_svg || doc.path.is_some() {
+            ui.separator();
+            let preview_label = i18n::translate(lang, "menu.preview_as", "預覽為");
+            ui.label(egui::RichText::new(preview_label).weak());
+            let entries = [
+                (C::PreviewMarkdown, is_md, false),
+                (C::PreviewHtml, true, false),
+                (C::PreviewSvg, is_svg, settings.svg_auto_preview),
+                (C::PreviewImage, is_img, settings.img_auto_preview),
+            ];
+            for (c, enabled, checked) in entries {
+                if ui
+                    .add_enabled(enabled, egui::Button::new(menus::check_label(checked, &i18n::command_text(lang, c))))
+                    .clicked()
+                {
+                    out.commands.push(c);
+                    ui.close();
+                }
             }
         }
     });

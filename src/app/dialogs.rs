@@ -3,6 +3,7 @@
 use eframe::egui::{self, Key, RichText};
 
 use super::commands::{self, plain_label, C};
+use super::favorites::FavTarget;
 use super::form;
 use super::i18n::{self, Lang};
 use super::{App, Confirm};
@@ -158,6 +159,8 @@ pub enum Dialog {
     ConvertEncoding { encoding: String, bom: bool },
     WordCount(WordCount, bool),
     WindowList,
+    /// 收藏面板：新增群組、重新命名群組或檔案項目
+    FavoriteName { target: FavTarget, value: String, invalid: bool },
     /// `copied_at` is when "Copy info" was last clicked (egui time), for a short confirmation.
     About { copied_at: Option<f64> },
     /// Help > Keyboard Shortcuts: the current bindings grouped by menu, with a filter.
@@ -461,6 +464,52 @@ impl App {
                 if let Some(p) = chosen {
                     self.open_path(&p);
                     close = true;
+                }
+            }
+            Dialog::FavoriteName { target, value, invalid } => {
+                let title = match *target {
+                    FavTarget::NewGroup => self.t("dlg.fav_group", "新增收藏群組"),
+                    FavTarget::Group(_) => self.t("dlg.fav_rename_group", "重新命名收藏群組"),
+                    FavTarget::Item(..) => self.t("dlg.fav_rename_item", "重新命名收藏檔案"),
+                };
+                let l_name = self.t("fav.name", "名稱：");
+                let l_hint = self.t("fav.name_hint", "只會改變面板上顯示的名稱，不會更動磁碟上的檔案。");
+                let l_required = self.t("fav.name_required", "名稱不能空白。");
+                let (l_ok, l_cancel) = (self.t("btn.ok", "確定"), self.t("btn.cancel", "取消"));
+                // 空白名稱對檔案項目代表恢復預設顯示，只有群組名稱必填。
+                let is_item = matches!(*target, FavTarget::Item(..));
+                let mut ok = false;
+                let mut field = None;
+                dialog_window(ctx, title).open(&mut open).resizable(false).show(ctx, |ui| {
+                    begin_dialog(ui, dialog_width(ctx, 420.0));
+                    form::section(ui, form::bare(l_name), |s| {
+                        field = Some(s.body(|ui| ui.add(egui::TextEdit::singleline(value).desired_width(f32::INFINITY))));
+                    });
+                    if opened
+                        && let Some(field) = field
+                    {
+                        field.request_focus();
+                    }
+                    if is_item {
+                        hint(ui, l_hint);
+                    }
+                    if *invalid {
+                        ui.add(egui::Label::new(RichText::new(l_required).color(ui.visuals().error_fg_color)).wrap());
+                    }
+                    footer(ui, |ui| {
+                        ok = primary_button(ui, l_ok).clicked() || enter_pressed(ui, ignore_keys);
+                        if ui.button(l_cancel).clicked() {
+                            close = true;
+                        }
+                    });
+                });
+                if ok {
+                    if is_item || !value.trim().is_empty() {
+                        self.apply_favorite_name(*target, value.as_str());
+                        close = true;
+                    } else {
+                        *invalid = true;
+                    }
                 }
             }
             Dialog::Width { full } => {
@@ -1173,6 +1222,8 @@ impl App {
         let (every_before, every_after) = self.t("opt.autosave_interval", "每 {n} 分鐘").split_once("{n}").unwrap_or(("", ""));
         let l_remove = self.t("btn.remove", "移除");
         let font_auto = self.tf("opt.font_auto", "自動（{q}）", None, Some(&self.fonts.editor_family));
+        let ui_font_auto = self.t("opt.ui_font_auto", "自動（預設）");
+        let ui_fonts = self.fonts.families.clone();
         // Fixed size: the window used to shrink and grow with each page's content.
         dialog_window(ctx, self.t("dlg.options", "選項")).open(open).resizable(false).show(ctx, |ui| {
             let size = fit_to_window(ui.ctx(), OPTIONS_SIZE, OPTIONS_CHROME_HEIGHT);
@@ -1215,6 +1266,16 @@ impl App {
                             s.row(self.t("opt.theme", "介面主題："), |ui| form::segmented(ui, &mut draft.theme, &themes));
                             let font = if draft.font_family.is_empty() { font_auto.as_str() } else { draft.font_family.as_str() };
                             s.row(self.t("opt.editor_font", "編輯區字型："), |ui| ui.label(RichText::new(font).weak()));
+                            // 介面字型：選單、對話框、分頁與狀態列；編輯區與「執行輸出」不受影響
+                            s.row(self.t("opt.ui_font", "介面字型："), |ui| {
+                                let current = if draft.ui_font_family.is_empty() { ui_font_auto.to_string() } else { draft.ui_font_family.clone() };
+                                egui::ComboBox::from_id_salt("ui-font").selected_text(current).width(200.0).show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut draft.ui_font_family, String::new(), ui_font_auto);
+                                    for name in &ui_fonts {
+                                        ui.selectable_value(&mut draft.ui_font_family, name.clone(), name);
+                                    }
+                                });
+                            });
                         });
                         form::section(ui, self.t("opt.sec.open", "開啟檔案"), |s| {
                             s.row(self.t("opt.default_enc", "預設編碼："), |ui| encoding_combo(ui, "def-enc", &mut draft.default_encoding));
@@ -1239,6 +1300,8 @@ impl App {
                         form::section(ui, self.t("opt.sec.session", "工作階段與存檔"), |s| {
                             s.toggle(self.t("opt.reload_startup", "啟動時重新開啟上次的檔案"), &mut draft.reload_files_on_startup);
                             s.toggle(self.t("opt.restore_caret", "開檔時還原上次的游標位置"), &mut draft.restore_caret_position);
+                            s.toggle(self.t("opt.auto_reload", "其他程式修改時自動重新載入"), &mut draft.auto_reload_external);
+                            s.note(self.t("opt.auto_reload_note", "僅在檔案沒有未儲存的修改時自動載入；有未儲存修改時仍會顯示提示。"));
                             s.toggle_with(self.t("opt.autosave_label", "自動儲存"), &mut draft.auto_save, |ui| {
                                 ui.add(egui::DragValue::new(&mut draft.auto_save_minutes).range(1..=120).prefix(every_before).suffix(every_after));
                             });
@@ -1260,6 +1323,7 @@ impl App {
                             s.row(self.t("opt.spacing", "行距（%）："), |ui| ui.add(egui::DragValue::new(&mut draft.line_spacing).range(100..=250)));
                             s.toggle(self.t("opt.fixed", "等寬模式"), &mut draft.fixed_width);
                             s.toggle(self.t("opt.typewriter", "打字機模式（游標保持在畫面中央）"), &mut draft.typewriter_mode);
+                            s.toggle(self.t("opt.code_folding", "啟用代碼折疊（C/C++、Java、JS、Squirrel 等的 { } 區塊）"), &mut draft.code_folding);
                         });
                         form::section(ui, self.t("opt.sec.typing", "輸入"), |s| {
                             s.toggle(self.t("opt.auto_pair", "自動補全成對字元（括號、引號）"), &mut draft.auto_complete_pair);
@@ -1642,7 +1706,7 @@ impl App {
             }
             Confirm::CreateNew { path } => {
                 let mut choice = None;
-                let name = path.display().to_string();
+                let name = crate::core::display_path(path);
                 let body = self.tf("confirm.create_body", "「{q}」不存在，是否要建立新的檔案？", None, Some(&name));
                 modal.show(ctx, |ui| {
                     confirm_body(ui, opened, self.t("confirm.create_title", "檔案不存在"), &[&body]);
@@ -1672,6 +1736,8 @@ impl App {
         } else if !keep && self.confirm.is_none() {
             // 確認視窗已關閉且沒有後續確認（取消、重新載入或存檔失敗）：中止暫存的關閉流程
             self.pending_close = None;
+            // 取消關閉流程時，收藏群組的「取代開啟」也不進行
+            self.pending_open_group = None;
             // 還有其他等待詢問是否建立的檔案時，繼續問下一個
             if let Some(next) = self.pending_create.first() {
                 self.confirm = Some(Confirm::CreateNew { path: next.clone() });

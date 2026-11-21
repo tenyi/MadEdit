@@ -79,6 +79,11 @@ pub fn from_json(s: &str) -> Result<Vec<MacroStep>, String> {
 impl App {
     /// 播放佇列中的巨集
     pub fn poll_macro(&mut self, ctx: &egui::Context) {
+        // 沒有開啟的文件時不播放巨集：每個編輯步驟都需要目前分頁。
+        if self.tabs.is_empty() {
+            self.macros.queued = None;
+            return;
+        }
         let Some(steps) = self.macros.queued.take() else { return };
         let was_recording = std::mem::replace(&mut self.macros.recording, false);
         for step in steps {

@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use super::favorites::FavoriteGroup;
+
 /// 自動換行模式
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum WrapMode {
@@ -238,17 +240,55 @@ impl Default for FindInFilesOptions {
     }
 }
 
+/// 資源管理器頁籤狀態（跨階段記住位置與外觀）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct ExplorerOptions {
+    /// ▣ 分欄模式（樹下方顯示所選資料夾內容列表）
+    pub split: bool,
+    /// 上半部樹佔分欄高度的比例（拖拽分隔條後記住）
+    pub ratio: f32,
+    /// 生效中的檔名篩選詞（按「>」或 Enter 後的值）
+    pub filter: String,
+    /// 目前選中的資料夾
+    pub selected: Option<String>,
+    /// 展開中的資料夾（絕對路徑清單）
+    pub expanded: Vec<String>,
+    /// 分欄列表排序欄：0=名稱 1=修改日期 2=類型 3=大小
+    pub sort_column: u8,
+    /// 分欄列表是否降冪
+    pub sort_descending: bool,
+    /// 分欄列表欄寬 [名稱, 修改日期, 類型, 大小]；名稱 0 = 依內容自動
+    pub col_widths: Vec<f32>,
+}
+
+impl Default for ExplorerOptions {
+    fn default() -> Self {
+        Self { split: false, ratio: 0.5, filter: String::new(), selected: None, expanded: Vec::new(), sort_column: 0, sort_descending: false, col_widths: Vec::new() }
+    }
+}
+
 /// 全部設定
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct Settings {
-    pub auto_check_updates: bool,
+pub struct Settings {    pub auto_check_updates: bool,
     pub last_update_check: u64,
     pub skipped_update: String,
     // ── 檢視 ──
     /// 編輯區字型（空字串表示自動挑選）
     pub font_family: String,
     pub font_size: f32,
+    /// 介面字型（選單、對話框、分頁等；空字串表示自動）。
+    /// 不影響編輯區與「執行輸出」面板，兩者固定使用編輯區字型
+    pub ui_font_family: String,
+    /// 「執行輸出」面板的「輸出到檔案（result.log）」勾選狀態（跨階段記住，重開程式沿用）
+    pub output_log_to_file: bool,
+    /// 「執行輸出」面板是否顯示（檢視 → 運行輸出）：記住使用者最後的顯示/隱藏狀態
+    pub show_script_output: bool,
+    /// 以圖形預覽（SVG）勾選狀態：開啟時，打開 .svg 直接以圖形顯示
+    pub svg_auto_preview: bool,
+    /// 以圖形預覽（圖片）勾選狀態：開啟時，打開 .bmp/.jpg/.jpeg 等直接以圖形顯示
+    pub img_auto_preview: bool,
     /// 等寬模式：每個字元依固定格子寬度排列（關閉時依字型實際字寬排列）
     pub fixed_width: bool,
     pub tab_size: usize,
@@ -259,6 +299,8 @@ pub struct Settings {
     pub wrap_column: usize,
     pub show_line_numbers: bool,
     pub show_bookmarks: bool,
+    /// 代碼折疊：左側 gutter 顯示折疊三角，支援折疊/展開大括號區塊
+    pub code_folding: bool,
     pub show_col_hint: bool,
     pub col_hint_position: usize,
     pub show_ruler: bool,
@@ -281,6 +323,20 @@ pub struct Settings {
     pub show_statusbar: bool,
     pub always_on_top: bool,
 
+    // ── 收藏 ──
+    /// 收藏群組；每個群組可放多個檔案，面板可一次開啟整組
+    pub favorites: Vec<FavoriteGroup>,
+    /// 面板上的檔案只顯示檔名，不顯示完整路徑
+    pub favorites_show_names_only: bool,
+    /// 「最近開啟的檔案」區塊是否展開
+    pub favorites_recent_expanded: bool,
+    /// 左側「文件視圖」面板是否顯示（檢視 → 文件視圖）
+    pub show_file_view: bool,
+    /// 文件視圖面板寬度（使用者拖曳分隔線後記住）
+    pub file_view_width: f32,
+    /// 資源管理器頁籤狀態（分欄、篩選、選中位置與展開節點，跨階段記住）
+    pub explorer: ExplorerOptions,
+
     // ── 一般 ──
     /// 新文件與「強制使用預設編碼」採用的編碼
     pub default_encoding: String,
@@ -293,6 +349,8 @@ pub struct Settings {
     pub max_search_result_chars: usize,
     pub reload_files_on_startup: bool,
     pub restore_caret_position: bool,
+    /// 檔案被其他程式修改時，沒有未儲存修改的文件直接重新載入（關閉時只顯示提示）
+    pub auto_reload_external: bool,
     pub auto_save: bool,
     pub auto_save_minutes: u32,
     pub auto_backup: bool,
@@ -353,6 +411,11 @@ impl Default for Settings {
             skipped_update: String::new(),
             font_family: String::new(),
             font_size: 14.0,
+            ui_font_family: String::new(),
+            output_log_to_file: false,
+            show_script_output: false,
+            svg_auto_preview: false,
+            img_auto_preview: false,
             fixed_width: false,
             tab_size: 4,
             indent_size: 4,
@@ -361,6 +424,7 @@ impl Default for Settings {
             wrap_column: 80,
             show_line_numbers: true,
             show_bookmarks: true,
+            code_folding: true,
             show_col_hint: false,
             col_hint_position: 80,
             show_ruler: true,
@@ -382,6 +446,14 @@ impl Default for Settings {
             show_statusbar: true,
             always_on_top: false,
 
+            favorites: Vec::new(),
+            favorites_show_names_only: true,
+            favorites_recent_expanded: false,
+            // 預設關閉：面板是新的工作區，從「檢視 → 文件視圖」開啟
+            show_file_view: false,
+            file_view_width: 240.0,
+            explorer: ExplorerOptions::default(),
+
             default_encoding: "UTF-8".into(),
             fallback_encoding: "Big5".into(),
             enforce_default_encoding: false,
@@ -390,6 +462,7 @@ impl Default for Settings {
             max_search_result_chars: 100,
             reload_files_on_startup: true,
             restore_caret_position: true,
+            auto_reload_external: false,
             auto_save: false,
             auto_save_minutes: 10,
             auto_backup: false,
@@ -644,6 +717,92 @@ mod tests {
     }
 
     #[test]
+    fn test_favorites_roundtrip_and_legacy_settings_without_the_field() {
+        let mut s = Settings::default();
+        let mut group = FavoriteGroup::new("工作");
+        group.add(PathBuf::from("/work/a.txt"));
+        group.add(PathBuf::from("/work/b.txt"));
+        s.favorites.push(group);
+        s.favorites_show_names_only = false;
+        s.show_file_view = true;
+        s.file_view_width = 320.0;
+        let json = serde_json::to_string(&s).unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.favorites, s.favorites);
+        assert!(!back.favorites_show_names_only);
+        assert!(back.show_file_view);
+        assert_eq!(back.file_view_width, 320.0);
+        // 舊版設定檔沒有收藏欄位：使用預設值（面板關閉、僅顯示名稱）
+        let legacy: Settings = serde_json::from_str(r#"{"tab_size": 8}"#).unwrap();
+        assert!(legacy.favorites.is_empty());
+        assert!(legacy.favorites_show_names_only);
+        assert!(!legacy.show_file_view);
+    }
+
+    #[test]
+    fn test_auto_reload_external_defaults_off_and_roundtrips() {
+        assert!(!Settings::default().auto_reload_external, "既有行為是顯示提示，不能預設自動覆蓋");
+        let mut s = Settings::default();
+        s.auto_reload_external = true;
+        let back: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert!(back.auto_reload_external);
+        // 舊版設定檔沒有這個欄位：維持提示流程
+        let legacy: Settings = serde_json::from_str(r#"{"tab_size": 8}"#).unwrap();
+        assert!(!legacy.auto_reload_external);
+    }
+
+    #[test]
+    fn test_explorer_options_roundtrip_and_legacy_defaults() {
+        let mut s = Settings::default();
+        s.explorer.split = true;
+        s.explorer.ratio = 0.7;
+        s.explorer.filter = "*.rs".into();
+        s.explorer.selected = Some(r"D:\work".into());
+        s.explorer.expanded = vec![r"D:\".into(), r"D:\work".into()];
+        s.explorer.col_widths = vec![180.0, 115.0, 60.0, 80.0];
+        let back: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert!(back.explorer.split);
+        assert_eq!(back.explorer.ratio, 0.7);
+        assert_eq!(back.explorer.filter, "*.rs");
+        assert_eq!(back.explorer.selected.as_deref(), Some(r"D:\work"));
+        assert_eq!(back.explorer.expanded, vec![r"D:\".to_string(), r"D:\work".to_string()]);
+        assert_eq!(back.explorer.col_widths, vec![180.0, 115.0, 60.0, 80.0], "欄寬要寫入並讀回設定");
+        // 舊版設定檔沒有 explorer 欄位：全部回到預設（不分欄、無篩選、無選中）
+        let legacy: Settings = serde_json::from_str(r#"{"tab_size": 8}"#).unwrap();
+        assert_eq!(legacy.explorer, ExplorerOptions::default());
+    }
+
+    #[test]
+    fn test_explorer_options_tolerate_missing_new_fields() {
+        // 前一個版本寫出的 explorer 物件沒有排序欄位：必須正常載入，
+        // 不能因缺欄位被判成「設定檔損壞」（那會把使用者的設定改名成 .bak 並回到預設）。
+        let legacy = r#"{"explorer": {"split": true, "ratio": 0.6, "filter": "*.rs", "selected": "D:\\work", "expanded": ["D:\\"]}}"#;
+        let s: Settings = serde_json::from_str(legacy).expect("缺少排序欄位的舊設定必須能載入");
+        assert!(s.explorer.split);
+        assert_eq!(s.explorer.ratio, 0.6);
+        assert_eq!(s.explorer.filter, "*.rs");
+        assert_eq!(s.explorer.selected.as_deref(), Some(r"D:\work"));
+        assert_eq!(s.explorer.expanded, vec![r"D:\".to_string()]);
+        // 缺少的新欄位回退預設：名稱升冪
+        assert_eq!((s.explorer.sort_column, s.explorer.sort_descending), (0, false));
+    }
+
+    #[test]
+    fn test_svg_auto_preview_defaults_off_and_roundtrips() {
+        assert!(!Settings::default().svg_auto_preview, "預設不自動開啟圖形預覽");
+        let mut s = Settings::default();
+        s.svg_auto_preview = true;
+        s.img_auto_preview = true;
+        let back: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert!(back.svg_auto_preview, "勾選狀態必須寫入並讀回設定");
+        assert!(back.img_auto_preview, "圖片預覽勾選狀態必須寫入並讀回設定");
+        // 舊版設定檔沒有這個欄位：維持關閉
+        let legacy: Settings = serde_json::from_str(r#"{"tab_size": 8}"#).unwrap();
+        assert!(!legacy.svg_auto_preview);
+        assert!(!legacy.img_auto_preview);
+    }
+
+    #[test]
     fn test_corrupt_settings_are_backed_up_and_reported() {
         let dir = temp_dir("corrupt");
         std::fs::create_dir_all(&dir).unwrap();
@@ -661,7 +820,7 @@ mod tests {
 
     #[test]
     fn test_settings_roundtrip_and_partial_json() {
-        let mut s = Settings { font_size: 18.0, ..Default::default() };
+        let mut s = Settings { font_size: 18.0, ui_font_family: "Segoe UI".into(), output_log_to_file: true, show_script_output: true, ..Default::default() };
         s.add_recent_file(PathBuf::from("/a"));
         s.add_recent_file(PathBuf::from("/b"));
         s.add_recent_file(PathBuf::from("/a"));
@@ -669,9 +828,15 @@ mod tests {
         let json = serde_json::to_string(&s).unwrap();
         let back: Settings = serde_json::from_str(&json).unwrap();
         assert_eq!(back.font_size, 18.0);
+        assert_eq!(back.ui_font_family, "Segoe UI");
+        assert!(back.output_log_to_file, "the log toggle persists");
+        assert!(back.show_script_output, "the Script Output panel state persists");
         // 舊版設定檔缺少欄位時以預設值補上
         let partial: Settings = serde_json::from_str(r#"{"tab_size": 8}"#).unwrap();
         assert_eq!(partial.tab_size, 8);
         assert!(partial.show_line_numbers);
+        assert!(partial.ui_font_family.is_empty(), "missing ui_font_family means automatic");
+        assert!(!partial.output_log_to_file, "missing log toggle defaults to off");
+        assert!(!partial.show_script_output, "missing Script Output state defaults to hidden");
     }
 }

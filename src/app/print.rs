@@ -97,7 +97,7 @@ fn escape(s: &str) -> String {
 fn expand_vars(fmt: &str, doc: &Document) -> String {
     let now = chrono::Local::now();
     let name = doc.display_name();
-    let path = doc.path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| name.clone());
+    let path = doc.path.as_deref().map(crate::core::display_path).unwrap_or_else(|| name.clone());
     fmt.replace("%f", &name)
         .replace("%p", &path)
         .replace("%n", &PAGE_NO_MARK.to_string())
