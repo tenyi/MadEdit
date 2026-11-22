@@ -514,6 +514,12 @@ impl App {
         };
         if let Some(i) = self.tabs.iter().position(|t| t.doc.path.as_deref().is_some_and(|p| same_target(p, &canon))) {
             self.activate(i);
+            // 勾選「以Markdown預覽」時，重新開啟已開啟的 .md 也進入預覽（與新開檔案一致）
+            if self.settings.md_auto_preview
+                && path.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "md" | "markdown"))
+            {
+                self.preview_markdown();
+            }
             return true;
         }
         // 先登記再讀檔：執行中的背景取代不會再寫入這個檔案，正在寫入時則等寫完才讀
@@ -559,6 +565,10 @@ impl App {
                 // 設定勾選「以圖形預覽（圖片）」時，打開 bmp/jpg/jpeg 等直接以圖形顯示
                 if self.settings.img_auto_preview && is_raster_image_path(&path) {
                     self.preview_image();
+                }
+                // 設定勾選「以Markdown預覽」時，打開 .md 直接進入預覽
+                if self.settings.md_auto_preview && path.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "md" | "markdown")) {
+                    self.preview_markdown();
                 }
                 true
             }
@@ -1178,7 +1188,7 @@ impl App {
                             ui.separator();
                             ui.label(egui::RichText::new(self.t("menu.preview_as", "預覽為")).weak());
                             let entries = [
-                                (C::PreviewMarkdown, is_md, false),
+                                (C::PreviewMarkdown, true, self.settings.md_auto_preview),
                                 (C::PreviewHtml, true, false),
                                 (C::PreviewSvg, is_svg, self.settings.svg_auto_preview),
                                 (C::PreviewImage, is_img, self.settings.img_auto_preview),

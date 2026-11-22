@@ -433,8 +433,8 @@ impl App {
         menu(ui, check_label(false, self.t("menu.show", "顯示")), |ui| self.show_menu(ui, &s));
         ui.separator();
         menu(ui, check_label(false, self.t("menu.preview_as", "預覽為")), |ui| {
-            let is_md = self.doc().is_markdown();
-            self.item_enabled(ui, C::PreviewMarkdown, is_md);
+            // 勾選式：記錄到設定，之後打開 .md 會直接進入預覽
+            self.check(ui, C::PreviewMarkdown, s.md_auto_preview);
             self.item(ui, C::PreviewHtml);
             // 勾選式：記錄到設定，之後打開 .svg 會直接以圖形顯示
             self.check(ui, C::PreviewSvg, s.svg_auto_preview);

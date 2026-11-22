@@ -225,8 +225,39 @@ impl App {
         self.activate_view(self.active, false);
     }
 
+    /// 安裝 Markdown 預覽所需的圖片載入器（延到第一次預覽，不拖慢啟動；重複呼叫無妨）
+    fn install_md_loaders(&mut self, ctx: &egui::Context) {
+        // 圖表載入器要後裝，egui 會先問後裝的載入器
+        egui_extras::install_image_loaders(ctx);
+        if !ctx.is_loader_installed(super::mdpreview::DiagramLoader::ID) {
+            super::mdpreview::DiagramLoader::install(ctx, self.fonts.diagram_font());
+        }
+        // 帶查詢串的遠端 SVG（GitHub 徽章等）：內建 SvgLoader 不認得 `?` 後的副檔名，補位載入
+        if !ctx.is_loader_installed(super::mdpreview::RemoteSvgLoader::ID) {
+            super::mdpreview::RemoteSvgLoader::install(ctx, self.fonts.diagram_font());
+        }
+    }
+
+    /// 開啟／聚焦目前 .md 文件的 Markdown 預覽（含 Mermaid 圖表與遠端圖片）
+    pub(super) fn preview_markdown(&mut self) {
+        if !self.doc().is_markdown() {
+            self.set_status(self.t("md.not_markdown", "Markdown 預覽僅支援 .md 檔案"));
+            return;
+        }
+        {
+            let tab = self.tab_mut();
+            let pv = tab.md_preview.get_or_insert_with(super::mdpreview::MarkdownPreview::new);
+            if pv.placement != super::mdpreview::Placement::Tab {
+                pv.set_placement(super::mdpreview::Placement::Tab);
+            }
+        }
+        self.preview_tab_active = false;
+        self.activate_view(self.active, true);
+    }
+
     pub fn show_markdown_preview(&mut self, ui: &mut egui::Ui) {        use super::mdpreview::Placement;
         let ctx = ui.ctx().clone();
+        self.install_md_loaders(&ctx);
         let lang = self.ui_lang();
         let tab = self.tab_mut();
         let Some(mut pv) = tab.md_preview.take() else { return };
@@ -914,24 +945,20 @@ impl App {
                     self.focus_editor = true;
                 }
             }
-            // 非 Markdown 檔不開預覽（選單與工具列已停用，這裡擋住快捷鍵與巨集）
-            C::PreviewMarkdown if self.doc().is_markdown() => {
-                // 於 App 內開啟 Markdown 預覽（含 Mermaid 圖表）。
-                // 圖片載入器延到第一次預覽才安裝，不拖慢啟動；重複呼叫無妨。
-                // 圖表載入器要後裝，egui 會先問後裝的載入器
-                egui_extras::install_image_loaders(ctx);
-                if !ctx.is_loader_installed(super::mdpreview::DiagramLoader::ID) {
-                    super::mdpreview::DiagramLoader::install(ctx, self.fonts.diagram_font());
+            // 勾選式開關：記錄到設定；勾選時打開 .md 直接進入預覽，取消勾選關閉目前預覽
+            C::PreviewMarkdown => {
+                self.settings.md_auto_preview = !self.settings.md_auto_preview;
+                let enabled = self.settings.md_auto_preview;
+                self.save_settings();
+                if enabled {
+                    if self.doc().is_markdown() {
+                        self.preview_markdown();
+                    }
+                } else if self.preview_tab_active {
+                    self.tab_mut().md_preview = None;
+                    self.preview_tab_active = false;
+                    self.focus_editor = true;
                 }
-                // 帶查詢串的遠端 SVG（GitHub 徽章等）：內建 SvgLoader 不認得 `?` 後的副檔名，補位載入
-                if !ctx.is_loader_installed(super::mdpreview::RemoteSvgLoader::ID) {
-                    super::mdpreview::RemoteSvgLoader::install(ctx, self.fonts.diagram_font());
-                }
-                let pv = self.tab_mut().md_preview.get_or_insert_with(super::mdpreview::MarkdownPreview::new);
-                if pv.placement != super::mdpreview::Placement::Tab {
-                    pv.set_placement(super::mdpreview::Placement::Tab);
-                }
-                self.activate_view(self.active, true);
             }
             C::PreviewSvg => {
                 // 勾選式開關：記錄到設定；打開 .svg 時若為勾選狀態就直接顯示圖形。

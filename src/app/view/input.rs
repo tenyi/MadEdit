@@ -860,7 +860,7 @@ pub(super) fn context_menu(
             let preview_label = i18n::translate(lang, "menu.preview_as", "預覽為");
             ui.label(egui::RichText::new(preview_label).weak());
             let entries = [
-                (C::PreviewMarkdown, is_md, false),
+                (C::PreviewMarkdown, true, settings.md_auto_preview),
                 (C::PreviewHtml, true, false),
                 (C::PreviewSvg, is_svg, settings.svg_auto_preview),
                 (C::PreviewImage, is_img, settings.img_auto_preview),

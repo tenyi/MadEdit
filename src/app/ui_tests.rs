@@ -1492,14 +1492,22 @@ fn test_markdown_preview_tab_reuses_source_and_never_opens_a_viewport() {
     h.get_by_label(&preview_name).click();
     h.run_steps(5);
     h.get_by_label("Preview heading updated");
+    // 再點一次「以Markdown預覽」＝取消勾選並關閉預覽
     h.state_mut().pending.push(C::PreviewMarkdown);
     h.run_steps(3);
-    assert_eq!(h.state().tab_pages().len(), 2, "重複開啟只選取既有預覽");
-    h.key_press_modifiers(Modifiers::COMMAND, Key::Num1);
-    h.run_steps(2);
     assert!(!h.state().is_preview_tab());
-    h.key_press_modifiers(if cfg!(target_os = "macos") { Modifiers::CTRL } else { Modifiers::COMMAND }, Key::Tab);
-    h.run_steps(2);
+    assert!(h.state_mut().tab_mut().md_preview.is_none());
+    assert!(!h.state().settings.md_auto_preview, "取消勾選應寫回設定");
+    // 再勾選：重新開啟預覽，且不會複製來源文件
+    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.run_steps(3);
+    assert!(h.state().is_preview_tab());
+    assert_eq!(h.state().tab_pages().len(), 2, "重複開啟只選取既有預覽");
+    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.run_steps(3);
+    assert!(!h.state().is_preview_tab());
+    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.run_steps(3);
     assert!(h.state().is_preview_tab(), "切換分頁須包含預覽");
     h.state_mut().pending.push(C::Close);
     h.run_steps(3);
@@ -1533,7 +1541,8 @@ fn test_markdown_preview_tab_layout_and_document_lifetime() {
     h.state_mut().doc_mut().syntax = "Markdown".into();
     type_text(&mut h, "# Second");
     let second_id = h.state().doc().id;
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    // 第二份文件直接以方法開啟預覽（此時 md_auto_preview 已為 true，push 會變成取消勾選）
+    h.state_mut().preview_markdown();
     h.run_steps(4);
     assert_eq!(h.state().tab_pages().len(), 4);
     assert_eq!(h.output().viewport_output.len(), 1);
@@ -1569,7 +1578,8 @@ fn test_markdown_preview_only_for_markdown() {
     assert!(h.state_mut().tab_mut().md_preview.is_none(), "純文字檔不應開啟預覽");
     h.state_mut().activate(1);
     assert!(h.state_mut().doc().is_markdown());
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    // 直接以方法開啟（push 會切換勾選狀態）
+    h.state_mut().preview_markdown();
     h.run_steps(3);
     assert!(h.state_mut().tab_mut().md_preview.is_some(), "Markdown 檔應開啟預覽");
     let _ = std::fs::remove_dir_all(&dir);
@@ -2804,6 +2814,32 @@ fn test_svg_auto_preview_opens_graphic_on_open() {
     assert!(!h.state().settings.svg_auto_preview, "取消勾選應寫回設定");
     assert!(h.state().tabs[0].svg_preview.is_none(), "取消勾選後應關閉圖形預覽");
     assert!(!h.state().is_svg_preview_tab());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 「以Markdown預覽」勾選狀態：勾選後打開 .md 直接進入預覽；
+/// 取消勾選會關閉預覽分頁。
+#[test]
+fn test_md_auto_preview_opens_preview_on_open() {
+    let dir = std::env::temp_dir().join(format!("madedit-md-auto-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("doc.md");
+    std::fs::write(&file, "# 標題\n\n內文\n").unwrap();
+
+    let mut h = harness();
+    h.state_mut().settings.md_auto_preview = true;
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    assert!(h.state().is_preview_tab(), "勾選狀態下打開 .md 應直接進入預覽");
+    assert!(h.state().tabs[0].md_preview.is_some(), "應已建立 Markdown 預覽");
+
+    // 取消勾選（等同再點一次選單項）：設定關閉、預覽分頁關閉
+    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.run_steps(3);
+    assert!(!h.state().settings.md_auto_preview, "取消勾選應寫回設定");
+    assert!(h.state().tabs[0].md_preview.is_none(), "取消勾選後應關閉預覽");
+    assert!(!h.state().is_preview_tab());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
