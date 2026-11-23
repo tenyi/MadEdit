@@ -1,4 +1,4 @@
-﻿//! 以 egui_kittest 模擬鍵盤與輸入法事件的整合測試（不開視窗、不需 GPU）
+//! 以 egui_kittest 模擬鍵盤與輸入法事件的整合測試（不開視窗、不需 GPU）
 
 use eframe::egui::{self, Event, ImeEvent, Key, Modifiers};
 use egui_kittest::Harness;
@@ -1248,7 +1248,7 @@ fn test_markdown_preview_scrolls_within_wrapped_editor_line() {
     h.state_mut().doc_mut().editor.set_text(&format!("{}\n\n結尾\n", "long text ".repeat(1000)));
     h.state_mut().doc_mut().version += 1;
     h.state_mut().settings.wrap_mode = WrapMode::ByWindow;
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(3);
     h.state_mut().tab_mut().md_preview.as_mut().unwrap().set_placement(Placement::Right);
     h.run_steps(5);
@@ -1287,7 +1287,7 @@ fn test_markdown_preview_scrolls_editor_without_feedback_or_selection_change() {
         h.state_mut().doc_mut().version += 1;
         let selection = Selection::new(TextPosition::new(0, 1), TextPosition::new(2, 3));
         h.state_mut().doc_mut().editor.selection = selection;
-        h.state_mut().pending.push(C::PreviewMarkdown);
+        h.state_mut().pending.push(C::PreviewAuto);
         h.run_steps(3);
         h.state_mut().tab_mut().md_preview.as_mut().unwrap().set_placement(placement);
         h.run_steps(8);
@@ -1321,7 +1321,7 @@ fn test_markdown_preview_reverse_scrolls_within_wrapped_line() {
     h.state_mut().doc_mut().editor.set_text(&format!("{}\n\nend\n", "long text ".repeat(1000)));
     h.state_mut().doc_mut().version += 1;
     h.state_mut().settings.wrap_mode = WrapMode::ByWindow;
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(3);
     h.state_mut().tab_mut().md_preview.as_mut().unwrap().set_placement(Placement::Right);
     h.run_steps(8);
@@ -1447,7 +1447,7 @@ fn test_markdown_preview_follows_active_tab() {
     let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, vec![a, b], None));
     h.run_steps(3);
     h.state_mut().activate(0);
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(3);
     h.state_mut().tab_mut().md_preview.as_mut().unwrap().set_placement(Placement::Right);
     h.run_steps(3);
@@ -1471,7 +1471,7 @@ fn test_markdown_preview_tab_reuses_source_and_never_opens_a_viewport() {
     let source_id = h.state().doc().id;
     let source_name = format!("{} *", h.state().doc().display_name());
     let preview_name = format!("{} — Markdown 預覽", h.state().doc().display_name());
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(5);
     assert!(h.state().is_preview_tab());
     assert_eq!(h.state().tabs.len(), 1, "預覽不得複製來源文件");
@@ -1493,20 +1493,20 @@ fn test_markdown_preview_tab_reuses_source_and_never_opens_a_viewport() {
     h.run_steps(5);
     h.get_by_label("Preview heading updated");
     // 再點一次「以Markdown預覽」＝取消勾選並關閉預覽
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(3);
     assert!(!h.state().is_preview_tab());
     assert!(h.state_mut().tab_mut().md_preview.is_none());
-    assert!(!h.state().settings.md_auto_preview, "取消勾選應寫回設定");
+    assert!(!h.state().settings.auto_preview, "取消勾選應寫回設定");
     // 再勾選：重新開啟預覽，且不會複製來源文件
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(3);
     assert!(h.state().is_preview_tab());
     assert_eq!(h.state().tab_pages().len(), 2, "重複開啟只選取既有預覽");
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(3);
     assert!(!h.state().is_preview_tab());
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(3);
     assert!(h.state().is_preview_tab(), "切換分頁須包含預覽");
     h.state_mut().pending.push(C::Close);
@@ -1526,7 +1526,7 @@ fn test_markdown_preview_tab_layout_and_document_lifetime() {
     h.state_mut().doc_mut().syntax = "Markdown".into();
     type_text(&mut h, "# First");
     let first_id = h.state().doc().id;
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(4);
     h.get_by_label("左右並排").click();
     h.run_steps(5);
@@ -1573,7 +1573,7 @@ fn test_markdown_preview_only_for_markdown() {
     h.run_steps(3);
     h.state_mut().activate(0);
     assert!(!h.state_mut().doc().is_markdown());
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(3);
     assert!(h.state_mut().tab_mut().md_preview.is_none(), "純文字檔不應開啟預覽");
     h.state_mut().activate(1);
@@ -1920,7 +1920,7 @@ fn test_preview_tab_close_button_is_named_and_closes_only_the_preview() {
     h.state_mut().doc_mut().editor.set_text("# Title\n");
     h.state_mut().doc_mut().version += 1;
     let original = h.state_mut().doc_mut().text();
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(3);
     h.state_mut().tab_mut().md_preview.as_mut().unwrap().set_placement(Placement::Tab);
     h.run_steps(3);
@@ -1946,7 +1946,7 @@ fn test_icon_buttons_are_named_for_screen_readers() {
     use super::mdpreview::Placement;
     let mut h = harness();
     h.state_mut().doc_mut().syntax = "Markdown".into();
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(3);
     h.state_mut().tab_mut().md_preview.as_mut().unwrap().set_placement(Placement::Right);
     h.state_mut().pending.push(C::Find);
@@ -2802,16 +2802,16 @@ fn test_svg_auto_preview_opens_graphic_on_open() {
     std::fs::write(&file, r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="#2266aa"/></svg>"##).unwrap();
 
     let mut h = harness();
-    h.state_mut().settings.svg_auto_preview = true;
+    h.state_mut().settings.auto_preview = true;
     h.state_mut().open_path(&file);
     h.run_steps(3);
     assert!(h.state().is_svg_preview_tab(), "勾選狀態下打開 svg 應直接顯示圖形");
     assert!(h.state().tabs[0].svg_preview.is_some(), "應已建立圖形預覽");
 
     // 取消勾選（等同再點一次選單項）：設定關閉、預覽分頁關閉
-    h.state_mut().pending.push(C::PreviewSvg);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(3);
-    assert!(!h.state().settings.svg_auto_preview, "取消勾選應寫回設定");
+    assert!(!h.state().settings.auto_preview, "取消勾選應寫回設定");
     assert!(h.state().tabs[0].svg_preview.is_none(), "取消勾選後應關閉圖形預覽");
     assert!(!h.state().is_svg_preview_tab());
     let _ = std::fs::remove_dir_all(&dir);
@@ -2828,16 +2828,16 @@ fn test_md_auto_preview_opens_preview_on_open() {
     std::fs::write(&file, "# 標題\n\n內文\n").unwrap();
 
     let mut h = harness();
-    h.state_mut().settings.md_auto_preview = true;
+    h.state_mut().settings.auto_preview = true;
     h.state_mut().open_path(&file);
     h.run_steps(3);
     assert!(h.state().is_preview_tab(), "勾選狀態下打開 .md 應直接進入預覽");
     assert!(h.state().tabs[0].md_preview.is_some(), "應已建立 Markdown 預覽");
 
     // 取消勾選（等同再點一次選單項）：設定關閉、預覽分頁關閉
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(3);
-    assert!(!h.state().settings.md_auto_preview, "取消勾選應寫回設定");
+    assert!(!h.state().settings.auto_preview, "取消勾選應寫回設定");
     assert!(h.state().tabs[0].md_preview.is_none(), "取消勾選後應關閉預覽");
     assert!(!h.state().is_preview_tab());
     let _ = std::fs::remove_dir_all(&dir);
@@ -2876,16 +2876,16 @@ fn test_img_auto_preview_opens_graphic_on_open() {
     std::fs::write(&file, tiny_bmp()).unwrap();
 
     let mut h = harness();
-    h.state_mut().settings.img_auto_preview = true;
+    h.state_mut().settings.auto_preview = true;
     h.state_mut().open_path(&file);
     h.run_steps(4);
     assert!(h.state().is_img_preview_tab(), "勾選狀態下打開 bmp 應直接顯示圖形");
     assert!(h.state().tabs[0].img_preview.is_some(), "應已建立圖片預覽");
 
     // 取消勾選：設定關閉、預覽分頁關閉
-    h.state_mut().pending.push(C::PreviewImage);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(3);
-    assert!(!h.state().settings.img_auto_preview, "取消勾選應寫回設定");
+    assert!(!h.state().settings.auto_preview, "取消勾選應寫回設定");
     assert!(h.state().tabs[0].img_preview.is_none(), "取消勾選後應關閉圖片預覽");
     assert!(!h.state().is_img_preview_tab());
     let _ = std::fs::remove_dir_all(&dir);
@@ -3486,9 +3486,9 @@ fn test_svg_preview_shows_and_closes() {
     h.state_mut().open_path(&file);
     h.run_steps(3);
     assert!(h.state().tabs[h.state().active].svg_preview.is_none());
-    h.state_mut().pending.push(C::PreviewSvg);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(4);
-    assert!(h.state().settings.svg_auto_preview, "勾選狀態應寫入設定");
+    assert!(h.state().settings.auto_preview, "勾選狀態應寫入設定");
     let state = h.state();
     let tab = &state.tabs[state.active];
     assert!(tab.svg_preview.is_some(), "the preview exists after the command");
@@ -3502,22 +3502,22 @@ fn test_svg_preview_shows_and_closes() {
     assert!(!state.is_svg_preview_tab(), "Esc closes the preview tab");
     assert!(tab.svg_preview.is_none(), "the preview state is dropped");
     // 再點一次取消勾選：設定關閉
-    h.state_mut().pending.push(C::PreviewSvg);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(3);
-    assert!(!h.state().settings.svg_auto_preview, "再點一次應取消勾選");
+    assert!(!h.state().settings.auto_preview, "再點一次應取消勾選");
     // 非 .svg 檔：勾選只影響設定，不會強制開啟圖形預覽
     let txt = dir.join("plain.txt");
     std::fs::write(&txt, "hello").unwrap();
     h.state_mut().open_path(&txt);
     h.run_steps(3);
-    h.state_mut().pending.push(C::PreviewSvg);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(3);
-    assert!(h.state().settings.svg_auto_preview);
+    assert!(h.state().settings.auto_preview);
     assert!(!h.state().is_svg_preview_tab());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 編輯器分頁右鍵選單有「預覽為」項目：Markdown 檔可用 Markdown/HTML，.svg 可用圖形，其他檔只有 HTML。
+/// 編輯器分頁右鍵選單有「預覽」總開關：點擊切換勾選並自動分發到對應的預覽。
 #[test]
 fn test_tab_context_menu_has_preview_entries() {
     let dir = std::env::temp_dir().join(format!("madedit-tab-menu-{}", std::process::id()));
@@ -3533,12 +3533,16 @@ fn test_tab_context_menu_has_preview_entries() {
     h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some(tab_label.as_str()))
         .click_secondary();
     h.run_steps(3);
-    assert!(h.query_by_label_contains("預覽為").is_some(), "menu shows a preview section");
-    // Markdown 檔：以 Markdown 預覽可用（加粗按鈕仍在，無 disabled 標記即可點）
-    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("以 Markdown 預覽")).click();
+    assert!(
+        h.query_all_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("　 預覽")).count() == 1,
+        "menu shows the unified preview toggle"
+    );
+    // 點擊 = 勾選總開關，.md 檔自動分發到 Markdown 預覽（未勾選標籤前綴是全形空白）
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("　 預覽")).click();
     h.run_steps(4);
+    assert!(h.state().settings.auto_preview, "點擊應勾選並寫入設定");
     assert!(h.state().tabs[h.state().active].md_preview.is_some(), "Markdown preview opens from the tab menu");
-    // 開啟 .svg：圖形預覽項目可用
+    // 開啟 .svg：項目顯示 ✔（已勾選），再點一次 = 取消勾選並關閉圖形預覽
     let svg = dir.join("pic.svg");
     std::fs::write(&svg, r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="#336699"/></svg>"##).unwrap();
     h.state_mut().open_path(&svg);
@@ -3547,25 +3551,11 @@ fn test_tab_context_menu_has_preview_entries() {
     h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some(svg_label.as_str()))
         .click_secondary();
     h.run_steps(3);
-    assert!(h.query_by_label_contains("以圖形預覽（SVG）").is_some(), "SVG preview entry is in the tab menu");
-    assert!(h.query_by_label_contains("以圖形預覽（圖片）").is_some(), "圖片預覽項目也在同一選單");
-    // 精確挑 SVG 項目（「以圖形預覽（圖片）」是另一個項目，對 .svg 停用）
-    let svg_item = h
-        .get_all_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref().is_some_and(|l| l.contains("以圖形預覽（SVG）")))
-        .next()
-        .expect("SVG 預覽項目必須存在");
-    svg_item.click();
+    assert!(h.query_by_label_contains("✔ 預覽").is_some(), "勾選狀態要在右鍵選單同步顯示");
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("✔ 預覽")).click();
     h.run_steps(4);
-    assert!(h.state().tabs[h.state().active].svg_preview.is_some(), "SVG preview opens from the tab menu");
-    // 勾選狀態同步：開啟設定後，右鍵選單的兩項要顯示 ✔
-    h.state_mut().settings.svg_auto_preview = true;
-    h.state_mut().settings.img_auto_preview = true;
-    h.run_steps(2);
-    h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some(svg_label.as_str()))
-        .click_secondary();
-    h.run_steps(3);
-    assert!(h.query_by_label_contains("✔ 以圖形預覽（SVG）").is_some(), "右鍵選單需同步 SVG 勾選狀態");
-    assert!(h.query_by_label_contains("✔ 以圖形預覽（圖片）").is_some(), "右鍵選單需同步圖片勾選狀態");
+    assert!(!h.state().settings.auto_preview, "再點一次應取消勾選");
+    assert!(h.state().tabs[h.state().active].svg_preview.is_none(), "取消勾選應關閉圖形預覽");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -3595,12 +3585,12 @@ fn test_tab_context_menu_open_folder_entry() {
     open_tab_menu(&mut h);
     let item = h.get_by(menu_item);
     assert!(!item.accesskit_node().is_disabled(), "the saved file's folder can be opened");
-    // 「複製完整路徑」緊接在「開啟資料夾」之後、在「預覽為」之前，中間沒有其他項目。
+    // 「複製完整路徑」緊接在「開啟資料夾」之後、在「預覽」之前，中間沒有其他項目。
     let folder = item.rect();
     let copy = h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("　 複製完整路徑")).rect();
-    let preview = h.get_by(|n| n.role() == egui::accesskit::Role::Label && n.value().as_deref() == Some("預覽為")).rect();
+    let preview = h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("　 預覽")).rect();
     assert!(copy.top() > folder.bottom(), "複製完整路徑應在開啟資料夾之後：{folder:?} {copy:?}");
-    assert!(preview.top() > copy.bottom(), "複製完整路徑應在預覽為之前：{copy:?} {preview:?}");
+    assert!(preview.top() > copy.bottom(), "複製完整路徑應在預覽之前：{copy:?} {preview:?}");
     let between = h
         .query_all_by(|n| n.role() == egui::accesskit::Role::Button)
         .map(|n| n.rect())
@@ -4223,4 +4213,5 @@ fn tmp_timing_real_readme() {
         println!("step {i}: {:?}", t.elapsed());
     }
 }
+
 

@@ -239,8 +239,7 @@ impl App {
     }
 
     /// 開啟／聚焦目前 .md 文件的 Markdown 預覽（含 Mermaid 圖表與遠端圖片）
-    pub(super) fn preview_markdown(&mut self) {
-        if !self.doc().is_markdown() {
+    pub(super) fn preview_markdown(&mut self) {        if !self.doc().is_markdown() {
             self.set_status(self.t("md.not_markdown", "Markdown 預覽僅支援 .md 檔案"));
             return;
         }
@@ -253,6 +252,43 @@ impl App {
         }
         self.preview_tab_active = false;
         self.activate_view(self.active, true);
+    }
+
+    /// 統一預覽：依目前文件副檔名自動分發到對應的預覽；未支援時顯示狀態訊息
+    pub(super) fn dispatch_auto_preview(&mut self) {
+        let ext = self
+            .doc()
+            .path
+            .as_ref()
+            .and_then(|p| p.extension())
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase());
+        match ext.as_deref() {
+            Some("md" | "markdown") => self.preview_markdown(),
+            Some("svg") => self.preview_svg(),
+            Some("html" | "htm") => self.pending.push(C::PreviewHtml),
+            Some(ext) if matches!(ext, "bmp" | "jpg" | "jpeg" | "png" | "gif" | "webp") => self.preview_image(),
+            // 未存檔的文件沒有副檔名：Markdown 語法仍可預覽
+            None if self.doc().is_markdown() => self.preview_markdown(),
+            _ => self.set_status(self.t("preview.unsupported", "此檔案類型沒有對應的預覽")),
+        }
+    }
+
+    /// 關閉所有作用中的預覽（Markdown 預覽分頁、SVG／圖形預覽），回到編輯區
+    fn close_all_previews(&mut self) {
+        if self.preview_tab_active {
+            self.tab_mut().md_preview = None;
+            self.preview_tab_active = false;
+        }
+        if self.is_svg_preview_tab() {
+            self.tab_mut().svg_preview = None;
+            self.svg_preview_tab_active = false;
+        }
+        if self.is_img_preview_tab() {
+            self.tab_mut().img_preview = None;
+            self.img_preview_tab_active = false;
+        }
+        self.focus_editor = true;
     }
 
     pub fn show_markdown_preview(&mut self, ui: &mut egui::Ui) {        use super::mdpreview::Placement;
@@ -945,51 +981,26 @@ impl App {
                     self.focus_editor = true;
                 }
             }
-            // 勾選式開關：記錄到設定；勾選時打開 .md 直接進入預覽，取消勾選關閉目前預覽
-            C::PreviewMarkdown => {
-                self.settings.md_auto_preview = !self.settings.md_auto_preview;
-                let enabled = self.settings.md_auto_preview;
+            // 勾選式總開關：依副檔名自動分發到 Markdown／HTML／圖形預覽
+            C::PreviewAuto => {
+                self.settings.auto_preview = !self.settings.auto_preview;
+                let enabled = self.settings.auto_preview;
                 self.save_settings();
                 if enabled {
-                    if self.doc().is_markdown() {
-                        self.preview_markdown();
-                    }
-                } else if self.preview_tab_active {
-                    self.tab_mut().md_preview = None;
-                    self.preview_tab_active = false;
-                    self.focus_editor = true;
+                    self.dispatch_auto_preview();
+                } else {
+                    self.close_all_previews();
                 }
             }
-            C::PreviewSvg => {
-                // 勾選式開關：記錄到設定；打開 .svg 時若為勾選狀態就直接顯示圖形。
-                self.settings.svg_auto_preview = !self.settings.svg_auto_preview;
-                let enabled = self.settings.svg_auto_preview;
+            // 舊的分項預覽命令（巨集／舊設定相容）：一律視為「預覽」總開關
+            C::PreviewMarkdown | C::PreviewSvg | C::PreviewImage => {
+                self.settings.auto_preview = !self.settings.auto_preview;
+                let enabled = self.settings.auto_preview;
                 self.save_settings();
                 if enabled {
-                    let is_svg = self.doc().path.as_ref().is_some_and(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")));
-                    if is_svg {
-                        self.preview_svg();
-                    }
-                } else if self.is_svg_preview_tab() {
-                    // 取消勾選時立即關閉目前的圖形預覽分頁
-                    self.tab_mut().svg_preview = None;
-                    self.svg_preview_tab_active = false;
-                    self.focus_editor = true;
-                }
-            }
-            C::PreviewImage => {
-                // 勾選式開關：記錄到設定；打開點陣圖片時若為勾選狀態就直接顯示圖形。
-                self.settings.img_auto_preview = !self.settings.img_auto_preview;
-                let enabled = self.settings.img_auto_preview;
-                self.save_settings();
-                if enabled {
-                    if self.doc().path.as_ref().is_some_and(|p| super::is_raster_image_path(p)) {
-                        self.preview_image();
-                    }
-                } else if self.is_img_preview_tab() {
-                    self.tab_mut().img_preview = None;
-                    self.img_preview_tab_active = false;
-                    self.focus_editor = true;
+                    self.dispatch_auto_preview();
+                } else {
+                    self.close_all_previews();
                 }
             }
             C::PreviewHtml => {

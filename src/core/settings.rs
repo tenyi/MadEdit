@@ -285,12 +285,9 @@ pub struct Settings {    pub auto_check_updates: bool,
     pub output_log_to_file: bool,
     /// 「執行輸出」面板是否顯示（檢視 → 運行輸出）：記住使用者最後的顯示/隱藏狀態
     pub show_script_output: bool,
-    /// 以圖形預覽（SVG）勾選狀態：開啟時，打開 .svg 直接以圖形顯示
-    pub svg_auto_preview: bool,
-    /// 以圖形預覽（圖片）勾選狀態：開啟時，打開 .bmp/.jpg/.jpeg 等直接以圖形顯示
-    pub img_auto_preview: bool,
-    /// 「以 Markdown 預覽」勾選狀態：開啟時，打開 .md 檔直接進入預覽
-    pub md_auto_preview: bool,
+    /// 「預覽」總開關勾選狀態：開啟時，打開檔案依副檔名自動分發到
+    /// Markdown／HTML／圖形（SVG、點陣圖片）預覽
+    pub auto_preview: bool,
     /// 等寬模式：每個字元依固定格子寬度排列（關閉時依字型實際字寬排列）
     pub fixed_width: bool,
     pub tab_size: usize,
@@ -416,9 +413,7 @@ impl Default for Settings {
             ui_font_family: String::new(),
             output_log_to_file: false,
             show_script_output: false,
-            svg_auto_preview: false,
-            img_auto_preview: false,
-            md_auto_preview: false,
+            auto_preview: false,
             fixed_width: false,
             tab_size: 4,
             indent_size: 4,
@@ -792,21 +787,15 @@ mod tests {
 
     #[test]
     fn test_svg_auto_preview_defaults_off_and_roundtrips() {
-        assert!(!Settings::default().svg_auto_preview, "預設不自動開啟圖形預覽");
-        assert!(!Settings::default().md_auto_preview, "預設不自動開啟 Markdown 預覽");
+        assert!(!Settings::default().auto_preview, "預設不自動開啟預覽");
         let mut s = Settings::default();
-        s.svg_auto_preview = true;
-        s.img_auto_preview = true;
-        s.md_auto_preview = true;
+        s.auto_preview = true;
         let back: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
-        assert!(back.svg_auto_preview, "勾選狀態必須寫入並讀回設定");
-        assert!(back.img_auto_preview, "圖片預覽勾選狀態必須寫入並讀回設定");
-        assert!(back.md_auto_preview, "Markdown 預覽勾選狀態必須寫入並讀回設定");
-        // 舊版設定檔沒有這個欄位：維持關閉
-        let legacy: Settings = serde_json::from_str(r#"{"tab_size": 8}"#).unwrap();
-        assert!(!legacy.svg_auto_preview);
-        assert!(!legacy.img_auto_preview);
-        assert!(!legacy.md_auto_preview);
+        assert!(back.auto_preview, "勾選狀態必須寫入並讀回設定");
+        // 舊版設定檔的分項開關欄位已合併為 auto_preview：未知欄位忽略、維持關閉
+        let legacy: Settings =
+            serde_json::from_str(r#"{"tab_size": 8, "svg_auto_preview": true, "img_auto_preview": true, "md_auto_preview": true}"#).unwrap();
+        assert!(!legacy.auto_preview);
     }
 
     #[test]

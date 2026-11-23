@@ -122,6 +122,8 @@ menuTextMode	Text Mode (&T)	文本模式(&T)	テキストモード(&T)	텍스트
 menuColumnMode	Column Mode (&C)	列块模式(&C)	矩形モード(&C)	열 블록 모드(&C)	Spaltenmodus (&C)	Modo columna (&C)	Mode colonne (&C)	Modalità colonna (&C)	Modo de coluna (&C)
 menuHexMode	Hex Mode (&H)	十六进制模式(&H)	16進モード(&H)	16진수 모드(&H)	Hex-Modus (&H)	Modo hexadecimal (&H)	Mode hexadécimal (&H)	Modalità esadecimale (&H)	Modo hexadecimal (&H)
 menuPreviewMarkdown	Preview as Markdown	以 Markdown 预览	Markdown でプレビュー	Markdown으로 미리 보기	Als Markdown anzeigen	Vista previa Markdown	Aperçu Markdown	Anteprima Markdown	Pré-visualizar como Markdown
+menuPreviewAuto	Preview	预览	プレビュー	미리 보기	Vorschau	Vista previa	Aperçu	Anteprima	Pré-visualizar
+preview.unsupported	No preview is available for this file type	此文件类型没有对应的预览	このファイル形式に対応するプレビューはありません	이 파일 형식에 해당하는 미리 보기가 없습니다	Für diesen Dateityp ist keine Vorschau verfügbar	No hay vista previa para este tipo de archivo	Aucun aperçu disponible pour ce type de fichier	Nessuna anteprima disponibile per questo tipo di file	Nenhuma pré-visualização para este tipo de arquivo
 menuPreviewHtml	Preview as HTML	以 HTML 预览	HTML でプレビュー	HTML로 미리 보기	Als HTML anzeigen	Vista previa HTML	Aperçu HTML	Anteprima HTML	Pré-visualizar como HTML
 menuRunTempMacro	Run Temporary Macro...	运行临时宏...	一時マクロを実行...	임시 매크로 실행...	Temporäres Makro ausführen...	Ejecutar macro temporal...	Exécuter la macro temporaire...	Esegui macro temporanea...	Executar macro temporária...
 menuRunMacroFile	Load and Run Saved Macro...	加载并运行已保存的宏...	保存したマクロを読み込んで実行...	저장된 매크로 불러와 실행...	Gespeichertes Makro laden und ausführen...	Cargar y ejecutar una macro guardada...	Charger et exécuter une macro enregistrée...	Carica ed esegui una macro salvata...	Carregar e executar macro salva...

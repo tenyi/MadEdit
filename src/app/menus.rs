@@ -432,15 +432,8 @@ impl App {
         menu(ui, check_label(false, self.t("menu.layout", "排版")), |ui| self.layout_menu(ui, &s));
         menu(ui, check_label(false, self.t("menu.show", "顯示")), |ui| self.show_menu(ui, &s));
         ui.separator();
-        menu(ui, check_label(false, self.t("menu.preview_as", "預覽為")), |ui| {
-            // 勾選式：記錄到設定，之後打開 .md 會直接進入預覽
-            self.check(ui, C::PreviewMarkdown, s.md_auto_preview);
-            self.item(ui, C::PreviewHtml);
-            // 勾選式：記錄到設定，之後打開 .svg 會直接以圖形顯示
-            self.check(ui, C::PreviewSvg, s.svg_auto_preview);
-            // 勾選式：記錄到設定，之後打開 bmp/jpg/jpeg 等圖片會直接以圖形顯示
-            self.check(ui, C::PreviewImage, s.img_auto_preview);
-        });
+        // 勾選式總開關：依副檔名自動分發到 Markdown／HTML／圖形預覽
+        self.check(ui, C::PreviewAuto, s.auto_preview);
         ui.separator();
         menu(ui, check_label(false, self.t("menu.fold", "代碼折疊")), |ui| {
             self.check(ui, C::ToggleCodeFolding, s.code_folding);

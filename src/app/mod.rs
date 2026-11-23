@@ -514,11 +514,9 @@ impl App {
         };
         if let Some(i) = self.tabs.iter().position(|t| t.doc.path.as_deref().is_some_and(|p| same_target(p, &canon))) {
             self.activate(i);
-            // 勾選「以Markdown預覽」時，重新開啟已開啟的 .md 也進入預覽（與新開檔案一致）
-            if self.settings.md_auto_preview
-                && path.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "md" | "markdown"))
-            {
-                self.preview_markdown();
+            // 勾選「預覽」總開關時，重開已開啟的檔案同樣自動分發到對應的預覽
+            if self.settings.auto_preview {
+                self.dispatch_auto_preview();
             }
             return true;
         }
@@ -558,17 +556,9 @@ impl App {
                 self.settings.add_recent_file(canon);
                 let shown = crate::core::display_path(&path);
                 self.set_status(if notes.is_empty() { self.tf("msg.opened", "已開啟 {q}", None, Some(&shown)) } else { notes.join("；") });
-                // 設定勾選「以圖形預覽（SVG）」時，打開 .svg 直接以圖形顯示
-                if self.settings.svg_auto_preview && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")) {
-                    self.preview_svg();
-                }
-                // 設定勾選「以圖形預覽（圖片）」時，打開 bmp/jpg/jpeg 等直接以圖形顯示
-                if self.settings.img_auto_preview && is_raster_image_path(&path) {
-                    self.preview_image();
-                }
-                // 設定勾選「以Markdown預覽」時，打開 .md 直接進入預覽
-                if self.settings.md_auto_preview && path.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "md" | "markdown")) {
-                    self.preview_markdown();
+                // 勾選「預覽」總開關時，依副檔名自動分發到對應的預覽
+                if self.settings.auto_preview {
+                    self.dispatch_auto_preview();
                 }
                 true
             }
@@ -1179,29 +1169,14 @@ impl App {
                             ui.ctx().copy_text(crate::core::display_path(p));
                             ui.close();
                         }
-                        // 預覽為：Markdown／HTML／圖形（僅對應類型的檔案可用）；
-                        // 「圖形（SVG）」「圖形（圖片）」是勾選式設定，勾選狀態要同步顯示。
-                        let is_md = t.doc.is_markdown();
-                        let is_svg = t.doc.path.as_ref().is_some_and(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")));
-                        let is_img = t.doc.path.as_ref().is_some_and(|p| is_raster_image_path(p));
-                        if is_md || is_svg || t.doc.path.is_some() {
-                            ui.separator();
-                            ui.label(egui::RichText::new(self.t("menu.preview_as", "預覽為")).weak());
-                            let entries = [
-                                (C::PreviewMarkdown, true, self.settings.md_auto_preview),
-                                (C::PreviewHtml, true, false),
-                                (C::PreviewSvg, is_svg, self.settings.svg_auto_preview),
-                                (C::PreviewImage, is_img, self.settings.img_auto_preview),
-                            ];
-                            for (c, enabled, checked) in entries {
-                                if ui
-                                    .add_enabled(enabled, egui::Button::new(menus::check_label(checked, &self.cmd_text(c))))
-                                    .clicked()
-                                {
-                                    menu_cmd = Some((i, c));
-                                    ui.close();
-                                }
-                            }
+                        // 預覽：勾選式總開關，依副檔名自動分發到 Markdown／HTML／圖形預覽
+                        ui.separator();
+                        if ui
+                            .add(egui::Button::new(menus::check_label(self.settings.auto_preview, &self.cmd_text(C::PreviewAuto))))
+                            .clicked()
+                        {
+                            menu_cmd = Some((i, C::PreviewAuto));
+                            ui.close();
                         }
                     });
                     if close_btn.is_some_and(|btn| btn.clicked()) {
