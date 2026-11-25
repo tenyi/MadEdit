@@ -422,7 +422,7 @@ impl Default for Settings {
             wrap_column: 80,
             show_line_numbers: true,
             show_bookmarks: true,
-            code_folding: true,
+            code_folding: false,
             show_col_hint: false,
             col_hint_position: 80,
             show_ruler: true,
@@ -660,6 +660,15 @@ mod tests {
         let d = std::env::temp_dir().join(format!("madedit_settings_{}_{}", std::process::id(), name));
         let _ = std::fs::remove_dir_all(&d);
         d
+    }
+
+    #[test]
+    fn folding_requires_opt_in_and_round_trips() {
+        let mut settings: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!settings.code_folding);
+        settings.code_folding = true;
+        let saved = serde_json::to_string(&settings).unwrap();
+        assert!(serde_json::from_str::<Settings>(&saved).unwrap().code_folding);
     }
 
     #[test]

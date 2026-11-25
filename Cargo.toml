@@ -12,6 +12,7 @@ winit = { path = "vendor/winit-pre" }
 [dependencies]
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 semver = "1"
+tempfile = "3"
 arboard = "3"
 chrono = "0.4"
 dirs = "7"
@@ -21,8 +22,8 @@ eframe = "0.37.0"
 # Only to turn on egui's bundled monochrome emoji fonts (about 1 MB): without them,
 # 🔒 on read-only tabs and the Markdown code-block copy button draw as empty boxes.
 egui = { version = "0.37.0", default-features = false, features = ["monochrome_emoji_fonts"] }
-egui_commonmark = { version = "0.26", default-features = false, features = ["pulldown_cmark", "svg", "load-images", "fetch"] }
-egui_extras = { version = "0.37", default-features = false, features = ["svg", "http", "gif"] }
+egui_commonmark = { version = "0.26", default-features = false, features = ["pulldown_cmark", "svg", "load-images"] }
+egui_extras = { version = "0.37", default-features = false, features = ["svg", "gif"] }
 # Mermaid 圖表點陣化用；版本須與 egui_extras 內部的 resvg 一致
 resvg = "0.45"
 encoding_rs = "0.8.42"

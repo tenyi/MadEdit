@@ -877,12 +877,8 @@ pub struct DiagramLoader {
     cache: Mutex<HashMap<(String, SizeHint), Rasterized>>,
 }
 
-/// 帶查詢串的遠端 SVG 載入器（例如 GitHub 徽章 `badge.svg?branch=main`）。
-/// egui 內建 SvgLoader 以 URI 副檔名判斷，但其 `has_extension` 只按 `#` 分割、不處理 `?`，
-/// 帶查詢串時副檔名會被判成 `svg?branch=main` 而拒載；此載入器補位：以 `.svg` 結尾的
-/// http(s)／file URI 由這裡取位元組並用 resvg 點陣化。點陣化結果超過 GPU 紋理邊長上限時
-/// 等比縮小，否則 egui 貼上超大紋理時會直接崩潰（記錄 SVG 原生尺寸常超過 2048）。
-pub struct RemoteSvgLoader {
+/// Rasterizes local SVG images in the background within the GPU texture limit.
+pub struct LocalSvgLoader {
     options: Arc<resvg::usvg::Options<'static>>,
     /// （uri, 尺寸提示）→ Pending＝背景點陣化中
     cache: Arc<Mutex<HashMap<(String, SizeHint), std::task::Poll<Rasterized>>>>,
@@ -890,17 +886,24 @@ pub struct RemoteSvgLoader {
 
 type Rasterized = Result<Arc<egui::ColorImage>, String>;
 
-impl RemoteSvgLoader {
-    pub const ID: &'static str = egui::generate_loader_id!(RemoteSvgLoader);
+pub(super) fn svg_options(font: Option<(String, fontique::Blob<u8>)>) -> resvg::usvg::Options<'static> {
+    let mut options = resvg::usvg::Options::default();
+    if let Some((name, blob)) = font {
+        options.font_family = name.clone();
+        let db = options.fontdb_mut();
+        db.load_font_source(resvg::usvg::fontdb::Source::Binary(Arc::new(blob)));
+        db.set_sans_serif_family(&name);
+        db.set_serif_family(&name);
+        db.set_monospace_family(&name);
+    }
+    options
+}
+
+impl LocalSvgLoader {
+    pub const ID: &'static str = egui::generate_loader_id!(LocalSvgLoader);
 
     pub fn install(ctx: &egui::Context, font: Option<(String, fontique::Blob<u8>)>) {
-        let mut options = resvg::usvg::Options::default();
-        if let Some((name, blob)) = font {
-            let db = options.fontdb_mut();
-            db.load_font_source(resvg::usvg::fontdb::Source::Binary(Arc::new(blob)));
-            db.set_sans_serif_family(&name);
-            db.set_monospace_family(&name);
-        }
+        let options = svg_options(font);
         ctx.add_image_loader(Arc::new(Self { options: Arc::new(options), cache: Arc::new(Mutex::new(HashMap::new())) }));
     }
 }
@@ -974,18 +977,13 @@ fn clamp_texture_size(ctx: &egui::Context, img: egui::ColorImage) -> Arc<egui::C
     Arc::new(egui::ColorImage::from_rgba_unmultiplied([nw as usize, nh as usize], resized.as_raw()))
 }
 
-impl ImageLoader for RemoteSvgLoader {
+impl ImageLoader for LocalSvgLoader {
     fn id(&self) -> &str {
         Self::ID
     }
 
     fn load(&self, ctx: &egui::Context, uri: &str, size_hint: SizeHint) -> ImageLoadResult {
-        // 接所有以 .svg 結尾的 http(s)／file URI（含帶查詢串的）；其他協定交給內建載入器
-        let base = uri.split('#').next().unwrap_or(uri);
-        let path = base.split('?').next().unwrap_or(base);
-        let ok = path.starts_with("http") && path.to_ascii_lowercase().ends_with(".svg")
-            || base.starts_with("file://") && base.to_ascii_lowercase().ends_with(".svg");
-        if !ok {
+        if !uri.starts_with("file://") || !uri.to_ascii_lowercase().ends_with(".svg") {
             return Err(LoadError::NotSupported);
         }
         let key = (uri.to_owned(), size_hint.clone());
@@ -1069,15 +1067,7 @@ impl DiagramLoader {
 
     /// 安裝到 egui（呼叫端先以 `ID` 確認尚未安裝）；`font` 為（家族名稱, 字型檔內容），沒有字型時圖表不顯示文字
     pub fn install(ctx: &egui::Context, font: Option<(String, fontique::Blob<u8>)>) {
-        let mut options = resvg::usvg::Options::default();
-        if let Some((name, blob)) = font {
-            let db = options.fontdb_mut();
-            // 直接共用 fontique 已載入的字型檔，不另外複製
-            db.load_font_source(resvg::usvg::fontdb::Source::Binary(Arc::new(blob)));
-            // fermaid 的字型清單以 sans-serif／monospace 結尾，兩者都對應到這個字型
-            db.set_sans_serif_family(&name);
-            db.set_monospace_family(&name);
-        }
+        let options = svg_options(font);
         ctx.add_image_loader(Arc::new(Self { options, cache: Mutex::new(HashMap::new()) }));
     }
 }
@@ -1673,39 +1663,24 @@ mod tests {
         }
     }
 
-    /// 帶查詢串與不帶查詢串的遠端 SVG 都由 RemoteSvgLoader 點陣化；超過紋理上限會等比縮小
     #[test]
-    fn test_remote_svg_loader_handles_query_strings() {
+    fn markdown_image_loaders_leave_http_offline() {
         let ctx = egui::Context::default();
-        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><rect width="20" height="10" fill="#f0f"/></svg>"##;
-        let uri = "https://example.com/badge.svg?branch=main";
-        ctx.include_bytes(uri.to_string(), svg.as_bytes().to_vec());
-        RemoteSvgLoader::install(&ctx, None);
-        let poll = |uri: &str| {
-            for _ in 0..100 {
-                if let Ok(ImagePoll::Ready { image }) = ctx.try_load_image(uri, SizeHint::default()) {
-                    return Some(image);
-                }
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            None
-        };
-        let image = poll(uri).expect("應在期限內點陣化");
-        assert_eq!(image.size, [20, 10]);
-        // 無查詢串的 .svg 一樣處理（egui 內建 SvgLoader 之外再保險一層）
-        let plain = "https://example.com/plain.svg";
-        ctx.include_bytes(plain.to_string(), svg.as_bytes().to_vec());
-        assert!(ctx.try_load_image(&plain.to_string(), SizeHint::default()).is_ok());
+        egui_extras::install_image_loaders(&ctx);
+        LocalSvgLoader::install(&ctx, None);
+        for uri in ["https://example.invalid/image.png", "http://example.invalid/badge.svg"] {
+            assert!(ctx.try_load_bytes(uri).is_err());
+        }
     }
 
     /// 原生尺寸超過 GPU 紋理邊長上限的 SVG 會等比縮小，不讓 egui 貼圖斷言崩潰
     #[test]
-    fn test_remote_svg_loader_clamps_oversized_svg() {
+    fn test_local_svg_loader_clamps_oversized_svg() {
         let ctx = egui::Context::default();
         let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="3000"><rect width="4000" height="3000" fill="#0f0"/></svg>"##;
-        let uri = "file:///G:/records/final_best_mao.svg";
+        let uri = "file:///oversized.svg";
         ctx.include_bytes(uri.to_string(), svg.as_bytes().to_vec());
-        RemoteSvgLoader::install(&ctx, None);
+        LocalSvgLoader::install(&ctx, None);
         let poll2 = |uri: &str| {
             for _ in 0..100 {
                 if let Ok(ImagePoll::Ready { image }) = ctx.try_load_image(uri, SizeHint::default()) {
@@ -1750,31 +1725,3 @@ mod tests {
         assert!(diff > 100, "文字未繪製（差異像素 {diff}）");
     }
 }
-
-
-
-#[test]
-fn tmp_time_each_image() {
-    use std::time::Instant;
-    let path = std::path::Path::new(r"G:\back\share\sparrow\里程碑备份\sparrow\README.md");
-    let ctx = egui::Context::default();
-    egui_extras::install_image_loaders(&ctx);
-    RemoteSvgLoader::install(&ctx, None);
-    let text = std::fs::read_to_string(path).unwrap();
-    let mut preview = MarkdownPreview::new();
-    preview.refresh(&ctx, &text, 0, false, path.parent().map(|p| p.to_path_buf()));
-    let uris = std::mem::take(&mut preview.image_uris);
-    for uri in uris {
-        let t = Instant::now();
-        let mut r = String::from("?");
-        for _ in 0..3 {
-            match ctx.try_load_image(&uri, SizeHint::default()) {
-                Ok(ImagePoll::Ready { image }) => { r = format!("ready {:?}", image.size); break; }
-                Ok(ImagePoll::Pending { .. }) => { std::thread::sleep(std::time::Duration::from_millis(50)); r = "pending".into(); }
-                Err(e) => { r = format!("err {e}"); break; }
-            }
-        }
-        println!("{:?} {} {uri}", t.elapsed(), r);
-    }
-}
-
