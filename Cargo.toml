@@ -1,28 +1,35 @@
-[package]
+﻿[package]
 name = "MadEdit"
 version = "0.6.9"
 edition = "2024"
 rust-version = "1.99"
 repository = "https://github.com/tenyi/MadEdit"
 
+# Vendored winit 0.30.13 with the mixed-DPI drag fix (see vendor/winit-pre/PATCHES.md).
+[patch.crates-io]
+winit = { path = "vendor/winit-pre" }
+
 [dependencies]
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 semver = "1"
+tempfile = "3"
 arboard = "3"
 chrono = "0.4"
 dirs = "7"
+# 開啟檔案時自動判斷 Big5、GBK、Shift_JIS 等非 UTF-8 編碼（UTF-8/UTF-16 由 encoding_rs 處理）
+chardetng = "0.1.17"
 eframe = "0.37.0"
 # Only to turn on egui's bundled monochrome emoji fonts (about 1 MB): without them,
 # 🔒 on read-only tabs and the Markdown code-block copy button draw as empty boxes.
 egui = { version = "0.37.0", default-features = false, features = ["monochrome_emoji_fonts"] }
 egui_commonmark = { version = "0.26", default-features = false, features = ["pulldown_cmark", "svg", "load-images"] }
-egui_extras = { version = "0.37", default-features = false, features = ["svg"] }
+egui_extras = { version = "0.37", default-features = false, features = ["svg", "gif"] }
 # Mermaid 圖表點陣化用；版本須與 egui_extras 內部的 resvg 一致
 resvg = "0.45"
 encoding_rs = "0.8.42"
 fermaid = "0.5.1"
 fontique = "0.11.1"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 regex = "1.11"
 rfd = "0.17.2"
@@ -38,6 +45,18 @@ latex-rust = "3.0.1"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSMenu", "NSMenuItem"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSAppleEventDescriptor", "NSAppleEventManager", "NSNotification", "NSObject", "NSString", "NSURL", "objc2-core-services"] }
+
+# Windows 自绘标题栏：拦截 WM_NCHITTEST 提供缩放边框与原生拖动/按钮行为
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Storage_FileSystem",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_HiDpi",
+] }
+raw-window-handle = "0.6"
 
 [build-dependencies]
 embed-resource = "3.0.6"

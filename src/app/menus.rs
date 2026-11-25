@@ -11,7 +11,7 @@ use crate::core::syntax;
 
 /// Room the zoom / theme / quick-search controls need at the right of the menu bar
 /// (widest language included); with less free space they stay in the toolbar.
-const QUICK_CONTROLS_WIDTH: f32 = 340.0;
+pub(super) const QUICK_CONTROLS_WIDTH: f32 = 340.0;
 
 /// Minimum widths of top-level menus and of submenus / context menus. egui sizes every popup
 /// to its widest item, so without a floor Help (one item) is a sliver next to Search and
@@ -120,28 +120,11 @@ impl App {
         }
     }
 
+    /// 原生選單列（非 Windows 平台仍在用；Windows 上選單已移進自繪標題欄）。
+    #[cfg_attr(windows, allow(dead_code))]
     pub fn menu_bar(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
-            menu(ui, self.t("menu.file", "檔案(F)"), |ui| self.file_menu(ui));
-            menu(ui, self.t("menu.edit", "編輯(E)"), |ui| self.edit_menu(ui));
-            menu(ui, self.t("menu.search", "搜尋(S)"), |ui| self.search_menu(ui));
-            menu(ui, self.t("menu.view", "檢視(V)"), |ui| self.view_menu(ui));
-            menu(ui, self.t("menu.macro", "巨集(M)"), |ui| self.macro_menu(ui));
-            menu(ui, self.t("menu.tools", "工具(T)"), |ui| self.tools_menu(ui));
-            menu(ui, self.t("menu.window", "視窗(W)"), |ui| self.window_menu(ui));
-            menu(ui, self.t("menu.help", "說明(H)"), |ui| {
-                self.item(ui, C::KeyboardShortcuts);
-                ui.separator();
-                if ui.add_enabled(!self.updates.busy(), Button::new(self.t("updates.check", "檢查更新"))).clicked() {
-                    self.start_update_check(ui.ctx(), true);
-                    ui.close();
-                }
-                let label = self.t("updates.auto", "自動檢查更新（每日）");
-                if ui.checkbox(&mut self.settings.auto_check_updates, label).changed() {
-                    self.save_settings();
-                }
-                self.item(ui, C::About);
-            });
+            self.menus(ui);
             // Zoom, theme and quick search sit at the right end of the menu bar, so the toolbar
             // stays a single row of icons. Below this width they would overlap the menus. They do
             // not depend on the toolbar being shown, or hiding it would remove the theme toggle.
@@ -152,9 +135,33 @@ impl App {
         });
     }
 
+    /// 八個下拉選單本体（不含容器與右側快捷控制項），供原生選單列與 Windows 自繪標題欄共用。
+    pub fn menus(&mut self, ui: &mut egui::Ui) {
+        menu(ui, self.t("menu.file", "檔案(F)"), |ui| self.file_menu(ui));
+        menu(ui, self.t("menu.edit", "編輯(E)"), |ui| self.edit_menu(ui));
+        menu(ui, self.t("menu.search", "搜尋(S)"), |ui| self.search_menu(ui));
+        menu(ui, self.t("menu.view", "檢視(V)"), |ui| self.view_menu(ui));
+        menu(ui, self.t("menu.macro", "巨集(M)"), |ui| self.macro_menu(ui));
+        menu(ui, self.t("menu.tools", "工具(T)"), |ui| self.tools_menu(ui));
+        menu(ui, self.t("menu.window", "視窗(W)"), |ui| self.window_menu(ui));
+        menu(ui, self.t("menu.help", "說明(H)"), |ui| {
+            self.item(ui, C::KeyboardShortcuts);
+            ui.separator();
+            if ui.add_enabled(!self.updates.busy(), Button::new(self.t("updates.check", "檢查更新"))).clicked() {
+                self.start_update_check(ui.ctx(), true);
+                ui.close();
+            }
+            let label = self.t("updates.auto", "自動檢查更新（每日）");
+            if ui.checkbox(&mut self.settings.auto_check_updates, label).changed() {
+                self.save_settings();
+            }
+            self.item(ui, C::About);
+        });
+    }
+
     /// Font zoom, theme switch and quick search. `rtl` is set inside a right-to-left layout,
     /// where widgets are placed from the right edge and must therefore be added in reverse.
-    fn quick_controls(&mut self, ui: &mut egui::Ui, rtl: bool) {
+    pub(super) fn quick_controls(&mut self, ui: &mut egui::Ui, rtl: bool) {
         let zoom_out = ("A−", self.t("zoom.out", "縮小字型"), C::ZoomOut);
         let zoom_in = ("A+", self.t("zoom.in", "放大字型"), C::ZoomIn);
         let size = self.settings.font_size.to_string();
@@ -165,19 +172,20 @@ impl App {
             parts.reverse();
         }
         let quick = self.t("find.quick", "快速搜尋");
-        for (n, part) in parts.into_iter().enumerate() {
-            if n > 0 {
-                ui.separator();
-            }
+        for part in parts.into_iter() {
             match part {
                 0 => {
                     for (i, (label, tip, c)) in zooms.into_iter().enumerate() {
                         if i == 1 {
                             ui.label(&size);
                         }
-                        if form::icon_button(ui, Button::new(label), tip, tip).clicked() {
-                            self.pending.push(c);
-                        }
+                        // 閒置時底色透明（深淺主題都與標題欄底色融為一體），保留邊框與懸停高亮。
+                        ui.scope(|ui| {
+                            ui.style_mut().visuals.widgets.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
+                            if form::icon_button(ui, Button::new(label), tip, tip).clicked() {
+                                self.pending.push(c);
+                            }
+                        });
                     }
                 }
                 1 => self.theme_toggle(ui),
@@ -424,12 +432,16 @@ impl App {
         menu(ui, check_label(false, self.t("menu.layout", "排版")), |ui| self.layout_menu(ui, &s));
         menu(ui, check_label(false, self.t("menu.show", "顯示")), |ui| self.show_menu(ui, &s));
         ui.separator();
-        menu(ui, check_label(false, self.t("menu.preview_as", "預覽為")), |ui| {
-            let is_md = self.doc().is_markdown();
-            self.item_enabled(ui, C::PreviewMarkdown, is_md);
-            self.item(ui, C::PreviewHtml);
-        });
+        // 勾選式總開關：依副檔名自動分發到 Markdown／HTML／圖形預覽
+        self.check(ui, C::PreviewAuto, s.auto_preview);
         ui.separator();
+        menu(ui, check_label(false, self.t("menu.fold", "代碼折疊")), |ui| {
+            self.check(ui, C::ToggleCodeFolding, s.code_folding);
+            ui.separator();
+            self.item(ui, C::FoldToggle);
+            self.item(ui, C::FoldAll);
+            self.item(ui, C::UnfoldAll);
+        });
         self.language_menu(ui);
         self.theme_menu(ui);
         menu(ui, check_label(false, self.t("menu.toolbars", "工具列")), |ui| {
@@ -437,6 +449,10 @@ impl App {
             self.check(ui, C::ToggleMenubar, s.show_menubar);
             self.check(ui, C::ToggleStatusbar, s.show_statusbar);
         });
+        self.check(ui, C::ToggleFileView, s.show_file_view);
+        // 運行輸出面板也能像文件視圖一樣手動顯示/隱藏；執行腳本時會自動打開。
+        let script_output_shown = self.runner.show;
+        self.check(ui, C::ToggleScriptOutput, script_output_shown);
         self.check(ui, C::FullScreen, self.fullscreen);
         self.check(ui, C::AlwaysOnTop, s.always_on_top);
         self.check(ui, C::PostIt, self.post_it);
@@ -617,6 +633,9 @@ impl App {
 
     fn tools_menu(&mut self, ui: &mut egui::Ui) {
         self.item(ui, C::Options);
+        ui.separator();
+        self.item(ui, C::RunScript);
+        ui.separator();
         self.item(ui, C::Highlighting);
         self.item(ui, C::FileAssociation);
         self.item(ui, C::SourceFormatter);
@@ -725,58 +744,30 @@ impl App {
         let resp = ui
             .horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
-                let mode = self.doc().mode;
                 let wrap = self.settings.wrap_mode;
-                let groups: &[&[(&str, C, Option<bool>)]] = &[
-                    &[("new", C::New, None), ("fileopen", C::Open, None), ("filesave", C::Save, None), ("saveall", C::SaveAll, None), ("fileclose", C::Close, None), ("closeall", C::CloseAll, None)],
-                    &[("print", C::Print, None)],
-                    &[("undo", C::Undo, None), ("redo", C::Redo, None)],
-                    &[("cut", C::Cut, None), ("copy", C::Copy, None), ("paste", C::Paste, None)],
-                    &[("indent", C::IncreaseIndent, None), ("unindent", C::DecreaseIndent, None), ("comment", C::Comment, None), ("uncomment", C::Uncomment, None)],
-                    &[("find", C::Find, None), ("findnext", C::FindNext, None), ("findprev", C::FindPrevious, None), ("replace", C::Replace, None), ("goposition", C::GoToLine, None)],
-                    &[
-                        ("nowrap", C::NoWrap, Some(wrap == WrapMode::NoWrap)),
-                        ("wrapbywin", C::WrapByWindow, Some(wrap == WrapMode::ByWindow)),
-                        ("wrapbycol", C::WrapByColumn, Some(wrap == WrapMode::ByColumn)),
-                    ],
-                    &[
-                        ("textmode", C::TextMode, Some(mode == EditMode::Text)),
-                        ("columnmode", C::ColumnMode, Some(mode == EditMode::Column)),
-                        ("hexmode", C::HexMode, Some(mode == EditMode::Hex)),
-                    ],
-                    &[("bookmark_toggle", C::ToggleBookmark, None), ("bookmark_next", C::NextBookmark, None), ("bookmark_prev", C::PreviousBookmark, None), ("bookmark_clear", C::ClearAllBookmarks, None)],
-                    &[("preview", C::PreviewMarkdown, None)],
-                ];
-                let can_undo = self.doc().can_undo();
-                let can_redo = self.doc().can_redo();
-                let is_md = self.doc().is_markdown();
-                for (g, group) in groups.iter().enumerate() {
-                    if g > 0 {
-                        ui.separator();
-                    }
-                    for &(icon, c, selected) in *group {
-                        let Some((light, dark)) = self.icons.get(icon) else { continue };
-                        let tex = if ui.visuals().dark_mode { dark } else { light };
-                        let img = egui::Image::new((tex.id(), egui::vec2(16.0, 16.0)));
-                        let mut btn = Button::image(img).frame_when_inactive(false);
-                        if let Some(sel) = selected {
-                            btn = btn.selected(sel);
-                        }
-                        let enabled = match c {
-                            C::Undo => can_undo,
-                            C::Redo => can_redo,
-                            C::PreviewMarkdown => is_md,
-                            _ => true,
-                        };
-                        let sc = self.shortcut_text(c, ui.ctx());
-                        let tip = if sc.is_empty() { self.cmd_text(c) } else { format!("{} ({sc})", self.cmd_text(c)) };
-                        // Announced without the menu's "(&F)" mnemonic and trailing "...".
-                        let name = plain_label(&self.cmd_text(c));
-                        if ui.add_enabled_ui(enabled, |ui| form::icon_button(ui, btn, &tip, &name)).inner.clicked() {
-                            self.pending.push(c);
-                        }
-                    }
-                }
+                self.icon_group(ui, &[("new", C::New, None), ("fileopen", C::Open, None), ("filesave", C::Save, None), ("saveall", C::SaveAll, None), ("fileclose", C::Close, None), ("closeall", C::CloseAll, None)]);
+                ui.separator();
+                self.icon_group(ui, &[("print", C::Print, None)]);
+                ui.separator();
+                self.icon_group(ui, &[("undo", C::Undo, None), ("redo", C::Redo, None)]);
+                ui.separator();
+                self.icon_group(ui, &[("cut", C::Cut, None), ("copy", C::Copy, None), ("paste", C::Paste, None)]);
+                ui.separator();
+                self.icon_group(ui, &[("indent", C::IncreaseIndent, None), ("unindent", C::DecreaseIndent, None), ("comment", C::Comment, None), ("uncomment", C::Uncomment, None)]);
+                ui.separator();
+                self.icon_group(ui, &[("find", C::Find, None), ("findnext", C::FindNext, None), ("findprev", C::FindPrevious, None), ("replace", C::Replace, None), ("goposition", C::GoToLine, None)]);
+                ui.separator();
+                self.icon_group(ui, &[
+                    ("nowrap", C::NoWrap, Some(wrap == WrapMode::NoWrap)),
+                    ("wrapbywin", C::WrapByWindow, Some(wrap == WrapMode::ByWindow)),
+                    ("wrapbycol", C::WrapByColumn, Some(wrap == WrapMode::ByColumn)),
+                ]);
+                ui.separator();
+                self.edit_mode_group(ui);
+                ui.separator();
+                self.icon_group(ui, &[("bookmark_toggle", C::ToggleBookmark, None), ("bookmark_next", C::NextBookmark, None), ("bookmark_prev", C::PreviousBookmark, None), ("bookmark_clear", C::ClearAllBookmarks, None)]);
+                ui.separator();
+                self.icon_group(ui, &[("preview", C::PreviewMarkdown, None)]);
                 if !self.quick_in_menubar {
                     ui.separator();
                     self.quick_controls(ui, false);
@@ -790,5 +781,57 @@ impl App {
             self.check(ui, C::ToggleMenubar, s.show_menubar);
             self.check(ui, C::ToggleStatusbar, s.show_statusbar);
         });
+    }
+
+    /// One group of toolbar icons, separated from its neighbours by a divider.
+    fn icon_group(&mut self, ui: &mut egui::Ui, group: &[(&str, C, Option<bool>)]) {
+        let can_undo = self.doc().can_undo();
+        let can_redo = self.doc().can_redo();
+        let is_md = self.doc().is_markdown();
+        for &(icon, c, selected) in group {
+            let Some((light, dark)) = self.icons.get(icon) else { continue };
+            let tex = if ui.visuals().dark_mode { dark } else { light };
+            let img = egui::Image::new((tex.id(), egui::vec2(16.0, 16.0)));
+            let mut btn = Button::image(img).frame_when_inactive(false);
+            if let Some(sel) = selected {
+                btn = btn.selected(sel);
+            }
+            let enabled = match c {
+                C::Undo => can_undo,
+                C::Redo => can_redo,
+                C::PreviewMarkdown => is_md,
+                _ => true,
+            };
+            let sc = self.shortcut_text(c, ui.ctx());
+            let tip = if sc.is_empty() { self.cmd_text(c) } else { format!("{} ({sc})", self.cmd_text(c)) };
+            // Announced without the menu's "(&F)" mnemonic and trailing "...".
+            let name = plain_label(&self.cmd_text(c));
+            if ui.add_enabled_ui(enabled, |ui| form::icon_button(ui, btn, &tip, &name)).inner.clicked() {
+                self.pending.push(c);
+            }
+        }
+    }
+
+    /// The text / column / hex edit modes as one three-way choice, so the toolbar shows which
+    /// one is in use instead of three unrelated buttons.
+    fn edit_mode_group(&mut self, ui: &mut egui::Ui) {
+        let mode = self.doc().mode;
+        let choices = [(C::TextMode, EditMode::Text, "textmode"), (C::ColumnMode, EditMode::Column, "columnmode"), (C::HexMode, EditMode::Hex, "hexmode")];
+        let mut items = Vec::with_capacity(choices.len());
+        for &(c, m, icon) in &choices {
+            let Some((light, dark)) = self.icons.get(icon) else { return };
+            let tex = if ui.visuals().dark_mode { dark } else { light };
+            let sc = self.shortcut_text(c, ui.ctx());
+            let tip = if sc.is_empty() { self.cmd_text(c) } else { format!("{} ({sc})", self.cmd_text(c)) };
+            items.push(form::IconChoice {
+                image: egui::Image::new((tex.id(), egui::vec2(16.0, 16.0))),
+                tip,
+                name: plain_label(&self.cmd_text(c)),
+                selected: mode == m,
+            });
+        }
+        if let Some(index) = form::icon_choices(ui, &items) {
+            self.pending.push(choices[index].0);
+        }
     }
 }

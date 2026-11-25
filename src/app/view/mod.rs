@@ -16,12 +16,16 @@ use crate::core::editor::EditorState;
 use crate::core::editor::{TextPosition, char_visual_columns, tab_columns_at, tab_size};
 #[cfg(test)]
 use crate::core::model::EditMode;
+use crate::core::fold::FoldModel;
 use crate::core::settings::{Settings, WrapMode};
 use crate::core::spell::SpellChecker;
 
+mod foldmap;
 mod input;
 mod layout;
 mod paint;
+
+use foldmap::DisplayMap;
 
 pub use input::{apply_action, indent_selection, selected_line_range};
 
@@ -152,12 +156,18 @@ pub struct ViewState {
     pub visible_rows: usize,
     /// 強制捲動到游標（例如搜尋後）
     pub ensure_visible: bool,
+    /// 重新載入檔案後保留目前捲動位置：下一幀不要把畫面拉回游標
+    skip_caret_scroll: bool,
     /// 對應括號快取：(游標位置, 文件版本) → 括號配對
     brace_cache: Option<BraceCache>,
     spell_cache: HashMap<u64, Vec<(usize, usize)>>,
     spell_ctx: Option<SpellContext>,
     /// 本幀各行版面快取（繪製、滑鼠與游標計算共用）
     frame: std::cell::RefCell<FrameLayout>,
+    /// 代碼折疊：已折疊的行範圍與摺疊點偵測快取（每分頁各自保存）
+    pub folds: FoldModel,
+    /// 本幀的顯示列映射；沒有折疊時為 None，所有查詢走原本的直接索引
+    fold_map: Option<DisplayMap>,
     pub text_rect: Rect,
     blink_start: f64,
 }
@@ -179,13 +189,24 @@ impl Default for ViewState {
             find_cache_id: 0,
             visible_rows: 30,
             ensure_visible: true,
+            skip_caret_scroll: false,
             brace_cache: None,
             spell_cache: HashMap::new(),
             spell_ctx: None,
             frame: std::cell::RefCell::default(),
+            folds: FoldModel::default(),
+            fold_map: None,
             text_rect: Rect::NOTHING,
             blink_start: 0.0,
         }
+    }
+}
+
+impl ViewState {
+    /// 檔案重新載入後保留目前的捲動位置；下一幀不因文件版本或游標改變而自動捲動。
+    pub fn keep_scroll_on_reload(&mut self) {
+        self.ensure_visible = false;
+        self.skip_caret_scroll = true;
     }
 }
 
@@ -288,6 +309,8 @@ pub struct ViewEnv<'a> {
     pub theme_name: &'a str,
     pub is_dark: bool,
     pub editor_family: &'a str,
+    /// 折疊行末尾的提示文字模板，`{n}` 會被替換為隱藏行數
+    pub fold_label: &'a str,
 }
 
 /// 編輯區的固定 Id（App 用來判斷焦點與要求焦點）
@@ -329,6 +352,8 @@ struct Frame {
     hbar: Rect,
     mark_w: f32,
     num_w: f32,
+    /// 折疊三角欄寬（未啟用代碼折疊時為 0）
+    fold_w: f32,
     ruler_h: f32,
     id: egui::Id,
     response: egui::Response,
@@ -405,7 +430,9 @@ pub fn show(
         0.0
     };
     let mark_w = if settings.show_bookmarks { 14.0 } else { 0.0 };
-    let gutter_w = num_w + mark_w + 4.0;
+    // 折疊手柄放在行號右側、緊貼文字（UltraEdit 樣式），欄位收窄
+    let fold_w = if settings.code_folding { 16.0 } else { 0.0 };
+    let gutter_w = mark_w + num_w + fold_w + 4.0;
     let text_rect = Rect::from_min_max(
         Pos2::new(full.left() + gutter_w, full.top() + ruler_h),
         Pos2::new(full.right() - sb, full.bottom() - sb),
@@ -420,6 +447,7 @@ pub fn show(
         WrapMode::ByColumn => settings.wrap_column.max(1) as f32 * widths.cell_w,
     };
     view.update_wrap(doc, &lay, widths);
+    view.refresh_folds(doc, settings);
     view.begin_frame(doc.version, lay.fixed, widths);
     view.visible_rows = ((text_rect.height() / lay.row_h).floor() as usize).max(1);
     doc.editor.viewport.visible_line_count = view.visible_rows;
@@ -450,6 +478,7 @@ pub fn show(
         hbar,
         mark_w,
         num_w,
+        fold_w,
         ruler_h,
         id,
         response,

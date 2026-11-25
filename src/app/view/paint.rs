@@ -65,13 +65,16 @@ pub(super) fn text(
     let text_rect = frame.text_rect;
     let mark_w = frame.mark_w;
     let num_w = frame.num_w;
+    let fold_w = frame.fold_w;
     let ruler_h = frame.ruler_h;
     let total_rows = view.row_count(&doc.editor);
     let vis = view.visible_rows;
     let colors = syntax::theme_colors(env.theme_name, env.is_dark);
-    let bg = rgb(colors.background);
-    let fg = rgb(colors.foreground);
     let visuals = ui.visuals().clone();
+    // 暗色模式下編輯區與其他面板共用同一底色：語法主題自帶的灰藍底（如 base16-ocean 的
+    // #2B303B）在整體深色介面中顯得灰蒙蒙；淺色主題本身已是白底，維持主題原色不動。
+    let bg = if env.is_dark { visuals.panel_fill } else { rgb(colors.background) };
+    let fg = rgb(colors.foreground);
     let sel_color = colors
         .selection
         .map(|c| rgb(c).gamma_multiply(0.85))
@@ -502,6 +505,22 @@ pub(super) fn text(
                 );
             }
 
+            // 折疊提示：折疊行末尾標出被隱藏的行數
+            if start == 0
+                && let Some(marker) = view.fold_marker(line)
+                && marker.folded
+            {
+                let label = env.fold_label.replace("{n}", &marker.hidden.to_string());
+                let chip_x = sx(row_w + widths.cell_w, 0.0);
+                text_painter.text(
+                    Pos2::new(chip_x, text_y),
+                    Align2::LEFT_TOP,
+                    label,
+                    FontId::monospace(widths.text_h * 0.85),
+                    faint,
+                );
+            }
+
             // 拼字錯誤底線
             for &(a, b) in &spell_ranges {
                 {
@@ -529,7 +548,8 @@ pub(super) fn text(
                 }
             }
 
-            // 行號與書籤（只畫在每行第一個視覺列）
+            // 行號、書籤與折疊手柄（只畫在每行第一個視覺列）
+            // 版面由左至右：書籤欄、行號、折疊手柄（緊貼文字）。
             if start == 0 {
                 if settings.show_line_numbers {
                     let num_color = if line == sel.head.line { fg } else { faint };
@@ -547,6 +567,30 @@ pub(super) fn text(
                         (lay.row_h * 0.22).min(5.0),
                         Color32::from_rgb(60, 120, 230),
                     );
+                }
+                if fold_w > 0.0
+                    && let Some(marker) = view.fold_marker(line)
+                {
+                    // 折疊三角：▼ 展開中、▶ 已折疊
+                    let cx = full.left() + mark_w + num_w + fold_w / 2.0;
+                    let cy = y + lay.row_h / 2.0;
+                    // 比照 UltraEdit 的小方塊：放大到約 5–7 px 並用較深的前景色
+                    let s = (lay.row_h * 0.26).clamp(4.5, 7.0);
+                    let marker_color = fg.gamma_multiply(0.55);
+                    let points = if marker.folded {
+                        vec![
+                            Pos2::new(cx - s * 0.45, cy - s),
+                            Pos2::new(cx + s * 0.75, cy),
+                            Pos2::new(cx - s * 0.45, cy + s),
+                        ]
+                    } else {
+                        vec![
+                            Pos2::new(cx - s, cy - s * 0.55),
+                            Pos2::new(cx + s * 0.7, cy - s * 0.55),
+                            Pos2::new(cx, cy + s * 0.85),
+                        ]
+                    };
+                    painter.add(egui::Shape::convex_polygon(points, marker_color, Stroke::NONE));
                 }
             }
 
@@ -588,8 +632,9 @@ pub(super) fn text(
                     // 列塊矩形選取時，於每一行畫出游標
                     if let Some(b) = block_bounds.filter(|b| b.min_vcol == b.max_vcol) {
                         for l in b.min_line..=b.max_line {
-                            if l >= first_line && l <= last_line {
-                                let ry = text_rect.top() + (l - first_row) as f32 * lay.row_h;
+                            let row = view.row_of(crate::core::editor::TextPosition::new(l, 0));
+                            if row >= first_row && row < last_row {
+                                let ry = text_rect.top() + (row - first_row) as f32 * lay.row_h;
                                 text_painter.rect_filled(
                                     Rect::from_min_size(
                                         Pos2::new(caret_rect.left(), ry),
@@ -709,29 +754,97 @@ pub(super) fn text(
     max_w
 }
 
+/// 滾動條繪製：完全比照【資源管理器】的 egui floating 滾動條規格——
+/// 平時隱藏；指針進入編輯區顯示細滑塊（2px，半透明）；移到滾動條上變粗（10px）、
+/// 滑塊全亮（前景色，暗色主題下即白色）並顯示淡淡的軌道。粗細與透明度都帶漸變動畫。
 pub(super) fn scrollbars(
     ui: &egui::Ui,
     frame: &Frame,
     v_thumb: Rect,
     horizontal: Option<&HorizontalBar>,
 ) {
-    let painter = ui.painter_at(frame.full);
+    let style = &ui.style().spacing.scroll;
     let visuals = ui.visuals();
-    let track_color = visuals.extreme_bg_color;
-    let thumb_color = visuals.widgets.inactive.bg_fill;
-    painter.rect_filled(frame.vbar, CornerRadius::ZERO, track_color);
-    painter.rect_filled(
-        v_thumb,
-        CornerRadius::same(3),
-        if frame.vbar_resp.dragged() {
-            visuals.widgets.active.bg_fill
+    // 分層判定：outer = 指針在編輯區內；bar = 指針売在「該方向」的滾動條上（或正在拖動）。
+    // 橫豎各自的粗細、透明度獨立動畫——hover 豎條只有豎條變粗，與 egui floating 一致。
+    let outer_hover = ui
+        .input(|i| i.pointer.latest_pos())
+        .is_some_and(|p| frame.full.contains(p));
+    let v_bar = frame.vbar_resp.hovered() || frame.vbar_resp.dragged();
+    let h_bar = frame.hbar_resp.hovered() || frame.hbar_resp.dragged();
+    let v_t = ui.ctx().animate_bool_responsive(frame.id.with("vbar_hover"), v_bar);
+    let h_t = ui.ctx().animate_bool_responsive(frame.id.with("hbar_hover"), h_bar);
+    let outer_t = ui.ctx().animate_bool_responsive(frame.id.with("outer_hover"), outer_hover);
+    if (v_t <= 0.0 && h_t <= 0.0) && outer_t <= 0.0 {
+        return;
+    }
+    let lerp = egui::emath::lerp;
+    // 滑塊用強調前景色（暗色主題下近白、淺色主題下近黑），與資源管理器觀感一致
+    let handle_color = visuals.strong_text_color();
+    let radius = CornerRadius::same(4);
+    let painter = ui.painter_at(frame.full);
+    let margin = style.bar_inner_margin;
+    // 內容沒有溢出（滑塊佔滿全條）時不顯示該方向的滾動條
+    let v_overflow = v_thumb.height() < frame.vbar.height() - 2.0;
+    // 豎向：寬度上限與 egui 相同（bar_width 10px），只扣靠邊一側的 bar_inner_margin（4px）
+    let v_width = lerp(style.floating_width..=style.bar_width, v_t).min((frame.vbar.width() - margin).max(1.0));
+    let v_handle_opacity = if v_bar {
+        style.interact_handle_opacity
+    } else {
+        lerp(style.dormant_handle_opacity..=style.active_handle_opacity, outer_t)
+    };
+    let v_bg_opacity = if v_bar {
+        style.interact_background_opacity
+    } else if outer_hover {
+        style.active_background_opacity
+    } else {
+        0.0
+    };
+    let v_x = (frame.vbar.right() - margin - v_width)..=(frame.vbar.right() - margin);
+    if v_bg_opacity > 0.0 && v_overflow {
+        painter.rect_filled(
+            Rect::from_x_y_ranges(v_x.clone(), frame.vbar.y_range()),
+            radius,
+            visuals.extreme_bg_color.gamma_multiply(v_bg_opacity),
+        );
+    }
+    if v_overflow {
+        painter.rect_filled(
+            Rect::from_x_y_ranges(v_x, v_thumb.y_range()),
+            radius,
+            handle_color.gamma_multiply(v_handle_opacity),
+        );
+    }
+    // 橫向：獨立動畫（無橫向溢出就不顯示）
+    if let Some(bar) = horizontal
+        && bar.max_scroll > 0.5
+    {
+        let h_width = lerp(style.floating_width..=style.bar_width, h_t).min(bar.track.height().max(1.0));
+        let h_handle_opacity = if h_bar {
+            style.interact_handle_opacity
         } else {
-            thumb_color
-        },
-    );
-    painter.rect_filled(frame.hbar, CornerRadius::ZERO, track_color);
-    if let Some(bar) = horizontal {
-        painter.rect_filled(bar.thumb, CornerRadius::same(3), thumb_color);
+            lerp(style.dormant_handle_opacity..=style.active_handle_opacity, outer_t)
+        };
+        let h_bg_opacity = if h_bar {
+            style.interact_background_opacity
+        } else if outer_hover {
+            style.active_background_opacity
+        } else {
+            0.0
+        };
+        let h_y = (bar.track.bottom() - margin - h_width)..=(bar.track.bottom() - margin);
+        if h_bg_opacity > 0.0 {
+            painter.rect_filled(
+                Rect::from_x_y_ranges(bar.track.x_range(), h_y.clone()),
+                radius,
+                visuals.extreme_bg_color.gamma_multiply(h_bg_opacity),
+            );
+        }
+        painter.rect_filled(
+            Rect::from_x_y_ranges(bar.thumb.x_range(), h_y),
+            radius,
+            handle_color.gamma_multiply(h_handle_opacity),
+        );
     }
 }
 

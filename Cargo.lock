@@ -7,6 +7,7 @@ name = "MadEdit"
 version = "0.6.9"
 dependencies = [
  "arboard",
+ "chardetng",
  "chrono",
  "dirs",
  "eframe",
@@ -24,6 +25,7 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "pulldown-cmark",
+ "raw-window-handle",
  "regex",
  "resvg",
  "rfd",
@@ -33,8 +35,10 @@ dependencies = [
  "spellbook",
  "syntect",
  "sys-locale",
+ "tempfile",
  "unicode-width",
  "ureq",
+ "windows",
 ]
 
 [[package]]
@@ -655,6 +659,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ced0551234e87afee12411d535648dd89d2e7f34c78b753395567aff3d447ff"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "chardetng"
+version = "0.1.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14b8f0b65b7b08ae3c8187e8d77174de20cb6777864c6b832d8ad365999cf1ea"
+dependencies = [
+ "cfg-if",
+ "encoding_rs",
+ "memchr",
 ]
 
 [[package]]
@@ -5125,8 +5140,6 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 [[package]]
 name = "winit"
 version = "0.30.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6755fa58a9f8350bd1e472d4c3fcc25f824ec358933bba33306d0b63df5978d"
 dependencies = [
  "ahash",
  "android-activity",

@@ -37,6 +37,25 @@ macro_rules! commands {
                 match self { $(C::$name => $key),* }
             }
             pub fn from_id(id: &str) -> Option<C> { ALL.iter().copied().find(|c| c.id() == id) }
+
+            /// 沒有開啟任何文件時仍可執行的命令：開檔、結束、外觀設定與不需要文件內容的對話框。
+            /// 其餘命令由 `App::dispatch` 擋下並提示，避免操作不存在的文件。
+            pub fn works_without_document(self) -> bool {
+                matches!(
+                    self,
+                    C::New | C::Open | C::RecentFilesList | C::Exit
+                        | C::AlwaysOnTop | C::FullScreen | C::PostIt | C::SetFont | C::ZoomIn | C::ZoomOut
+                        | C::FixedWidthMode | C::NoWrap | C::WrapByWindow | C::WrapByColumn
+                        | C::DisplayLineNumber | C::DisplayBookmark | C::Display80ColHint | C::ShowRuler
+                        | C::ShowEndOfLine | C::ShowTabChar | C::ShowSpaceChar | C::ShowAllChar
+                        | C::RightToLeft | C::MarkActiveLine | C::MarkBracePair | C::SpellCheck | C::TypewriterMode
+                        | C::ToggleToolbar | C::ToggleMenubar | C::ToggleStatusbar | C::ToggleFileView | C::ToggleTheme
+                        | C::ToggleScriptOutput
+                        | C::ShowFindInFilesResults | C::CollapseAllResults
+                        | C::Options | C::Highlighting | C::FileAssociation | C::SourceFormatter | C::PurgeHistories
+                        | C::WindowList | C::KeyboardShortcuts | C::About
+                )
+            }
         }
     };
 }
@@ -50,6 +69,7 @@ commands! {
     SaveACopy => "menuSaveACopy", "另存副本...", "";
     SaveAll => "menuSaveAll", "全部儲存(&V)", "Ctrl+Shift+S";
     Reload => "menuReload", "重新載入(&R)", "Ctrl+R";
+    OpenFolder => "menuOpenFolder", "開啟檔案所在資料夾(&F)", "";
     Close => "menuClose", "關閉檔案(&C)", "Ctrl+F4";
     CloseAll => "menuCloseAll", "全部關閉(&L)", "";
     CloseOthers => "menuCloseAllButThis", "關閉其他檔案", "";
@@ -71,7 +91,7 @@ commands! {
     Delete => "menuDelete", "刪除(&D)", "";
     CutLine => "menuCutLine", "剪下整行(&I)", "Ctrl+Shift+L";
     DeleteLine => "menuDeleteLine", "刪除整行(&L)", "Ctrl+L|Ctrl+Y";
-    DuplicateLine => "menuDuplicateLine", "複製整行", "Ctrl+Shift+D";
+    DuplicateLine => "menuDuplicateLine", "複製整行", "Ctrl+Shift+D|Ctrl+D";
     MoveLinesUp => "menuMoveLinesUp", "整行上移", "Alt+ArrowUp";
     MoveLinesDown => "menuMoveLinesDown", "整行下移", "Alt+ArrowDown";
     JoinLines => "menuJoinLines", "合併行", "Ctrl+J";
@@ -166,12 +186,21 @@ commands! {
     ToggleToolbar => "menuToolBarsToggleAll", "顯示/隱藏工具列", "";
     ToggleMenubar => "menuMenuBarToggle", "顯示/隱藏選單列", "Ctrl+F10";
     ToggleStatusbar => "menuStatusBarToggle", "顯示/隱藏狀態列", "";
+    ToggleFileView => "menuFileView", "文件視圖(&F)", "";
+    ToggleScriptOutput => "menuScriptOutput", "運行輸出(&O)", "";
     ToggleTheme => "menuToggleTheme", "切換深色/淺色主題", "";
     TextMode => "menuTextMode", "文字模式(&T)", "Alt+1";
     ColumnMode => "menuColumnMode", "列塊模式(&C)", "Alt+2";
     HexMode => "menuHexMode", "十六進位模式(&H)", "Alt+3";
     PreviewMarkdown => "menuPreviewMarkdown", "以 Markdown 預覽", "";
     PreviewHtml => "menuPreviewHtml", "以 HTML 預覽", "";
+    PreviewSvg => "menuPreviewSvg", "以圖形預覽（SVG）", "";
+    PreviewImage => "menuPreviewImage", "以圖形預覽（圖片）", "";
+    PreviewAuto => "menuPreviewAuto", "預覽", "";
+    FoldToggle => "menuFoldToggle", "折疊/展開(&F)", "Ctrl+Shift+OpenBracket";
+    FoldAll => "menuFoldAll", "全部折疊(&A)", "";
+    UnfoldAll => "menuUnfoldAll", "全部展開(&L)", "";
+    ToggleCodeFolding => "menuCodeFolding", "啟用代碼折疊", "";
 
     // ── 巨集 ──
     RunTempMacro => "menuRunTempMacro", "執行暫存巨集...", "";
@@ -184,6 +213,7 @@ commands! {
 
     // ── 工具 ──
     Options => "menuOptions", "選項(&O)...", "";
+    RunScript => "menuRunScript", "運行腳本(&R)", "F5";
     Highlighting => "menuHighlighting", "語法突顯設定(&S)...", "";
     FileAssociation => "menuFileAssociation", "檔案類型關聯(&F)...", "";
     SourceFormatter => "menuSourceFormatter", "原始碼格式化設定(&S)...", "";
@@ -217,7 +247,7 @@ commands! {
 
     // ── 視窗 ──
     ToggleWindow => "menuToggleWindow", "切換視窗(&T)", "Ctrl+Tab";
-    PreviousWindow => "menuPreviousWindow", "上一個視窗(&P)", "F5";
+    PreviousWindow => "menuPreviousWindow", "上一個視窗(&P)", "F10";
     NextWindow => "menuNextWindow", "下一個視窗(&N)", "F6";
     WindowList => "menuWindowList", "視窗清單(&W)...", "";
     // 以下僅供快捷鍵使用，不放進選單（原版無此命令；第 9 個為最後一個分頁，同瀏覽器慣例）
@@ -347,6 +377,14 @@ mod tests {
         for s in ["Enter", "Backspace", "Tab", "Up", "Space", "A", "Shift+A", "Shift+Up", "Delete"] {
             assert!(!is_bindable(&parse_shortcut(s).unwrap()), "{s} 不應可綁定");
         }
+    }
+
+    #[test]
+    fn test_run_script_and_previous_window_shortcuts() {
+        // F5 讓給「運行腳本」，原「上一個視窗」改用 F10
+        assert_eq!(C::RunScript.default_keys(), "F5");
+        assert_eq!(C::PreviousWindow.default_keys(), "F10");
+        assert_eq!(C::FoldToggle.default_keys(), "Ctrl+Shift+OpenBracket");
     }
 
     #[test]

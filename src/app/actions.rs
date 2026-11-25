@@ -50,9 +50,12 @@ fn saves_view_preference(c: C) -> bool {
             | C::MarkBracePair
             | C::SpellCheck
             | C::TypewriterMode
+            | C::ToggleCodeFolding
             | C::ToggleToolbar
             | C::ToggleMenubar
             | C::ToggleStatusbar
+            | C::ToggleFileView
+            | C::ToggleScriptOutput
     )
 }
 
@@ -106,9 +109,191 @@ impl App {
 
     /// 顯示 Markdown 預覽分頁或並排面板，內容隨文件版本與深淺色主題自動更新；
     /// 並排面板必須在 CentralPanel 之前呼叫
-    pub fn show_markdown_preview(&mut self, ui: &mut egui::Ui) {
+    /// 顯示 SVG 圖形預覽（檢視 > 預覽為 > 圖形），內容隨文件版本自動更新
+    pub fn show_svg_preview(&mut self, ui: &mut egui::Ui) {
+        use super::mdpreview::Placement;
+        use super::svgpreview::SvgAction;
+        let ctx = ui.ctx().clone();
+        let lang = self.ui_lang();
+        let tab = self.tab_mut();
+        let Some(mut pv) = tab.svg_preview.take() else { return };
+        pv.refresh(&ctx, || tab.doc.text(), tab.doc.version, Self::is_dark(&ctx));
+        let area = ui.available_rect_before_wrap();
+        let action = match pv.placement {
+            Placement::Tab => pv.ui(ui, lang),
+            placement => {
+                let (panel, half) = if placement == Placement::Right {
+                    (egui::Panel::right("svg-preview-right"), area.width() / 2.0)
+                } else {
+                    (egui::Panel::bottom("svg-preview-bottom"), area.height() / 2.0)
+                };
+                panel.resizable(true).default_size(half).min_size(120.0).show(ui, |ui| {
+                    let rect = ui.available_rect_before_wrap();
+                    let mut content = ui.new_child(egui::UiBuilder::new().id_salt("svg-preview-content").max_rect(rect));
+                    content.shrink_clip_rect(rect);
+                    pv.ui(&mut content, lang)
+                }).inner
+            }
+        };
+        if action == SvgAction::None {
+            self.preview_tab_active = pv.placement == Placement::Tab;
+            self.tab_mut().svg_preview = Some(pv);
+        } else {
+            self.preview_tab_active = false;
+            self.focus_editor = true;
+        }
+    }
+
+    /// 開啟／聚焦目前點陣圖片文件的圖形預覽（bmp/jpg/jpeg/png/gif/webp）
+    pub(super) fn preview_image(&mut self) {
+        if !self.doc().path.as_ref().is_some_and(|p| super::is_raster_image_path(p)) {
+            self.set_status(self.t("img.not_image", "圖形預覽僅支援點陣圖片（BMP/JPEG/PNG/GIF/WebP）"));
+            return;
+        }
+        {
+            let tab = self.tab_mut();
+            let pv = tab.img_preview.get_or_insert_with(super::imgpreview::ImagePreview::default);
+            if pv.placement != super::mdpreview::Placement::Tab {
+                pv.set_placement(super::mdpreview::Placement::Tab);
+            }
+        }
+        self.img_preview_tab_active = true;
+        self.svg_preview_tab_active = false;
+        self.preview_tab_active = false;
+        self.activate_view(self.active, false);
+    }
+
+    /// 顯示點陣圖片預覽分頁或並排面板；圖片自磁碟重新解碼（檔案簽名變更時）。
+    pub fn show_img_preview(&mut self, ui: &mut egui::Ui) {
         use super::mdpreview::Placement;
         let ctx = ui.ctx().clone();
+        let lang = self.ui_lang();
+        let tab = self.tab_mut();
+        let Some(mut pv) = tab.img_preview.take() else { return };
+        if let Some(path) = tab.doc.path.clone() {
+            // 版本戳：長度 + 修改時間；hex 編輯未存檔時仍顯示磁碟內容（與檔案簽名一致）。
+            let stamp = std::fs::metadata(&path)
+                .ok()
+                .and_then(|m| Some(m.len() ^ m.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs()))
+                .unwrap_or(0);
+            pv.refresh(&ctx, &path, stamp);
+        }
+        let area = ui.available_rect_before_wrap();
+        let action = match pv.placement {
+            Placement::Tab => pv.ui(ui, lang),
+            placement => {
+                let (panel, half) = if placement == Placement::Right {
+                    (egui::Panel::right("img-preview-right"), area.width() / 2.0)
+                } else {
+                    (egui::Panel::bottom("img-preview-bottom"), area.height() / 2.0)
+                };
+                panel.resizable(true).default_size(half).min_size(120.0).show(ui, |ui| {
+                    let rect = ui.available_rect_before_wrap();
+                    let mut content = ui.new_child(egui::UiBuilder::new().id_salt("img-preview-content").max_rect(rect));
+                    content.shrink_clip_rect(rect);
+                    pv.ui(&mut content, lang)
+                }).inner
+            }
+        };
+        if action == super::imgpreview::ImageAction::None {
+            self.preview_tab_active = pv.placement == Placement::Tab;
+            self.tab_mut().img_preview = Some(pv);
+        } else {
+            self.preview_tab_active = false;
+            self.img_preview_tab_active = false;
+            self.focus_editor = true;
+        }
+    }
+
+    /// 開啟／聚焦目前 .svg 文件的圖形預覽
+    pub(super) fn preview_svg(&mut self) {
+        let is_svg = self.doc().path.as_ref().is_some_and(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")));
+        if !is_svg {
+            self.set_status(self.t("svg.not_svg", "圖形預覽僅支援 .svg 檔案"));
+            return;
+        }
+        {
+            let tab = &mut self.tabs[self.active];
+            let pv = tab.svg_preview.get_or_insert_with(|| super::svgpreview::SvgPreview::new(self.fonts.diagram_font()));
+            if pv.placement != super::mdpreview::Placement::Tab {
+                pv.set_placement(super::mdpreview::Placement::Tab);
+            }
+        }
+        self.svg_preview_tab_active = true;
+        self.preview_tab_active = false;
+        self.activate_view(self.active, false);
+    }
+
+    /// 安裝 Markdown 預覽所需的圖片載入器（延到第一次預覽，不拖慢啟動；重複呼叫無妨）
+    fn install_md_loaders(&mut self, ctx: &egui::Context) {
+        // 圖表載入器要後裝，egui 會先問後裝的載入器
+        egui_extras::install_image_loaders(ctx);
+        if !ctx.is_loader_installed(super::mdpreview::DiagramLoader::ID) {
+            super::mdpreview::DiagramLoader::install(ctx, self.fonts.diagram_font());
+        }
+        // Clamp large local SVGs before uploading them to the GPU.
+        if !ctx.is_loader_installed(super::mdpreview::LocalSvgLoader::ID) {
+            super::mdpreview::LocalSvgLoader::install(ctx, self.fonts.diagram_font());
+        }
+    }
+
+    /// 開啟／聚焦目前 .md 文件的 Markdown 預覽（含 Mermaid 圖表與本機圖片）
+    pub(super) fn preview_markdown(&mut self) {
+        if !self.doc().is_markdown() {
+            self.set_status(self.t("md.not_markdown", "Markdown 預覽僅支援 .md 檔案"));
+            return;
+        }
+        {
+            let tab = self.tab_mut();
+            let pv = tab.md_preview.get_or_insert_with(super::mdpreview::MarkdownPreview::new);
+            if pv.placement != super::mdpreview::Placement::Tab {
+                pv.set_placement(super::mdpreview::Placement::Tab);
+            }
+        }
+        self.preview_tab_active = false;
+        self.activate_view(self.active, true);
+    }
+
+    /// 統一預覽：依目前文件副檔名自動分發到對應的預覽；未支援時顯示狀態訊息
+    pub(super) fn dispatch_auto_preview(&mut self) {
+        let ext = self
+            .doc()
+            .path
+            .as_ref()
+            .and_then(|p| p.extension())
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase());
+        match ext.as_deref() {
+            Some("md" | "markdown") => self.preview_markdown(),
+            Some("svg") => self.preview_svg(),
+            Some("html" | "htm") => self.pending.push(C::PreviewHtml),
+            Some(ext) if matches!(ext, "bmp" | "jpg" | "jpeg" | "png" | "gif" | "webp") => self.preview_image(),
+            // 未存檔的文件沒有副檔名：Markdown 語法仍可預覽
+            None if self.doc().is_markdown() => self.preview_markdown(),
+            _ => self.set_status(self.t("preview.unsupported", "此檔案類型沒有對應的預覽")),
+        }
+    }
+
+    /// 關閉所有作用中的預覽（Markdown 預覽分頁、SVG／圖形預覽），回到編輯區
+    fn close_all_previews(&mut self) {
+        if self.preview_tab_active {
+            self.tab_mut().md_preview = None;
+            self.preview_tab_active = false;
+        }
+        if self.is_svg_preview_tab() {
+            self.tab_mut().svg_preview = None;
+            self.svg_preview_tab_active = false;
+        }
+        if self.is_img_preview_tab() {
+            self.tab_mut().img_preview = None;
+            self.img_preview_tab_active = false;
+        }
+        self.focus_editor = true;
+    }
+
+    pub fn show_markdown_preview(&mut self, ui: &mut egui::Ui) {        use super::mdpreview::Placement;
+        let ctx = ui.ctx().clone();
+        self.install_md_loaders(&ctx);
         let lang = self.ui_lang();
         let tab = self.tab_mut();
         let Some(mut pv) = tab.md_preview.take() else { return };
@@ -219,12 +404,75 @@ impl App {
         }
     }
 
+    /// Toggle the fold starting at the caret line (View > Code Folding).
+    fn fold_toggle(&mut self) {
+        if !self.settings.code_folding {
+            self.set_status(self.t("fold.disabled", "代碼折疊已停用（檢視 > 代碼折疊）"));
+            return;
+        }
+        let line = self.doc().editor.selection.head.line;
+        let i = self.active;
+        let handled = {
+            let tab = &mut self.tabs[i];
+            tab.view.ensure_fold_candidates(&tab.doc);
+            if tab.view.toggle_fold_at(line).is_some() {
+                true
+            } else if let Some(header) = tab.view.enclosing_fold_header(line) {
+                // 游標在區塊內：折疊包住游標的最內層區塊，並把游標移到它的起點
+                tab.view.toggle_fold_at(header);
+                tab.doc.editor.move_caret_to(TextPosition::new(header, 0), false);
+                true
+            } else {
+                false
+            }
+        };
+        if !handled {
+            self.set_status(self.t("fold.no_block", "此行沒有可折疊的成對大括號"));
+        }
+    }
+
+    fn fold_all_command(&mut self) {
+        if !self.settings.code_folding {
+            self.set_status(self.t("fold.disabled", "代碼折疊已停用（檢視 > 代碼折疊）"));
+            return;
+        }
+        let i = self.active;
+        let tab = &mut self.tabs[i];
+        tab.view.ensure_fold_candidates(&tab.doc);
+        tab.view.fold_all();
+        // 游標在折疊區內時移到折疊頭，否則下一幀會自動展開那一塊
+        if let Some(header) = tab.view.fold_header_for_line(tab.doc.editor.selection.head.line) {
+            tab.doc.editor.move_caret_to(TextPosition::new(header, 0), false);
+        }
+    }
+
+    fn unfold_all_command(&mut self) {
+        let i = self.active;
+        self.tabs[i].view.unfold_all();
+    }
+
+    /// VS 風格快捷鍵：文字模式下沒有選取時，Ctrl+X（剪下）剪下整行
+    fn cut_maps_to_cut_line(c: C, hex: bool, editable: bool, sel: &Selection) -> bool {
+        c == C::Cut && !hex && editable && sel.is_empty() && !sel.is_block()
+    }
+
     fn dispatch(&mut self, ctx: &egui::Context, c: C) {
+        // 關閉所有分頁後仍保留視窗；沒有文件時只放行開檔、外觀與設定類命令。
+        if self.tabs.is_empty() && !c.works_without_document() {
+            self.set_status(self.t("st.no_document", "沒有開啟的檔案"));
+            return;
+        }
         if self.macros.recording {
             self.macros.record_command(c);
         }
         let editable = !self.doc().read_only && !self.is_preview_tab();
         let hex = self.doc().mode == EditMode::Hex;
+        // VS 風格：文字模式且沒有選取時，Ctrl+X（剪下）剪下整行
+        let c = if Self::cut_maps_to_cut_line(c, hex, editable, &self.doc().editor.selection) {
+            C::CutLine
+        } else {
+            c
+        };
         match c {
             // ── 檔案 ──
             C::New => self.new_document(),
@@ -270,6 +518,29 @@ impl App {
                     self.confirm = Some(Confirm::ReloadModified { id });
                 } else {
                     self.reload_tab(id);
+                }
+            }
+            C::OpenFolder => {
+                // 在系統檔案管理員開啟檔案所在資料夾並選中該檔；背景執行，不阻塞 UI
+                let Some(path) = self.doc().path.clone() else { return };
+                let path = crate::core::favorites::clean_path(path);
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                    let _ = std::process::Command::new("explorer")
+                        .arg(format!("/select,{}", path.display()))
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .spawn();
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = std::process::Command::new("open").arg("-R").arg(&path).spawn();
+                }
+                #[cfg(all(unix, not(target_os = "macos")))]
+                {
+                    let dir = path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| path.clone());
+                    let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
                 }
             }
             C::Close => {
@@ -675,6 +946,22 @@ impl App {
                 }
             }
             C::ToggleStatusbar => self.settings.show_statusbar = !self.settings.show_statusbar,
+            C::ToggleFileView => self.settings.show_file_view = !self.settings.show_file_view,
+            C::ToggleScriptOutput => {
+                self.runner.show = !self.runner.show;
+                self.settings.show_script_output = self.runner.show;
+            }
+            C::ToggleCodeFolding => {
+                self.settings.code_folding = !self.settings.code_folding;
+                if !self.settings.code_folding {
+                    for tab in &mut self.tabs {
+                        tab.view.clear_folds();
+                    }
+                }
+            }
+            C::FoldToggle => self.fold_toggle(),
+            C::FoldAll => self.fold_all_command(),
+            C::UnfoldAll => self.unfold_all_command(),
             C::ToggleTheme => self.toggle_theme(ctx),
             C::TextMode | C::ColumnMode | C::HexMode => {
                 let mode = match c {
@@ -694,20 +981,27 @@ impl App {
                     self.focus_editor = true;
                 }
             }
-            // 非 Markdown 檔不開預覽（選單與工具列已停用，這裡擋住快捷鍵與巨集）
-            C::PreviewMarkdown if self.doc().is_markdown() => {
-                // 於 App 內開啟 Markdown 預覽（含 Mermaid 圖表）。
-                // 圖片載入器延到第一次預覽才安裝，不拖慢啟動；重複呼叫無妨。
-                // 圖表載入器要後裝，egui 會先問後裝的載入器
-                egui_extras::install_image_loaders(ctx);
-                if !ctx.is_loader_installed(super::mdpreview::DiagramLoader::ID) {
-                    super::mdpreview::DiagramLoader::install(ctx, self.fonts.diagram_font());
+            // 勾選式總開關：依副檔名自動分發到 Markdown／HTML／圖形預覽
+            C::PreviewAuto => {
+                self.settings.auto_preview = !self.settings.auto_preview;
+                let enabled = self.settings.auto_preview;
+                self.save_settings();
+                if enabled {
+                    self.dispatch_auto_preview();
+                } else {
+                    self.close_all_previews();
                 }
-                let pv = self.tab_mut().md_preview.get_or_insert_with(super::mdpreview::MarkdownPreview::new);
-                if pv.placement != super::mdpreview::Placement::Tab {
-                    pv.set_placement(super::mdpreview::Placement::Tab);
+            }
+            // 舊的分項預覽命令（巨集／舊設定相容）：一律視為「預覽」總開關
+            C::PreviewMarkdown | C::PreviewSvg | C::PreviewImage => {
+                self.settings.auto_preview = !self.settings.auto_preview;
+                let enabled = self.settings.auto_preview;
+                self.save_settings();
+                if enabled {
+                    self.dispatch_auto_preview();
+                } else {
+                    self.close_all_previews();
                 }
-                self.activate_view(self.active, true);
             }
             C::PreviewHtml => {
                 let html = print::preview_html(self.doc(), false);
@@ -757,6 +1051,7 @@ impl App {
 
             // ── 工具 ──
             C::Options => self.dialog = Some(Dialog::Options(Box::default())),
+            C::RunScript => self.run_script(),
             C::Highlighting => self.dialog = Some(Dialog::Highlighting),
             C::FileAssociation => self.message(
                 "檔案類型關聯",
@@ -1116,4 +1411,22 @@ fn run_astyle(text: &str, options: &str) -> Result<String, String> {
         return Err(String::from_utf8_lossy(&out.stderr).into_owned());
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string())
+}
+
+#[cfg(test)]
+mod cut_line_tests {
+    use super::*;
+
+    #[test]
+    fn test_cut_without_selection_maps_to_cut_line() {
+        let caret = Selection::caret(TextPosition::new(0, 0));
+        assert!(App::cut_maps_to_cut_line(C::Cut, false, true, &caret));
+        assert!(!App::cut_maps_to_cut_line(C::Copy, false, true, &caret));
+        // 有選取時維持一般剪下行為
+        let sel = Selection::new(TextPosition::new(0, 0), TextPosition::new(0, 3));
+        assert!(!App::cut_maps_to_cut_line(C::Cut, false, true, &sel));
+        // 十六進位模式或唯讀不轉換
+        assert!(!App::cut_maps_to_cut_line(C::Cut, true, true, &caret));
+        assert!(!App::cut_maps_to_cut_line(C::Cut, false, false, &caret));
+    }
 }

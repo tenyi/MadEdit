@@ -6,10 +6,14 @@ use egui_kittest::kittest::Queryable;
 
 use super::commands::C;
 use super::dialogs::Dialog;
+use super::favorites::FavTarget;
 use super::{App, Confirm};
+use crate::core::favorites::{FavoriteGroup, FavoriteItem};
 
 fn harness() -> Harness<'static, App> {
-    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, Vec::new(), None));
+    // 強制 1.0 縮放：kittest 的真實視窗可能落在不同縮放比例的顯示器上，
+    // 版面斷言（座標、可視範圍）必須與顯示器 DPI 無關，和視覺迴歸測試一致。
+    let mut h = Harness::builder().allow_missing_glyphs().with_pixels_per_point(1.0).with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, Vec::new(), None));
     // 測試機的系統語言不一定是繁體中文，按鈕文字固定用原文
     h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
     h.run_steps(3);
@@ -521,6 +525,48 @@ fn test_view_menu_groups_display_options_into_submenus() {
 }
 
 #[test]
+fn test_view_menu_toggles_the_script_output_panel() {
+    let mut h = harness();
+    assert!(!h.state().runner.show);
+    let toggle = |h: &mut Harness<'static, App>| {
+        h.get_by_label("檢視(V)").click();
+        h.run_steps(3);
+        // 選單項目帶勾選欄前綴，面板標題則是純文字，因此排除後者以免同時命中兩個節點。
+        h.get_by(|n| n.label().is_some_and(|l| l.contains("運行輸出") && l != "運行輸出")).click();
+        h.run_steps(3);
+    };
+    toggle(&mut h);
+    assert!(h.state().runner.show, "勾選後應顯示運行輸出面板");
+    assert!(h.state().settings.show_script_output, "勾選狀態應寫入設定");
+    assert!(h.query_by_label("運行輸出").is_some(), "面板標題應出現");
+    toggle(&mut h);
+    assert!(!h.state().runner.show, "再次點擊應隱藏面板");
+    assert!(!h.state().settings.show_script_output, "取消勾選也應寫入設定");
+    assert!(h.query_by_label("運行輸出").is_none(), "面板標題應消失");
+}
+
+/// 關閉面板的 × 與執行腳本（自動開啟）都會改變顯示狀態，設定要跟著記住，
+/// 下次啟動沿用最後狀態。
+#[test]
+fn test_script_output_panel_remembers_its_state() {
+    let settings = crate::core::settings::Settings { show_script_output: true, ..Default::default() };
+    let mut h = Harness::builder()
+        .allow_missing_glyphs()
+        .with_pixels_per_point(1.0)
+        .with_size([1000.0, 700.0])
+        .build_eframe(move |cc| App::with_settings(cc, Vec::new(), None, settings, None));
+    h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
+    h.run_steps(3);
+    assert!(h.state().runner.show, "上次結束時面板顯示中，重開應沿用");
+    assert!(h.query_by_label("運行輸出").is_some());
+    // 用面板上的 × 關閉：設定應同步成隱藏（標題欄也有一個「關閉」，取面板內的那個）。
+    h.get_by(|n| n.label().is_some_and(|l| l == "關閉") && n.raw_bounds().is_some_and(|r| r.y0 > 100.0)).click();
+    h.run_steps(3);
+    assert!(!h.state().runner.show);
+    assert!(!h.state().settings.show_script_output, "× 關閉後設定應同步");
+}
+
+#[test]
 fn test_quick_controls_move_to_toolbar_when_menu_bar_hidden() {
     use eframe::egui::accesskit::Role;
     let mut h = harness();
@@ -701,7 +747,7 @@ fn test_recent_files_list_explains_an_empty_list() {
 #[test]
 fn test_fixed_size_dialogs_fit_a_small_window() {
     use eframe::egui::accesskit::Role;
-    let mut h = Harness::builder().allow_missing_glyphs().with_size([500.0, 400.0]).build_eframe(|cc| App::new(cc, Vec::new(), None));
+    let mut h = Harness::builder().allow_missing_glyphs().with_pixels_per_point(1.0).with_size([500.0, 400.0]).build_eframe(|cc| App::new(cc, Vec::new(), None));
     h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
     h.run_steps(3);
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500.0, 400.0));
@@ -710,7 +756,8 @@ fn test_fixed_size_dialogs_fit_a_small_window() {
         h.state_mut().pending.push(cmd);
         h.run_steps(4);
         let window = h.get_by_role_and_label(Role::Window, title).rect();
-        let footer = h.get_by(|n| n.role() == Role::Button && n.label().as_deref() == Some(button)).rect();
+        // 標題列右上也有一顆「關閉」，對話框內的按鈕要在對話框視窗裡找。
+        let footer = dialog(&h).get_by(|n| n.role() == Role::Button && n.label().as_deref() == Some(button)).rect();
         assert!(screen.contains_rect(window), "{title}: {window:?}");
         assert!(window.contains_rect(footer), "{title}: {footer:?} outside {window:?}");
     }
@@ -1016,6 +1063,52 @@ fn test_switch_tab_by_number_shortcut() {
     assert_eq!(h.state_mut().active, 2, "分頁不存在時不動作");
 }
 
+/// 左鍵雙擊分頁標題即關閉該分頁；有未儲存的變更時仍先詢問，不能直接丟棄內容。
+#[test]
+fn test_double_clicking_a_tab_title_closes_that_tab() {
+    use eframe::egui::PointerButton;
+    use egui::accesskit::Role;
+    // 每幀 50ms：兩次點擊相距 50ms，落在 egui 的雙擊判定時間內。
+    let mut h = Harness::builder()
+        .allow_missing_glyphs()
+        .with_pixels_per_point(1.0)
+        .with_step_dt(0.05)
+        .with_size([1000.0, 700.0])
+        .build_eframe(|cc| App::new(cc, Vec::new(), None));
+    h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
+    h.run_steps(3);
+    h.state_mut().pending.push(C::New);
+    h.run_steps(3);
+    assert_eq!(h.state().tabs.len(), 2);
+    // 對同一個標題連按兩次左鍵（每次 press/release 一幀）。未命名文件的名稱帶文件編號，
+    // 整份測試共用的行程裡編號不固定，所以一律從目前狀態取名稱。
+    let double_click = |h: &mut Harness<'static, App>, label: &str| {
+        let at = h.get_by(|n| n.role() == Role::Tab && n.label().as_deref() == Some(label)).rect().center();
+        for _ in 0..2 {
+            for pressed in [true, false] {
+                h.event(Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: Modifiers::default() });
+            }
+            h.run_steps(1);
+        }
+        h.run_steps(2);
+    };
+    let first = h.state().tabs[0].doc.display_name();
+    // 單擊只切換分頁，不得關閉；等雙擊視窗過期後再測雙擊。
+    h.get_by(|n| n.role() == Role::Tab && n.label().as_deref() == Some(first.as_str())).click();
+    h.run_steps(8);
+    assert_eq!(h.state().tabs.len(), 2, "單擊分頁標題不得關閉分頁");
+    double_click(&mut h, &first);
+    assert_eq!(h.state().tabs.len(), 1, "雙擊分頁標題應關閉該分頁");
+    // 有未儲存的變更時，雙擊只開啟確認，不得直接關閉。
+    type_text(&mut h, "修改");
+    assert_eq!(h.state().tabs.len(), 1);
+    let dirty = format!("{} *", h.state().doc().display_name());
+    double_click(&mut h, &dirty);
+    assert!(h.state().confirm.is_some(), "有未儲存的變更時雙擊應先詢問");
+    assert_eq!(h.state().tabs.len(), 1, "確認前不得關閉分頁");
+    assert_eq!(text(&mut h), "修改", "內容不得被丟棄");
+}
+
 #[cfg(unix)]
 #[test]
 fn test_replace_in_files_skips_opened_file_via_symlink_alias() {
@@ -1155,7 +1248,7 @@ fn test_markdown_preview_scrolls_within_wrapped_editor_line() {
     h.state_mut().doc_mut().editor.set_text(&format!("{}\n\n結尾\n", "long text ".repeat(1000)));
     h.state_mut().doc_mut().version += 1;
     h.state_mut().settings.wrap_mode = WrapMode::ByWindow;
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(3);
     h.state_mut().tab_mut().md_preview.as_mut().unwrap().set_placement(Placement::Right);
     h.run_steps(5);
@@ -1194,7 +1287,7 @@ fn test_markdown_preview_scrolls_editor_without_feedback_or_selection_change() {
         h.state_mut().doc_mut().version += 1;
         let selection = Selection::new(TextPosition::new(0, 1), TextPosition::new(2, 3));
         h.state_mut().doc_mut().editor.selection = selection;
-        h.state_mut().pending.push(C::PreviewMarkdown);
+        h.state_mut().pending.push(C::PreviewAuto);
         h.run_steps(3);
         h.state_mut().tab_mut().md_preview.as_mut().unwrap().set_placement(placement);
         h.run_steps(8);
@@ -1228,7 +1321,7 @@ fn test_markdown_preview_reverse_scrolls_within_wrapped_line() {
     h.state_mut().doc_mut().editor.set_text(&format!("{}\n\nend\n", "long text ".repeat(1000)));
     h.state_mut().doc_mut().version += 1;
     h.state_mut().settings.wrap_mode = WrapMode::ByWindow;
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(3);
     h.state_mut().tab_mut().md_preview.as_mut().unwrap().set_placement(Placement::Right);
     h.run_steps(8);
@@ -1354,7 +1447,7 @@ fn test_markdown_preview_follows_active_tab() {
     let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, vec![a, b], None));
     h.run_steps(3);
     h.state_mut().activate(0);
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(3);
     h.state_mut().tab_mut().md_preview.as_mut().unwrap().set_placement(Placement::Right);
     h.run_steps(3);
@@ -1378,7 +1471,7 @@ fn test_markdown_preview_tab_reuses_source_and_never_opens_a_viewport() {
     let source_id = h.state().doc().id;
     let source_name = format!("{} *", h.state().doc().display_name());
     let preview_name = format!("{} — Markdown 預覽", h.state().doc().display_name());
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(5);
     assert!(h.state().is_preview_tab());
     assert_eq!(h.state().tabs.len(), 1, "預覽不得複製來源文件");
@@ -1399,14 +1492,22 @@ fn test_markdown_preview_tab_reuses_source_and_never_opens_a_viewport() {
     h.get_by_label(&preview_name).click();
     h.run_steps(5);
     h.get_by_label("Preview heading updated");
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    // 再點一次「以Markdown預覽」＝取消勾選並關閉預覽
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(3);
-    assert_eq!(h.state().tab_pages().len(), 2, "重複開啟只選取既有預覽");
-    h.key_press_modifiers(Modifiers::COMMAND, Key::Num1);
-    h.run_steps(2);
     assert!(!h.state().is_preview_tab());
-    h.key_press_modifiers(if cfg!(target_os = "macos") { Modifiers::CTRL } else { Modifiers::COMMAND }, Key::Tab);
-    h.run_steps(2);
+    assert!(h.state_mut().tab_mut().md_preview.is_none());
+    assert!(!h.state().settings.auto_preview, "取消勾選應寫回設定");
+    // 再勾選：重新開啟預覽，且不會複製來源文件
+    h.state_mut().pending.push(C::PreviewAuto);
+    h.run_steps(3);
+    assert!(h.state().is_preview_tab());
+    assert_eq!(h.state().tab_pages().len(), 2, "重複開啟只選取既有預覽");
+    h.state_mut().pending.push(C::PreviewAuto);
+    h.run_steps(3);
+    assert!(!h.state().is_preview_tab());
+    h.state_mut().pending.push(C::PreviewAuto);
+    h.run_steps(3);
     assert!(h.state().is_preview_tab(), "切換分頁須包含預覽");
     h.state_mut().pending.push(C::Close);
     h.run_steps(3);
@@ -1425,7 +1526,7 @@ fn test_markdown_preview_tab_layout_and_document_lifetime() {
     h.state_mut().doc_mut().syntax = "Markdown".into();
     type_text(&mut h, "# First");
     let first_id = h.state().doc().id;
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(4);
     h.get_by_label("左右並排").click();
     h.run_steps(5);
@@ -1440,7 +1541,8 @@ fn test_markdown_preview_tab_layout_and_document_lifetime() {
     h.state_mut().doc_mut().syntax = "Markdown".into();
     type_text(&mut h, "# Second");
     let second_id = h.state().doc().id;
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    // 第二份文件直接以方法開啟預覽（此時 md_auto_preview 已為 true，push 會變成取消勾選）
+    h.state_mut().preview_markdown();
     h.run_steps(4);
     assert_eq!(h.state().tab_pages().len(), 4);
     assert_eq!(h.output().viewport_output.len(), 1);
@@ -1454,7 +1556,8 @@ fn test_markdown_preview_tab_layout_and_document_lifetime() {
     h.state_mut().close_now(second_id);
     h.run_steps(3);
     assert!(!h.state().is_preview_tab());
-    assert_eq!(h.state().tab_pages().len(), 1, "關閉來源必須移除它的預覽分頁");
+    assert!(h.state().tabs.is_empty(), "關閉最後一個來源後應留下空白工作區，而不是新的未命名文件");
+    assert_eq!(h.state().tab_pages().len(), 0, "關閉來源必須移除它的預覽分頁");
     assert!(h.state().tabs.iter().all(|t| t.md_preview.is_none()));
 }
 
@@ -1470,12 +1573,13 @@ fn test_markdown_preview_only_for_markdown() {
     h.run_steps(3);
     h.state_mut().activate(0);
     assert!(!h.state_mut().doc().is_markdown());
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(3);
     assert!(h.state_mut().tab_mut().md_preview.is_none(), "純文字檔不應開啟預覽");
     h.state_mut().activate(1);
     assert!(h.state_mut().doc().is_markdown());
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    // 直接以方法開啟（push 會切換勾選狀態）
+    h.state_mut().preview_markdown();
     h.run_steps(3);
     assert!(h.state_mut().tab_mut().md_preview.is_some(), "Markdown 檔應開啟預覽");
     let _ = std::fs::remove_dir_all(&dir);
@@ -1503,7 +1607,7 @@ fn test_every_dialog_keeps_its_buttons_inside_its_window() {
 
 fn dialogs_keep_their_buttons_inside(size: egui::Vec2) {
     use eframe::egui::accesskit::Role;
-    let mut h = Harness::builder().allow_missing_glyphs().with_size(size).build_eframe(|cc| App::new(cc, Vec::new(), None));
+    let mut h = Harness::builder().allow_missing_glyphs().with_pixels_per_point(1.0).with_size(size).build_eframe(|cc| App::new(cc, Vec::new(), None));
     h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
     h.run_steps(3);
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
@@ -1533,9 +1637,23 @@ fn dialogs_keep_their_buttons_inside(size: egui::Vec2) {
         let rects: Vec<egui::Rect> = h.query_all_by(|n| n.role() == Role::Button && n.label().as_deref() == Some(button)).map(|n| n.rect()).collect();
         assert!(!rects.is_empty(), "{cmd:?}: no {button} button");
         for r in rects {
+            // 標題列右上的視窗按鈕（最小化／最大化／關閉）不在任何對話框視窗內，略過。
+            if r.top() < 34.0 {
+                continue;
+            }
             assert!(screen.contains_rect(r), "{cmd:?} at {size:?}: {button} at {r:?} is off screen");
             assert!(windows.iter().any(|w| w.contains_rect(r)), "{cmd:?} at {size:?}: {button} at {r:?} is outside its window {windows:?}");
         }
+    }
+    // 收藏面板的命名對話框由面板操作開啟，沒有對應命令：直接設定狀態驗證擺放位置
+    h.state_mut().dialog = Some(Dialog::FavoriteName { target: FavTarget::NewGroup, value: String::new(), invalid: false });
+    h.run_steps(4);
+    let windows: Vec<egui::Rect> = h.query_all_by(|n| n.role() == Role::Window).map(|n| n.rect()).collect();
+    let rects: Vec<egui::Rect> = h.query_all_by(|n| n.role() == Role::Button && n.label().as_deref() == Some("確定")).map(|n| n.rect()).collect();
+    assert!(!rects.is_empty(), "FavoriteName at {size:?}: no 確定 button");
+    for r in rects {
+        assert!(screen.contains_rect(r), "FavoriteName at {size:?}: 確定 at {r:?} is off screen");
+        assert!(windows.iter().any(|w| w.contains_rect(r)), "FavoriteName at {size:?}: 確定 at {r:?} is outside its window");
     }
 }
 
@@ -1747,7 +1865,9 @@ fn test_dialog_reopens_scrolled_to_the_top() {
     h.event(Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: egui::vec2(0.0, -400.0), modifiers: Modifiers::NONE, phase: egui::TouchPhase::Move, source: egui::MouseWheelSource::Wheel });
     h.run_steps(4);
     assert!(first_row(&h).is_none_or(|r| r.top() < top.top() - 50.0), "the wheel did not scroll the dialog");
-    click_button(&mut h, "關閉");
+    // 標題列右上也有一顆「關閉」，對話框內的按鈕要在對話框視窗裡找。
+    dialog(&h).get_by(|n| n.role() == Role::Button && n.label().as_deref() == Some("關閉")).click();
+    h.run_steps(3);
     assert!(h.state_mut().dialog.is_none());
     h.state_mut().pending.push(C::PageSetup);
     h.run_steps(4);
@@ -1800,7 +1920,7 @@ fn test_preview_tab_close_button_is_named_and_closes_only_the_preview() {
     h.state_mut().doc_mut().editor.set_text("# Title\n");
     h.state_mut().doc_mut().version += 1;
     let original = h.state_mut().doc_mut().text();
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(3);
     h.state_mut().tab_mut().md_preview.as_mut().unwrap().set_placement(Placement::Tab);
     h.run_steps(3);
@@ -1826,7 +1946,7 @@ fn test_icon_buttons_are_named_for_screen_readers() {
     use super::mdpreview::Placement;
     let mut h = harness();
     h.state_mut().doc_mut().syntax = "Markdown".into();
-    h.state_mut().pending.push(C::PreviewMarkdown);
+    h.state_mut().pending.push(C::PreviewAuto);
     h.run_steps(3);
     h.state_mut().tab_mut().md_preview.as_mut().unwrap().set_placement(Placement::Right);
     h.state_mut().pending.push(C::Find);
@@ -2246,4 +2366,1855 @@ fn test_find_bar_navigation_does_not_restart_the_full_text_count() {
     h.run_steps(2);
     assert_ne!(h.state_mut().find.live.counts_key, key, "an edit must recompute the counts");
     assert!(h.query_by_label("共 4 個符合").is_some());
+}
+
+/// 文件視圖的「列表」頁籤列出收藏根節點、群組與檔案；加入目前檔案時自動建立預設群組，
+/// 且同一檔案不重複。
+#[test]
+fn test_file_view_lists_groups_and_adds_the_active_file() {
+    let dir = std::env::temp_dir().join(format!("madedit-favorites-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("報價.txt");
+    std::fs::write(&file, "one").unwrap();
+
+    let mut h = harness();
+    h.state_mut().settings.show_file_view = true;
+    h.state_mut().open_path(&file);
+    h.state_mut().add_active_to_favorites(None);
+    h.run_steps(3);
+    {
+        let favorites = &h.state().settings.favorites;
+        assert_eq!(favorites.len(), 1);
+        assert_eq!(favorites[0].name, "常用");
+        assert_eq!(favorites[0].items.len(), 1);
+        assert_eq!(favorites[0].items[0].path.canonicalize().unwrap(), file.canonicalize().unwrap());
+        assert!(favorites[0].expanded, "a new group must be open so the added file is visible");
+    }
+    // 分頁標題和樹狀項目同名，先給項目一個不同的顯示名稱再查詢，才不會同時命中兩個節點。
+    h.state_mut().apply_favorite_name(FavTarget::Item(0, 0), "報價單");
+    h.run_steps(3);
+    assert!(h.query_by_label("列表").is_some(), "the file view should show its List tab");
+    assert!(h.query_by_label("收藏").is_some(), "the List tab should show the Favorites root node");
+    assert!(h.query_by_label("常用").is_some(), "the group should be listed under the root node");
+    assert!(h.query_by_label("報價單").is_some(), "the item should be listed under its group");
+
+    // 同一個檔案不重複加入，群組數量也不變
+    assert_eq!(h.state_mut().add_favorite_paths(None, [file.clone()]), 0);
+    assert_eq!(h.state_mut().settings.favorites[0].items.len(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 「列表」頁：收藏列與最近清單列尾的 ×（懸停顯示）只移除該條目，不刪除檔案本身。
+#[test]
+fn test_file_view_list_remove_buttons_clear_favorites_and_recent() {
+    let mut h = harness();
+    {
+        let s = &mut h.state_mut().settings;
+        s.show_file_view = true;
+        s.favorites_recent_expanded = true;
+        let mut group = FavoriteGroup::new("常用");
+        group.add(std::env::temp_dir().join("fav-a.txt"));
+        s.favorites.push(group);
+        s.favorites[0].expanded = true;
+        s.recent_files.push(std::env::temp_dir().join("recent-a.txt"));
+    }
+    h.run_steps(3);
+    // 收藏列懸停 → 列尾 × 出現 → 點擊只移除收藏條目
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("fav-a.txt")).hover();
+    h.run_steps(3);
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("移除此收藏")).click();
+    h.run_steps(3);
+    assert!(h.state().settings.favorites[0].items.is_empty(), "點擊列尾 × 後收藏條目應被移除");
+    // 最近清單同樣處理
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("recent-a.txt")).hover();
+    h.run_steps(3);
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("從最近清單移除")).click();
+    h.run_steps(3);
+    assert!(h.state().settings.recent_files.is_empty(), "點擊列尾 × 後最近條目應被移除");
+}
+
+/// 開啟整組收藏時，已不存在的檔案直接略過，不會逐一詢問是否建立新檔。
+#[test]
+fn test_opening_a_favorite_group_skips_missing_files_without_a_create_prompt() {
+    let dir = std::env::temp_dir().join(format!("madedit-favorites-open-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let first = dir.join("first.txt");
+    let second = dir.join("second.txt");
+    std::fs::write(&first, "first").unwrap();
+    std::fs::write(&second, "second").unwrap();
+
+    let mut h = harness();
+    {
+        let mut group = FavoriteGroup::new("工作");
+        group.add(first.clone());
+        group.add(dir.join("removed.txt"));
+        group.add(second.clone());
+        h.state_mut().settings.favorites.push(group);
+    }
+    h.state_mut().open_favorite_group(0);
+    h.run_steps(3);
+    assert!(h.state_mut().confirm.is_none(), "a missing favorite must not ask to create a file");
+    let open_paths: Vec<_> = h.state().tabs.iter().filter_map(|tab| tab.doc.path.clone()).collect();
+    assert!(open_paths.contains(&first.canonicalize().unwrap()));
+    assert!(open_paths.contains(&second.canonicalize().unwrap()));
+    assert_eq!(open_paths.len(), 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 在「收藏」根節點按右鍵，可用選單一次把所有開啟的檔案加入同一個群組。
+#[test]
+fn test_file_view_root_context_menu_adds_all_open_files() {
+    let dir = std::env::temp_dir().join(format!("madedit-file-view-menu-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let first = dir.join("one.txt");
+    let second = dir.join("two.txt");
+    std::fs::write(&first, "one").unwrap();
+    std::fs::write(&second, "two").unwrap();
+
+    let mut h = harness();
+    h.state_mut().settings.show_file_view = true;
+    h.state_mut().open_path(&first);
+    h.state_mut().open_path(&second);
+    h.run_steps(3);
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("收藏")).click_secondary();
+    h.run_steps(3);
+    h.get_by(|n| n.label().is_some_and(|l| l.contains("新增所有開啟的檔案"))).click();
+    h.run_steps(3);
+    {
+        let favorites = &h.state().settings.favorites;
+        assert_eq!(favorites.len(), 1, "adding from the root creates one group");
+        assert_eq!(favorites[0].name, "常用");
+        assert_eq!(favorites[0].items.len(), 2, "both open files should be added");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 關閉最後一個分頁後留下空白工作區：不自動開新檔、不結束程式，文件命令不會動作。
+#[test]
+fn test_closing_the_last_tab_leaves_an_empty_workspace_and_keeps_the_window_open() {
+    let mut h = harness();
+    assert_eq!(h.state().tabs.len(), 1);
+    h.state_mut().pending.push(C::Close);
+    h.run_steps(3);
+    assert!(h.state().tabs.is_empty(), "最後一個分頁關閉後不得自動建立未命名文件");
+    assert!(!h.state().allow_close, "關閉分頁不得結束程式");
+    assert!(h.state().confirm.is_none());
+    assert!(
+        h.query_all_by(|n| n.role() == egui::accesskit::Role::Label && n.value().as_deref() == Some("沒有開啟的檔案")).count() >= 1,
+        "the empty workspace should say that no file is open"
+    );
+    // 需要文件內容的命令不會開啟對話框或操作替代文件
+    h.state_mut().pending.push(C::WordCount);
+    h.run_steps(3);
+    assert!(h.state().dialog.is_none(), "文件命令在沒有文件時不得開啟對話框");
+    h.state_mut().pending.push(C::Find);
+    h.run_steps(3);
+    assert!(!h.state().find.visible, "沒有文件時不得開啟尋找列");
+    // 新增檔案可回到一般編輯
+    h.state_mut().pending.push(C::New);
+    h.run_steps(3);
+    assert_eq!(h.state().tabs.len(), 1);
+    assert!(h.query_all_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().is_some_and(|l| l.starts_with("未命名"))).count() >= 1);
+}
+
+/// 開啟 .ps1 時自動套用內建的 PowerShell 語法。
+#[test]
+fn test_powershell_script_opens_with_the_bundled_syntax() {
+    let dir = std::env::temp_dir().join(format!("madedit-powershell-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("script.ps1");
+    std::fs::write(&file, "# comment\nGet-ChildItem -Path $env:PATH\n").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    assert_eq!(h.state().doc().syntax, "PowerShell");
+    assert!(h.state().doc().path.is_some());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 文件視圖的「開啟」頁籤列出所有編輯器分頁，點選可切換目前文件。
+#[test]
+fn test_file_view_open_tab_switches_between_documents() {
+    let dir = std::env::temp_dir().join(format!("madedit-file-view-open-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let first = dir.join("one.txt");
+    let second = dir.join("two.txt");
+    std::fs::write(&first, "one").unwrap();
+    std::fs::write(&second, "two").unwrap();
+
+    let mut h = harness();
+    h.state_mut().settings.show_file_view = true;
+    h.state_mut().open_path(&first);
+    h.state_mut().open_path(&second);
+    h.run_steps(3);
+    let first_canon = first.canonicalize().unwrap();
+    let second_canon = second.canonicalize().unwrap();
+    assert_eq!(h.state().doc().path.as_deref(), Some(second_canon.as_path()));
+    // 切換到「開啟」頁籤，再點第一個檔案列。
+    h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some("開啟")).click();
+    h.run_steps(3);
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("one.txt")).click();
+    h.run_steps(3);
+    assert_eq!(h.state().doc().path.as_deref(), Some(first_canon.as_path()));
+    // 再點第二列切回另一份文件。
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("two.txt")).click();
+    h.run_steps(3);
+    assert_eq!(h.state().doc().path.as_deref(), Some(second_canon.as_path()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 「開啟」列表列尾的 ×（選中列可見）點擊後會關閉對應的分頁。
+#[test]
+fn test_file_view_open_tab_close_button_closes_document() {
+    let dir = std::env::temp_dir().join(format!("madedit-file-view-close-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("closable.txt");
+    std::fs::write(&file, "bye").unwrap();
+
+    let mut h = harness();
+    h.state_mut().settings.show_file_view = true;
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some("開啟")).click();
+    h.run_steps(3);
+    assert_eq!(h.state().tabs.len(), 1, "前置：應有一個開啟的分頁");
+    // 作用中文件的列為選中狀態，列尾 ✕ 因此可見且可點。
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("關閉此分頁")).click();
+    h.run_steps(3);
+    assert!(h.state().tabs.is_empty(), "點擊列尾 × 後分頁應被關閉");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 「開啟」列表：單擊列只切換文件；雙擊列等同雙擊編輯器分頁標題，關閉該分頁。
+#[test]
+fn test_double_clicking_open_list_row_closes_document() {
+    use eframe::egui::PointerButton;
+    use egui::accesskit::Role;
+    let dir = std::env::temp_dir().join(format!("madedit-file-view-dblclose-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let first = dir.join("one.txt");
+    let second = dir.join("two.txt");
+    std::fs::write(&first, "one").unwrap();
+    std::fs::write(&second, "two").unwrap();
+
+    // 每幀 50ms：兩次點擊相距 50ms，落在 egui 的雙擊判定時間內。
+    let mut h = Harness::builder()
+        .allow_missing_glyphs()
+        .with_pixels_per_point(1.0)
+        .with_step_dt(0.05)
+        .with_size([1000.0, 700.0])
+        .build_eframe(|cc| App::new(cc, Vec::new(), None));
+    h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
+    h.state_mut().settings.show_file_view = true;
+    h.state_mut().open_path(&first);
+    h.state_mut().open_path(&second);
+    h.run_steps(3);
+    h.get_by(|n| n.role() == Role::Tab && n.label().as_deref() == Some("開啟")).click();
+    h.run_steps(3);
+    let first_canon = first.canonicalize().unwrap();
+    let second_canon = second.canonicalize().unwrap();
+    let row = |h: &mut Harness<'static, App>, label: &str| {
+        h.get_by(|n| n.role() == Role::Button && n.label().as_deref() == Some(label)).rect().center()
+    };
+    // 單擊只切換，不得關閉。
+    let at = row(&mut h, "one.txt");
+    for pressed in [true, false] {
+        h.event(Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: Modifiers::default() });
+    }
+    h.run_steps(8);
+    assert_eq!(h.state().tabs.len(), 2, "單擊列不得關閉分頁");
+    assert_eq!(h.state().doc().path.as_deref(), Some(first_canon.as_path()), "單擊列應切換到該文件");
+    // 雙擊同一列：關閉該分頁，剩下的分頁是另一份文件。
+    let at = row(&mut h, "one.txt");
+    for _ in 0..2 {
+        for pressed in [true, false] {
+            h.event(Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: Modifiers::default() });
+        }
+        h.run_steps(1);
+    }
+    h.run_steps(3);
+    assert_eq!(h.state().tabs.len(), 1, "雙擊列應關閉該分頁");
+    assert_eq!(h.state().doc().path.as_deref(), Some(second_canon.as_path()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 資源管理器頁籤：懶載入目錄樹可展開到指定資料夾；篩選（Enter 等價 >）
+/// 只把選中資料夾裡匹配的檔案以葉節點顯示在樹中，未匹配的檔案不出現。
+#[test]
+fn test_explorer_tree_expands_and_filter_shows_matching_files() {
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::NodeT;
+    let fixture = tempfile::tempdir().unwrap();
+    let dir = fixture.path().to_path_buf();
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("a.txt"), "a").unwrap();
+    std::fs::write(dir.join("b.rs"), "b").unwrap();
+
+    // 每幀 50ms：兩次點擊相距 50ms，落在 egui 的雙擊判定時間內。
+    let mut h = Harness::builder()
+        .allow_missing_glyphs()
+        .with_pixels_per_point(1.0)
+        .with_step_dt(0.05)
+        .with_size([1000.0, 700.0])
+        .build_eframe(|cc| App::new(cc, Vec::new(), None));
+    h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
+    h.state_mut().settings.show_file_view = true;
+    h.state_mut().explorer.set_test_root(dir.clone());
+    h.state_mut().explorer.expanded.insert(dir.clone());
+    h.state_mut().explorer.selected = Some(dir.clone());
+    h.run_steps(3);
+    h.get_by(|n| n.role() == Role::Tab && n.label().as_deref() == Some("資源管理器")).click();
+    h.run_steps(3);
+    // 純樹形態且未篩選：選中資料夾直接掛出完整內容（子資料夾 + 檔案）。
+    let button_labels = |h: &Harness<'static, App>| -> Vec<String> {
+        h.get_all_by_role(Role::Button).map(|n| n.accesskit_node().label().unwrap_or_default()).collect()
+    };
+    h.get_by_label("執行篩選");
+    assert!(button_labels(&h).iter().any(|l| l == "sub"), "子資料夾 sub 應顯示");
+    assert!(button_labels(&h).iter().any(|l| l == "a.txt"), "未篩選時應顯示全部檔案（a.txt）");
+    assert!(button_labels(&h).iter().any(|l| l == "b.rs"), "未篩選時應顯示全部檔案（b.rs）");
+    // 點一下篩選框（畫面上有兩個 TextInput：編輯區搜尋框 + 篩選框；篩選框在左側面板）、輸入 *.txt、按 Enter。
+    let input = h.get_all_by_role(Role::TextInput).min_by_key(|n| n.rect().left().to_bits()).unwrap();
+    let at = input.rect().center();
+    for pressed in [true, false] {
+        h.event(Event::PointerButton { pos: at, button: eframe::egui::PointerButton::Primary, pressed, modifiers: Modifiers::default() });
+    }
+    h.run_steps(2);
+    type_text(&mut h, "*.txt");
+    h.key_down(egui::Key::Enter);
+    h.run_steps(3);
+    assert_eq!(h.state().explorer.filter_applied, "*.txt", "篩選詞應已生效");
+    // 匹配檔案出現為葉節點；未匹配檔案不出現；子資料夾仍在。
+    let labels = button_labels(&h);
+    assert!(labels.iter().any(|l| l == "a.txt"), "匹配檔案應顯示為葉節點");
+    assert!(!labels.iter().any(|l| l == "b.rs"), "未匹配檔案不得出現");
+    assert!(labels.iter().any(|l| l == "sub"), "子資料夾不受篩選影響");
+
+    // ── 分欄模式：勾選 ▣ 後出現下半部列表（四欄表頭 + 檔案列）；雙擊資料夾進入。
+    h.get_by(|n| n.role() == Role::CheckBox && n.label().as_deref() == Some("分欄顯示資料夾內容")).click();
+    // 等 12 幀（0.6s）：讓先前的點擊滑出 egui 的雙擊判定窗口，否則雙擊會被計為三擊（count=3）。
+    h.run_steps(12);
+    let list_labels = button_labels(&h);
+    // 分欄時樹是純資料夾清單（檔案只在下方列表出現）：a.txt 僅 1 個節點。
+    assert_eq!(list_labels.iter().filter(|l| l.as_str() == "a.txt").count(), 1, "分欄時 a.txt 只出現在列表");
+    assert!(!list_labels.iter().any(|l| l == "b.rs"), "列表中未匹配檔案不得出現");
+    // 雙擊列表中的 sub 資料夾：進入 = 選中跳轉。
+    // 限定可視區域：Temp 下可能有恰好也叫 "sub" 的目錄（樹被裁剪也註冊節點）。
+    let sub = h.get_all_by(|n| n.role() == Role::Button && n.label().as_deref() == Some("sub"))
+        .filter(|n| n.rect().top() < 700.0)
+        .max_by_key(|n| n.rect().top().to_bits())
+        .unwrap();
+    let at = sub.rect().center();
+    // 與 test_double_clicking_a_tab_title 完全相同的節奏：press+release 同幀、兩組相鄰。
+    for _ in 0..2 {
+        h.event(Event::PointerMoved(at));
+        h.run_steps(1);
+        for pressed in [true, false] {
+            h.event(Event::PointerButton { pos: at, button: eframe::egui::PointerButton::Primary, pressed, modifiers: Modifiers::default() });
+        }
+        h.run_steps(1);
+    }
+    h.run_steps(2);
+    assert_eq!(h.state().explorer.selected.as_deref(), Some(dir.join("sub").as_path()), "雙擊列表資料夾應進入");
+
+    // 「..」上層列：單擊回到父資料夾（ex-fixture）。
+    h.run_steps(8); // 讓先前點擊滑出雙擊/三擊判定窗口
+    h.get_by(|n| n.role() == Role::Button && n.label().as_deref() == Some("..")).click();
+    h.run_steps(3);
+    assert_eq!(h.state().explorer.selected.as_deref(), Some(dir.as_path()), "「..」應回到上層資料夾");
+
+    // ── 表頭點擊排序：點「修改日期」欄頭切到該欄，再點切換升降序，點「名稱」欄頭復原。
+    let header = h.get_by(|n| n.role() == Role::Button && n.label().as_deref() == Some("名稱|修改日期|類型|大小"));
+    let hr = header.rect();
+    // 名稱欄寬 = max(最長檔名自然寬, 120)；fixture 檔名很短，故為 120。
+    let name_click = egui::pos2(hr.left() + 20.0, hr.center().y);
+    let date_click = egui::pos2(hr.left() + 6.0 + 120.0 + 10.0, hr.center().y);
+    let click_at = |h: &mut Harness<'static, App>, pos: egui::Pos2| {
+        h.event(Event::PointerMoved(pos));
+        h.run_steps(1);
+        for pressed in [true, false] {
+            h.event(Event::PointerButton { pos, button: eframe::egui::PointerButton::Primary, pressed, modifiers: Modifiers::default() });
+        }
+        h.run_steps(2);
+    };
+    click_at(&mut h, date_click);
+    assert_eq!(h.state().explorer.sort_column, 1, "點修改日期欄頭應切到該欄排序");
+    assert!(!h.state().explorer.sort_descending, "首次切換為升冪");
+    h.run_steps(8); // 滑出雙擊判定窗口
+    click_at(&mut h, date_click);
+    assert!(h.state().explorer.sort_descending, "再點同欄應切換為降冪");
+    h.run_steps(8);
+    click_at(&mut h, name_click);
+    assert_eq!((h.state().explorer.sort_column, h.state().explorer.sort_descending), (0, false), "點名稱欄頭應回到名稱升冪");
+
+    // ── 欄寬可用滑鼠拖拽調整：把「名稱」欄右緣往右拖 60，名稱欄變寬並記入設定。
+    let hr = h.get_by(|n| n.role() == Role::Button && n.label().as_deref() == Some("名稱|修改日期|類型|大小")).rect();
+    // fixture 檔名很短，名稱欄寬 = 下限 120；邊界在 x = 左緣 + 6 + 120。
+    let edge = egui::pos2(hr.left() + 6.0 + 120.0, hr.center().y);
+    h.event(Event::PointerMoved(edge));
+    h.run_steps(1);
+    h.event(Event::PointerButton { pos: edge, button: eframe::egui::PointerButton::Primary, pressed: true, modifiers: Modifiers::default() });
+    h.run_steps(1);
+    h.event(Event::PointerMoved(egui::pos2(edge.x + 60.0, edge.y)));
+    h.run_steps(1);
+    h.event(Event::PointerButton { pos: egui::pos2(edge.x + 60.0, edge.y), button: eframe::egui::PointerButton::Primary, pressed: false, modifiers: Modifiers::default() });
+    h.run_steps(3);
+    let w = h.state().explorer.col_widths[0];
+    assert!((w - 180.0).abs() < 30.0, "拖拽名稱欄邊界應加寬（得到 {w}）");
+    assert!(h.state().settings.explorer.col_widths.first().copied().unwrap_or(0.0) > 0.0, "拖拽結束應寫入設定");
+
+    // ── 取消勾選分欄：樹恢復純樹形態並刷新所選資料夾的篩選檔案葉節點。
+    h.get_by(|n| n.role() == Role::CheckBox && n.label().as_deref() == Some("分欄顯示資料夾內容")).click();
+    h.run_steps(3);
+    assert!(!h.state().explorer.split, "前置：分欄應已關閉");
+    let tree_after_uncheck = button_labels(&h);
+    assert!(tree_after_uncheck.iter().any(|l| l == "a.txt"), "取消分欄後樹應刷新出所選資料夾的檔案：{tree_after_uncheck:?}");
+}
+
+/// 「以圖形預覽（SVG）」勾選狀態：勾選後打開 .svg 直接以圖形顯示；
+/// 取消勾選會立即關閉目前的圖形預覽分頁並回到文字。
+#[test]
+fn test_svg_auto_preview_opens_graphic_on_open() {
+    let dir = std::env::temp_dir().join(format!("madedit-svg-auto-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("pic.svg");
+    std::fs::write(&file, r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="#2266aa"/></svg>"##).unwrap();
+
+    let mut h = harness();
+    h.state_mut().settings.auto_preview = true;
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    assert!(h.state().is_svg_preview_tab(), "勾選狀態下打開 svg 應直接顯示圖形");
+    assert!(h.state().tabs[0].svg_preview.is_some(), "應已建立圖形預覽");
+    h.get_by_label("放大（Ctrl+滾輪）");
+
+    // 取消勾選（等同再點一次選單項）：設定關閉、預覽分頁關閉
+    h.state_mut().pending.push(C::PreviewAuto);
+    h.run_steps(3);
+    assert!(!h.state().settings.auto_preview, "取消勾選應寫回設定");
+    assert!(h.state().tabs[0].svg_preview.is_none(), "取消勾選後應關閉圖形預覽");
+    assert!(!h.state().is_svg_preview_tab());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 「以Markdown預覽」勾選狀態：勾選後打開 .md 直接進入預覽；
+/// 取消勾選會關閉預覽分頁。
+#[test]
+fn test_md_auto_preview_opens_preview_on_open() {
+    let dir = std::env::temp_dir().join(format!("madedit-md-auto-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("doc.md");
+    std::fs::write(&file, "# 標題\n\n內文\n").unwrap();
+
+    let mut h = harness();
+    h.state_mut().settings.auto_preview = true;
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    assert!(h.state().is_preview_tab(), "勾選狀態下打開 .md 應直接進入預覽");
+    assert!(h.state().tabs[0].md_preview.is_some(), "應已建立 Markdown 預覽");
+
+    // 取消勾選（等同再點一次選單項）：設定關閉、預覽分頁關閉
+    h.state_mut().pending.push(C::PreviewAuto);
+    h.run_steps(3);
+    assert!(!h.state().settings.auto_preview, "取消勾選應寫回設定");
+    assert!(h.state().tabs[0].md_preview.is_none(), "取消勾選後應關閉預覽");
+    assert!(!h.state().is_preview_tab());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 「以圖形預覽（圖片）」勾選狀態：勾選後打開 .bmp 直接以圖形顯示；
+/// 取消勾選會關閉圖片預覽分頁。
+#[test]
+fn test_img_auto_preview_opens_graphic_on_open() {
+    // 最小 2×2 24bpp BMP（紅/綠交錯，列需補齊 4 位元組）
+    fn tiny_bmp() -> Vec<u8> {
+        let (w, h, row) = (2u32, 2u32, 8u32);
+        let datasize = row * h;
+        let mut b = Vec::new();
+        b.extend_from_slice(b"BM");
+        b.extend_from_slice(&(54 + datasize).to_le_bytes());
+        b.extend_from_slice(&[0, 0, 0, 0]);
+        b.extend_from_slice(&54u32.to_le_bytes());
+        b.extend_from_slice(&40u32.to_le_bytes());
+        b.extend_from_slice(&(w as i32).to_le_bytes());
+        b.extend_from_slice(&(h as i32).to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&24u16.to_le_bytes());
+        b.extend_from_slice(&0u32.to_le_bytes());
+        b.extend_from_slice(&datasize.to_le_bytes());
+        b.extend_from_slice(&[0u8; 16]);
+        for _ in 0..h {
+            b.extend_from_slice(&[0, 0, 255, 0, 255, 0, 0, 0]);
+        }
+        b
+    }
+    let dir = std::env::temp_dir().join(format!("madedit-img-auto-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("pic.bmp");
+    std::fs::write(&file, tiny_bmp()).unwrap();
+
+    let mut h = harness();
+    h.state_mut().settings.auto_preview = true;
+    h.state_mut().open_path(&file);
+    h.run_steps(4);
+    assert!(h.state().is_img_preview_tab(), "勾選狀態下打開 bmp 應直接顯示圖形");
+    assert!(h.state().tabs[0].img_preview.is_some(), "應已建立圖片預覽");
+
+    // 取消勾選：設定關閉、預覽分頁關閉
+    h.state_mut().pending.push(C::PreviewAuto);
+    h.run_steps(3);
+    assert!(!h.state().settings.auto_preview, "取消勾選應寫回設定");
+    assert!(h.state().tabs[0].img_preview.is_none(), "取消勾選後應關閉圖片預覽");
+    assert!(!h.state().is_img_preview_tab());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 開啟「其他程式修改時自動重新載入」後，沒有未存檔修改的文件會直接重讀。
+#[test]
+fn test_auto_reload_external_reloads_unmodified_files() {
+    let dir = std::env::temp_dir().join(format!("madedit-auto-reload-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("a.txt");
+    std::fs::write(&file, "one").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.state_mut().settings.auto_reload_external = true;
+    h.run_steps(2);
+    std::fs::write(&file, "two longer").unwrap();
+    h.state_mut().check_disk_changes();
+    h.run_steps(2);
+    assert_eq!(text(&mut h), "two longer");
+    assert!(!h.state().tabs[0].disk_changed, "自動載入後不應再顯示提示");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 關閉自動載入時保留原本的提示流程：只標記外部修改，不取代目前內容。
+#[test]
+fn test_external_changes_keep_the_prompt_when_auto_reload_is_off() {
+    let dir = std::env::temp_dir().join(format!("madedit-auto-off-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("a.txt");
+    std::fs::write(&file, "one").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(2);
+    assert!(!h.state().settings.auto_reload_external);
+    std::fs::write(&file, "two longer").unwrap();
+    h.state_mut().check_disk_changes();
+    h.run_steps(2);
+    assert!(h.state().tabs[0].disk_changed, "關閉自動載入時應顯示提示");
+    assert_eq!(text(&mut h), "one");
+    // 稍後才開啟選項：已經顯示提示且沒有未存檔修改的分頁也要自動載入。
+    h.state_mut().settings.auto_reload_external = true;
+    h.state_mut().check_disk_changes();
+    h.run_steps(2);
+    assert_eq!(text(&mut h), "two longer");
+    assert!(!h.state().tabs[0].disk_changed);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 自動載入不得覆蓋未存檔的編輯：仍保留外部修改提示。
+#[test]
+fn test_auto_reload_external_never_discards_unsaved_edits() {
+    let dir = std::env::temp_dir().join(format!("madedit-auto-dirty-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("a.txt");
+    std::fs::write(&file, "one").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.state_mut().settings.auto_reload_external = true;
+    h.run_steps(2);
+    h.state_mut().doc_mut().replace_all_text("local one");
+    assert!(h.state().doc().is_modified(), "editing must mark the document modified");
+    std::fs::write(&file, "two longer").unwrap();
+    assert!(h.state().doc().changed_on_disk(), "the external write must be detected");
+    h.state_mut().check_disk_changes();
+    h.run_steps(2);
+    assert!(h.state().tabs[0].disk_changed, "有未存檔修改時必須保留提示");
+    assert!(text(&mut h).contains("local"), "自動載入不得丟棄未存檔內容");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 自動重新載入保留目前的捲動列，不跳回游標或文件開頭。
+#[test]
+fn test_reload_keeps_the_visible_scroll_row() {
+    let dir = std::env::temp_dir().join(format!("madedit-reload-scroll-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("long.txt");
+    let content: String = (0..200).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(&file, &content).unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.state_mut().settings.auto_reload_external = true;
+    h.run_steps(3);
+    h.state_mut().tab_mut().view.top_row = 40;
+    h.state_mut().tab_mut().view.ensure_visible = false;
+    h.run_steps(1);
+    assert_eq!(h.state_mut().tab_mut().view.top_row, 40);
+    let changed: String = (0..200).map(|i| format!("changed {i}\n")).collect();
+    std::fs::write(&file, changed).unwrap();
+    h.state_mut().check_disk_changes();
+    h.run_steps(2);
+    assert!(text(&mut h).starts_with("changed 0"));
+    assert_eq!(h.state_mut().tab_mut().view.top_row, 40, "重新載入後應保留捲動列");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 連續兩次外部修改都自動載入後，點擊編輯區不應 panic，且版本必須持續前進。
+#[test]
+fn test_two_auto_reloads_then_a_click_do_not_panic() {
+    let dir = std::env::temp_dir().join(format!("madedit-reload-twice-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("twice.txt");
+    let content: String = (0..300).map(|i| format!("first {i}\n")).collect();
+    std::fs::write(&file, content).unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.state_mut().settings.auto_reload_external = true;
+    h.run_steps(3);
+    h.state_mut().tab_mut().view.top_row = 40;
+    h.state_mut().tab_mut().view.ensure_visible = false;
+    h.run_steps(1);
+    let v0 = h.state().doc().version;
+    let first: String = (0..300).map(|i| format!("second {i}\n")).collect();
+    std::fs::write(&file, first).unwrap();
+    h.state_mut().check_disk_changes();
+    h.run_steps(2);
+    let v1 = h.state().doc().version;
+    let second: String = (0..300).map(|i| format!("third {i}\n")).collect();
+    std::fs::write(&file, second).unwrap();
+    h.state_mut().check_disk_changes();
+    h.run_steps(2);
+    assert!(v1 > v0 && h.state().doc().version > v1, "每次重新載入都要更新版本");
+    assert!(text(&mut h).starts_with("third 0"));
+    let pos = egui::pos2(600.0, 350.0);
+    h.event(Event::PointerMoved(pos));
+    h.event(Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+    h.event(Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+    h.run_steps(3);
+    assert_eq!(h.state_mut().tab_mut().view.top_row, 40);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 切換到某個分頁時立即檢查它的外部修改，不必等輪詢。
+#[test]
+fn test_switching_to_a_tab_refreshes_its_external_change() {
+    let dir = std::env::temp_dir().join(format!("madedit-activate-reload-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let first = dir.join("first.txt");
+    let second = dir.join("second.txt");
+    std::fs::write(&first, "first").unwrap();
+    std::fs::write(&second, "second").unwrap();
+    let mut h = harness();
+    h.state_mut().settings.auto_reload_external = true;
+    h.state_mut().open_path(&first);
+    h.state_mut().open_path(&second);
+    h.run_steps(2);
+    std::fs::write(&first, "first changed elsewhere").unwrap();
+    h.state_mut().activate(0);
+    h.run_steps(2);
+    assert_eq!(text(&mut h), "first changed elsewhere");
+    assert!(!h.state().tabs[0].disk_changed);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 開啟 .nut 時自動套用內建的 Squirrel 語法。
+#[test]
+fn test_squirrel_script_opens_with_the_bundled_syntax() {
+    let dir = std::env::temp_dir().join(format!("madedit-squirrel-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("ai.nut");
+    std::fs::write(&file, "// enemy AI\nclass Enemy extends Entity {\n    function update() { return 1; }\n}\n").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    // .nut 在狀態欄顯示為 nut（高亮仍是內建的 Squirrel 語法）
+    assert_eq!(h.state().doc().syntax, "nut");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 開啟 .ini 時自動套用內建的 INI 語法。
+#[test]
+fn test_ini_file_opens_with_the_bundled_syntax() {
+    let dir = std::env::temp_dir().join(format!("madedit-ini-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("config.ini");
+    std::fs::write(&file, "; settings\n[Info]\nNum=1\n").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    assert_eq!(h.state().doc().syntax, "INI");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 編輯器分頁支援拖動排序：把右邊的分頁拖到左邊，順序與激活狀態一起跟著走。
+#[test]
+fn test_dragging_a_tab_reorders_tabs() {
+    let dir = std::env::temp_dir().join(format!("madedit-tab-drag-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let first = dir.join("one.txt");
+    let second = dir.join("two.txt");
+    std::fs::write(&first, "one").unwrap();
+    std::fs::write(&second, "two").unwrap();
+
+    let mut h = harness();
+    h.state_mut().open_path(&first);
+    h.state_mut().open_path(&second);
+    h.run_steps(3);
+    let names = |h: &Harness<'static, App>| -> Vec<String> { h.state().tabs.iter().map(|t| t.doc.display_name().to_string()).collect() };
+    assert_eq!(names(&h), vec!["one.txt", "two.txt"]);
+    assert_eq!(h.state().active, 1, "前置：two.txt 是激活分頁");
+    // 按下 two.txt → 拖到 one.txt 上 → 放開
+    let src = h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some("two.txt")).rect();
+    let dst = h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some("one.txt")).rect();
+    h.event(Event::PointerButton { pos: src.center(), button: egui::PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+    h.run_steps(2);
+    h.event(Event::PointerMoved(dst.center()));
+    h.run_steps(2);
+    h.event(Event::PointerButton { pos: dst.center(), button: egui::PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+    h.run_steps(2);
+    assert_eq!(names(&h), vec!["two.txt", "one.txt"], "拖動後順序應改變");
+    assert_eq!(h.state().active, 0, "激活狀態應跟著被拖動的分頁走");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 運行腳本：直譯器輸出串流到底部面板，並顯示退出碼。
+/// 直譯器用系統必備的 cmd（僅 Windows 測試），不依賴 ZSSQConsole/python 是否安裝。
+#[cfg(windows)]
+#[test]
+fn test_run_script_streams_output_to_the_panel() {
+    let dir = std::env::temp_dir().join(format!("madedit-run-script-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("sample.nut");
+    std::fs::write(&file, "print(1)").unwrap();
+
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(2);
+    // 直接驅動 runner；測試用系統必備的 cmd，不依賴 ZSSQConsole/python 是否安裝
+    let runner = &mut h.state_mut().runner;
+    runner.show = true;
+    let launched = runner
+        .start_process("cmd", &["/C".into(), "type".into(), file.display().to_string()], Some(dir.as_path()))
+        .is_ok();
+    assert!(launched, "cmd must be available on Windows");
+    for _ in 0..200 {
+        h.state_mut().runner.poll(&eframe::egui::Context::default());
+        h.run_steps(1);
+        if !h.state().runner.running {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let lines = h.state_mut().runner.text.clone();
+    assert!(lines.contains("print(1)"), "面板應顯示檔案內容：{lines}");
+    assert_eq!(h.state_mut().runner.exit, Some(Ok(0)));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// F5 運行 .bat：cmd 以 .bat 所在資料夾為當前目錄（%CD% 即為證明）。
+#[cfg(windows)]
+#[test]
+fn test_run_script_bat_uses_its_folder_as_cwd() {
+    let dir = std::env::temp_dir().join(format!("madedit-run-bat-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("show-cwd.bat");
+    std::fs::write(&file, "@echo off\r\necho %CD%\r\n").unwrap();
+
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(2);
+    // 與 run_script 相同的組裝路徑：interpreter_for(".bat") → cmd /c <檔案>，cwd = 所在資料夾
+    let (program, mut args) = super::runner::interpreter_for(".bat").expect(".bat must map to an interpreter");
+    args.push(file.display().to_string());
+    let runner = &mut h.state_mut().runner;
+    runner.show = true;
+    assert!(runner.start_process(&program, &args, Some(dir.as_path())).is_ok());
+    for _ in 0..200 {
+        h.state_mut().runner.poll(&eframe::egui::Context::default());
+        h.run_steps(1);
+        if !h.state().runner.running {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let lines = h.state_mut().runner.text.clone();
+    let dir_norm = dir.to_string_lossy().trim_end_matches('\\').to_lowercase();
+    assert!(
+        lines.to_lowercase().contains(&dir_norm),
+        "輸出應包含 .bat 所在資料夾（%CD%）: {lines}"
+    );
+    assert_eq!(h.state_mut().runner.exit, Some(Ok(0)));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 運行輸出面板的輸入行：鍵入文字按 Enter 送進子程序 stdin，`set /p` 選單場景能依輸入續行。
+#[cfg(windows)]
+#[test]
+fn test_output_panel_input_line_sends_enter_to_child_stdin() {
+    let dir = std::env::temp_dir().join(format!("madedit-run-menu-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("menu.bat");
+    std::fs::write(&file, "@echo off\r\nset /p choice=choose:\r\necho got [%choice%]\r\n").unwrap();
+
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(2);
+    {
+        let (program, mut args) = super::runner::interpreter_for(".bat").expect(".bat must map to an interpreter");
+        args.push(file.display().to_string());
+        let runner = &mut h.state_mut().runner;
+        runner.show = true;
+        assert!(runner.start_process(&program, &args, Some(dir.as_path())).is_ok());
+    }
+    h.run_steps(3);
+    // 輸入行在程序啟動後自動聚焦；直接鍵入「3」再按 Enter
+    h.event(eframe::egui::Event::Text("3".into()));
+    h.key_down(eframe::egui::Key::Enter);
+    h.run_steps(2);
+    println!("runner.input = {:?}", h.state().runner.input);
+    println!("runner.text  = {:?}", h.state().runner.text);
+    println!("running      = {}", h.state().runner.running);
+    for _ in 0..200 {
+        h.run_steps(1);
+        if !h.state().runner.running {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let lines = h.state_mut().runner.text.clone();
+    assert!(lines.contains("> 3"), "輸入應以「> 行」回顯: {lines}");
+    assert!(lines.contains("got [3]"), "腳本應依輸入續行: {lines}");
+    assert_eq!(h.state_mut().runner.exit, Some(Ok(0)));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 無法識別的副檔名提示，不啟動程序。
+#[test]
+fn test_run_script_rejects_unknown_extensions() {
+    let mut h = harness();
+    h.state_mut().pending.push(C::RunScript);
+    h.run_steps(3);
+    assert!(h.state_mut().runner.exit.is_none());
+    assert!(!h.state().runner.running);
+}
+
+/// 運行輸出面板顯示既有輸出與退出碼；右鍵選單可全選/複製/清空。
+#[test]
+fn test_output_panel_shows_lines_and_exit_code() {
+    let mut h = harness();
+    {
+        let runner = &mut h.state_mut().runner;
+        runner.show = true;
+        runner.lines.push("hello output".into());
+        runner.text = "hello output".into();
+        runner.exit = Some(Ok(0));
+        runner.elapsed = Some(0.25);
+    }
+    h.run_steps(3);
+    // 只讀文字框內容包含輸出（可選取、可複製）
+    assert!(
+        h.query_all_by(|n| n.role() == egui::accesskit::Role::MultilineTextInput && n.value().is_some_and(|v| v.contains("hello output"))).next().is_some(),
+        "output text is shown in a selectable text box"
+    );
+    assert!(h.query_all_by(|n| n.role() == egui::accesskit::Role::Label && n.value().is_some_and(|v| v.contains("退出碼"))).next().is_some());
+    // 結束後耗時必須是凍結值，不能繼續增加
+    assert!(h.query_all_by(|n| n.role() == egui::accesskit::Role::Label && n.value().is_some_and(|v| v.contains("0.250"))).next().is_some());
+    // 右鍵選單：全選／複製／清空（掛在整個面板上，空白處也能開）
+    let copies = |h: &Harness<'static, App>| h.query_all_by(|n| n.label().is_some_and(|l| l.contains("複製"))).count();
+    assert_eq!(copies(&h), 1, "only the toolbar has 複製 before the menu opens");
+    let open_menu = |h: &mut Harness<'static, App>, pos: egui::Pos2| {
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        h.run_steps(3);
+    };
+    // 輸出文字框（整塊面板都能叫出選單）
+    let output_rect = h.get_by(|n| n.role() == egui::accesskit::Role::MultilineTextInput).rect();
+    open_menu(&mut h, output_rect.center());
+    let select_all = |n: &egui_kittest::kittest::AccessKitNode<'_>| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("　 全選");
+    let menu_copy = |n: &egui_kittest::kittest::AccessKitNode<'_>| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("　 複製");
+    let menu_clear = |n: &egui_kittest::kittest::AccessKitNode<'_>| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("　 清空");
+    assert!(h.query_all_by(select_all).next().is_some(), "context menu shows select-all");
+    assert_eq!(copies(&h), 2, "context menu adds 複製");
+    assert!(h.query_all_by(menu_clear).next().is_some(), "context menu shows clear");
+    // 全選：文字框取得焦點，之後可直接 Ctrl+C
+    h.get_by(select_all).click();
+    h.run_steps(3);
+    assert!(h.get_by(|n| n.role() == egui::accesskit::Role::MultilineTextInput).is_focused(), "select-all focuses the output text box");
+    // 複製：未選取時複製全文，並在狀態列回報
+    open_menu(&mut h, output_rect.center());
+    h.get_by(menu_copy).click();
+    h.run_steps(3);
+    assert!(h.state().status.as_ref().is_some_and(|(m, _)| m.contains("已複製輸出到剪貼簿")), "copy reports in the status bar");
+    // 清空：輸出與結束狀態一起清除
+    open_menu(&mut h, output_rect.center());
+    h.get_by(menu_clear).click();
+    h.run_steps(2);
+    assert!(h.state().runner.text.is_empty());
+    assert!(h.state().runner.lines.is_empty());
+    assert!(h.state().runner.exit.is_none());
+}
+
+/// 代碼折疊：全部折疊縮短顯示列、游標所在區塊自動展開、全部展開還原。
+#[test]
+fn test_code_folding_commands_shrink_and_restore_rows() {
+    let dir = std::env::temp_dir().join(format!("madedit-fold-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("blocks.nut");
+    std::fs::write(&file, "func a() {\n    step();\n}\n\nfunc b() {\n}\n").unwrap();
+    let mut h = harness();
+    h.state_mut().settings.code_folding = true;
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    let rows = |h: &Harness<'static, App>| {
+        let state = h.state();
+        state.tabs[state.active].view.row_count(&state.doc().editor)
+    };
+    assert_eq!(rows(&h), 7);
+    h.state_mut().pending.push(C::FoldAll);
+    h.run_steps(3);
+    assert!(h.state().tabs[h.state().active].view.has_folds());
+    assert_eq!(rows(&h), 4, "both brace blocks collapse");
+    // 游標進入折疊區時該區塊自動展開，游標不會停在隱藏行
+    h.state_mut().doc_mut().editor.move_caret_to(crate::core::editor::TextPosition::new(1, 0), false);
+    h.run_steps(3);
+    assert_eq!(rows(&h), 6, "the folded block holding the caret unfolds");
+    assert!(h.state().tabs[h.state().active].view.has_folds(), "the other block stays folded");
+    h.state_mut().pending.push(C::UnfoldAll);
+    h.run_steps(3);
+    assert_eq!(rows(&h), 7);
+    assert!(!h.state().tabs[h.state().active].view.has_folds());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Ctrl+Shift+[ 折疊游標所在區塊（預設快捷鍵）。
+#[test]
+fn test_fold_toggle_shortcut_folds_the_caret_block() {
+    let dir = std::env::temp_dir().join(format!("madedit-fold-key-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("key.nut");
+    std::fs::write(&file, "func a() {\n    one();\n    two();\n}\n").unwrap();
+    let mut h = harness();
+    h.state_mut().settings.code_folding = true;
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    let rows = |h: &Harness<'static, App>| {
+        let state = h.state();
+        state.tabs[state.active].view.row_count(&state.doc().editor)
+    };
+    let before = rows(&h);
+    // 真實鍵盤上 Ctrl+Shift+[ 會同時送出「{」文字事件；快捷鍵處理後不可把字打進文件
+    h.event(Event::Text("{".into()));
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::OpenBracket);
+    h.run_steps(3);
+    assert_eq!(rows(&h), before - 3, "the caret block collapses");
+    assert!(text(&mut h).contains("func a() {\n    one();"), "the shortcut must not type a brace");
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::OpenBracket);
+    h.run_steps(3);
+    assert_eq!(rows(&h), before, "pressing again expands it");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 游標在區塊內時，Ctrl+Shift+[ 折疊包住游標的最內層區塊並把游標移到起點。
+#[test]
+fn test_fold_toggle_inside_a_block_folds_the_enclosing_block() {
+    let dir = std::env::temp_dir().join(format!("madedit-fold-inside-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("inside.nut");
+    std::fs::write(&file, "func outer() {\n    step();\n}\n").unwrap();
+    let mut h = harness();
+    h.state_mut().settings.code_folding = true;
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    h.state_mut().doc_mut().editor.move_caret_to(crate::core::editor::TextPosition::new(1, 4), false);
+    h.run_steps(2);
+    let rows_before = {
+        let state = h.state();
+        state.tabs[state.active].view.row_count(&state.doc().editor)
+    };
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::OpenBracket);
+    h.run_steps(3);
+    assert!(
+        h.state().tabs[h.state().active].view.has_folds(),
+        "the block around the caret collapses"
+    );
+    assert_eq!(h.state().doc().editor.selection.head.line, 0, "the caret moves to the block header");
+    let rows_after = {
+        let state = h.state();
+        state.tabs[state.active].view.row_count(&state.doc().editor)
+    };
+    assert_eq!(rows_after, rows_before - 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 點行號右側的折疊手柄：游標原本在區塊內也能折疊（游標移到折疊頭），再點一次展開。
+#[test]
+fn test_gutter_click_folds_and_unfolds_with_caret_inside() {
+    let dir = std::env::temp_dir().join(format!("madedit-fold-click-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("click.nut");
+    std::fs::write(&file, "func a() {\n    one();\n    two();\n}\n").unwrap();
+    let mut h = harness();
+    h.state_mut().settings.code_folding = true;
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    // 游標先放進區塊內（真實使用時游標常停在這裡）
+    h.state_mut().doc_mut().editor.move_caret_to(crate::core::editor::TextPosition::new(2, 4), false);
+    h.run_steps(2);
+    let (text_rect, visible_rows) = {
+        let state = h.state();
+        (state.tabs[state.active].view.text_rect, state.tabs[state.active].view.visible_rows)
+    };
+    let row_h = text_rect.height() / visible_rows.max(1) as f32;
+    let click = egui::pos2(text_rect.left() - 12.0, text_rect.top() + row_h * 0.5);
+    for pressed in [true, false] {
+        h.event(Event::PointerButton { pos: click, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+    }
+    h.run_steps(3);
+    let state = h.state();
+    let tab = &state.tabs[state.active];
+    assert!(tab.view.has_folds(), "clicking the gutter handle folds the block");
+    assert_eq!(tab.doc.editor.selection.head.line, 0, "the caret moves to the header so the fold stays");
+    let folded_rows = tab.view.row_count(&tab.doc.editor);
+    assert!(folded_rows < tab.doc.editor.lines.len(), "hidden lines are gone from the display");
+    for pressed in [true, false] {
+        h.event(Event::PointerButton { pos: click, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+    }
+    h.run_steps(3);
+    let state = h.state();
+    let tab = &state.tabs[state.active];
+    assert!(!tab.view.has_folds(), "a second click expands the block");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// .py 依縮排折疊、.ps1 依大括號折疊；兩者都由語法偵測自動啟用。
+#[test]
+fn test_python_and_powershell_files_fold() {
+    let dir = std::env::temp_dir().join(format!("madedit-fold-lang-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let py = dir.join("sample.py");
+    std::fs::write(&py, "def outer(a):\n    if a:\n        print(a)\n    return a\n\nx = 1\n").unwrap();
+    let ps = dir.join("sample.ps1");
+    std::fs::write(&ps, "function Test {\n    # { note\n    Write-Host \"ok\"\n}\n").unwrap();
+    let mut h = harness();
+    h.state_mut().settings.code_folding = true;
+    h.state_mut().open_path(&py);
+    h.run_steps(3);
+    assert_eq!(h.state().doc().syntax, "Python");
+    h.state_mut().pending.push(C::FoldAll);
+    h.run_steps(3);
+    {
+        let state = h.state();
+        let tab = &state.tabs[state.active];
+        assert!(tab.view.has_folds(), "Python indentation blocks fold");
+        assert!(
+            tab.view.row_count(&tab.doc.editor) < tab.doc.editor.lines.len(),
+            "folded Python rows are hidden"
+        );
+    }
+    h.state_mut().pending.push(C::UnfoldAll);
+    h.run_steps(2);
+    h.state_mut().open_path(&ps);
+    h.run_steps(3);
+    assert_eq!(h.state().doc().syntax, "PowerShell");
+    h.state_mut().pending.push(C::FoldAll);
+    h.run_steps(3);
+    {
+        let state = h.state();
+        let tab = &state.tabs[state.active];
+        assert!(tab.view.has_folds(), "PowerShell brace blocks fold");
+        assert!(tab.doc.editor.lines.iter().any(|l| l.starts_with("function Test")));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 開啟 .svg 後可切換圖形預覽；預覽分頁與編輯分頁並存，Esc/關閉回到編輯。
+/// 選單項是勾選式：勾選狀態寫入設定，之後打開 .svg 直接以圖形顯示。
+#[test]
+fn test_svg_preview_shows_and_closes() {
+    let dir = std::env::temp_dir().join(format!("madedit-svg-preview-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("demo.svg");
+    std::fs::write(&file, r##"<svg xmlns="http://www.w3.org/2000/svg" width="60" height="30"><rect width="60" height="30" fill="#336699"/></svg>"##).unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    assert!(h.state().tabs[h.state().active].svg_preview.is_none());
+    h.state_mut().pending.push(C::PreviewAuto);
+    h.run_steps(4);
+    assert!(h.state().settings.auto_preview, "勾選狀態應寫入設定");
+    let state = h.state();
+    let tab = &state.tabs[state.active];
+    assert!(tab.svg_preview.is_some(), "the preview exists after the command");
+    assert!(state.is_svg_preview_tab(), "the SVG preview tab is active");
+    let _ = &state;
+    // Esc 回到編輯區
+    h.key_press(Key::Escape);
+    h.run_steps(3);
+    let state = h.state();
+    let tab = &state.tabs[state.active];
+    assert!(!state.is_svg_preview_tab(), "Esc closes the preview tab");
+    assert!(tab.svg_preview.is_none(), "the preview state is dropped");
+    // 再點一次取消勾選：設定關閉
+    h.state_mut().pending.push(C::PreviewAuto);
+    h.run_steps(3);
+    assert!(!h.state().settings.auto_preview, "再點一次應取消勾選");
+    // 非 .svg 檔：勾選只影響設定，不會強制開啟圖形預覽
+    let txt = dir.join("plain.txt");
+    std::fs::write(&txt, "hello").unwrap();
+    h.state_mut().open_path(&txt);
+    h.run_steps(3);
+    h.state_mut().pending.push(C::PreviewAuto);
+    h.run_steps(3);
+    assert!(h.state().settings.auto_preview);
+    assert!(!h.state().is_svg_preview_tab());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 編輯器分頁右鍵選單有「預覽」總開關：點擊切換勾選並自動分發到對應的預覽。
+#[test]
+fn test_tab_context_menu_has_preview_entries() {
+    let dir = std::env::temp_dir().join(format!("madedit-tab-menu-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let md = dir.join("doc.md");
+    std::fs::write(&md, "# hello").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&md);
+    h.run_steps(3);
+    // 開啟分頁右鍵選單（點擊分頁標題的 context menu；分頁本體是 Role::Tab）
+    let tab_label = h.state().doc().display_name();
+    h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some(tab_label.as_str()))
+        .click_secondary();
+    h.run_steps(3);
+    assert!(
+        h.query_all_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("　 預覽")).count() == 1,
+        "menu shows the unified preview toggle"
+    );
+    // 點擊 = 勾選總開關，.md 檔自動分發到 Markdown 預覽（未勾選標籤前綴是全形空白）
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("　 預覽")).click();
+    h.run_steps(4);
+    assert!(h.state().settings.auto_preview, "點擊應勾選並寫入設定");
+    assert!(h.state().tabs[h.state().active].md_preview.is_some(), "Markdown preview opens from the tab menu");
+    // 開啟 .svg：項目顯示 ✔（已勾選），再點一次 = 取消勾選並關閉圖形預覽
+    let svg = dir.join("pic.svg");
+    std::fs::write(&svg, r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="#336699"/></svg>"##).unwrap();
+    h.state_mut().open_path(&svg);
+    h.run_steps(3);
+    let svg_label = h.state().doc().display_name();
+    h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some(svg_label.as_str()))
+        .click_secondary();
+    h.run_steps(3);
+    assert!(h.query_by_label_contains("✔ 預覽").is_some(), "勾選狀態要在右鍵選單同步顯示");
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("✔ 預覽")).click();
+    h.run_steps(4);
+    assert!(!h.state().settings.auto_preview, "再點一次應取消勾選");
+    assert!(h.state().tabs[h.state().active].svg_preview.is_none(), "取消勾選應關閉圖形預覽");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 分頁右鍵選單的「開啟檔案所在資料夾」：已存檔的分頁可用，未存檔的分頁停用。
+/// 不實際點擊該項，避免測試裡真的開啟檔案總管。
+#[test]
+fn test_tab_context_menu_open_folder_entry() {
+    use egui_kittest::kittest::NodeT as _;
+    let dir = std::env::temp_dir().join(format!("madedit-tab-folder-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("saved.txt");
+    std::fs::write(&file, "x").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    let menu_item = |n: &egui_kittest::kittest::AccessKitNode<'_>| {
+        n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("　 開啟檔案所在資料夾(F)")
+    };
+    let open_tab_menu = |h: &mut Harness<'static, App>| {
+        let label = h.state().doc().display_name();
+        h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some(label.as_str()))
+            .click_secondary();
+        h.run_steps(3);
+    };
+    // 已存檔：項目可用
+    open_tab_menu(&mut h);
+    let item = h.get_by(menu_item);
+    assert!(!item.accesskit_node().is_disabled(), "the saved file's folder can be opened");
+    // 「複製完整路徑」緊接在「開啟資料夾」之後、在「預覽」之前，中間沒有其他項目。
+    let folder = item.rect();
+    let copy = h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("　 複製完整路徑")).rect();
+    let preview = h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("　 預覽")).rect();
+    assert!(copy.top() > folder.bottom(), "複製完整路徑應在開啟資料夾之後：{folder:?} {copy:?}");
+    assert!(preview.top() > copy.bottom(), "複製完整路徑應在預覽之前：{copy:?} {preview:?}");
+    let between = h
+        .query_all_by(|n| n.role() == egui::accesskit::Role::Button)
+        .map(|n| n.rect())
+        .filter(|r| r.top() > folder.bottom() && r.bottom() < copy.top())
+        .count();
+    assert_eq!(between, 0, "兩項之間不應夾著其他選單項目");
+    // 關閉選單（按 Escape）
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+    // 未存檔：項目存在但停用
+    h.state_mut().new_document();
+    h.run_steps(3);
+    open_tab_menu(&mut h);
+    let item = h.get_by(menu_item);
+    assert!(item.accesskit_node().is_disabled(), "an untitled document has no folder to open");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 分頁右鍵「複製完整路徑」放進剪貼簿的是 Windows 習慣的寫法：canonicalize 產生的
+/// `\\?\D:\…` 前綴會被去掉（Explorer、cmd 與使用者都不認得那種路徑）。
+#[test]
+fn test_tab_menu_copy_path_drops_the_verbatim_prefix() {
+    let dir = std::env::temp_dir().join(format!("madedit-tab-copy-path-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("sample.txt");
+    std::fs::write(&file, "x").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    let native = h.state().doc().path.clone().expect("opened file has a path");
+    let natural = crate::core::display_path(&native);
+    // 模擬 Windows 上 canonicalize 產生的 verbatim 路徑（真實開檔流程會出現）。
+    #[cfg(windows)]
+    {
+        h.state_mut().doc_mut().path = Some(std::path::PathBuf::from(format!(r"\\?\{}", natural)));
+    }
+    h.run_steps(2);
+    let label = h.state().doc().display_name();
+    h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some(label.as_str())).click_secondary();
+    h.run_steps(3);
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("　 複製完整路徑")).click();
+    h.run_steps(1);
+    let copied: Vec<String> = h
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .filter_map(|c| match c {
+            egui::OutputCommand::CopyText(text) => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(copied, [natural], "複製的應是 Windows 習慣的完整路徑");
+    #[cfg(windows)]
+    {
+        assert!(!copied[0].starts_with(r"\\?\"), "不得殘留 \\\\?\\ 前綴：{}", copied[0]);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 標題欄高度 = 選單自然高 × 1.5：選單列與視窗按鈕必須完整落在工具列之上，
+/// 不能被工具列蓋住（面板保留高度不足時會出現這個問題）。
+#[test]
+fn test_title_bar_contents_stay_above_the_toolbar() {
+    let mut h = harness();
+    h.run_steps(3);
+    let toolbar_top = h.get_by_label("復原").rect().top();
+    let controls = [
+        "檔案(F)", "檢視(V)", "說明(H)",
+        #[cfg(windows)]
+        "關閉",
+        #[cfg(windows)]
+        "最小化",
+    ];
+    for name in controls {
+        let rect = h.get_by_label(name).rect();
+        assert!(
+            rect.bottom() < toolbar_top,
+            "{name} 下緣 {:.1} 應在工具列 {:.1} 之上",
+            rect.bottom(),
+            toolbar_top
+        );
+    }
+}
+
+/// 點開一個選單後，滑鼠移到同一選單列的另一個選單應自動切換（Windows 自繪標題欄）。
+#[test]
+fn test_menu_bar_hover_switches_the_open_menu() {
+    let mut h = harness();
+    h.get_by_label("檢視(V)").click();
+    h.run_steps(3);
+    assert!(h.query_by_label_contains("顯示").is_some(), "檢視選單應已開啟");
+    assert!(h.query_by_label_contains("關於").is_none(), "說明選單此時不應存在");
+    let help = h.get_by_label("說明(H)").rect();
+    h.event(Event::PointerMoved(help.center()));
+    h.run_steps(4);
+    assert!(h.query_by_label_contains("關於").is_some(), "懸停 說明(H) 應切換到說明選單");
+    assert!(h.query_by_label_contains("顯示").is_none(), "切換後檢視選單應已關閉");
+}
+
+/// F5 運行 .ps1：powershell -File 執行，輸出串流到面板。
+#[cfg(windows)]
+#[test]
+fn test_run_script_ps1_streams_output() {
+    let dir = std::env::temp_dir().join(format!("madedit-run-ps1-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("sample.ps1");
+    std::fs::write(&file, "Write-Output 'hello from ps1'\r\n").unwrap();
+
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(2);
+    let (program, mut args) = super::runner::interpreter_for(".ps1").expect(".ps1 must map to an interpreter");
+    args.push(file.display().to_string());
+    let runner = &mut h.state_mut().runner;
+    runner.show = true;
+    assert!(runner.start_process(&program, &args, Some(dir.as_path())).is_ok());
+    for _ in 0..200 {
+        h.state_mut().runner.poll(&eframe::egui::Context::default());
+        h.run_steps(1);
+        if !h.state().runner.running {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(30));
+    }
+    let lines = h.state_mut().runner.text.clone();
+    assert!(lines.contains("hello from ps1"), "面板應顯示 ps1 輸出：{lines}");
+    assert_eq!(h.state_mut().runner.exit, Some(Ok(0)));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 文字／列塊／十六進位模式是同一組三選一：工具列上畫成一條分段控制，同一時間只有一個
+/// 被選中，點另一個就切換模式（回歸：三個各自獨立、未選中的完全看不出是一組）。
+#[test]
+fn test_toolbar_edit_modes_are_one_three_way_choice() {
+    use crate::core::model::EditMode;
+    use eframe::egui::accesskit::{Role, Toggled};
+    use egui_kittest::kittest::NodeT as _;
+    const NAMES: [&str; 3] = ["文字模式", "列塊模式", "十六進位模式"];
+    let mut h = harness();
+    h.run_steps(2);
+    let mut rects = Vec::new();
+    let mut selected = Vec::new();
+    for n in h.query_all_by(|n| n.role() == Role::RadioButton && n.label().is_some_and(|l| NAMES.contains(&l.as_str()))) {
+        rects.push(n.rect());
+        if n.accesskit_node().toggled() == Some(Toggled::True) {
+            selected.extend(n.accesskit_node().label());
+        }
+    }
+    assert_eq!(rects.len(), 3, "工具列應有三個模式選項");
+    assert_eq!(selected, ["文字模式"], "預設只有文字模式被選中");
+    // 三個選項必須緊鄰成組（同一列、彼此間距 1pt，分組間距 12pt），一看就知道是三選一。
+    rects.sort_by(|a, b| a.left().total_cmp(&b.left()));
+    for pair in rects.windows(2) {
+        assert!((pair[0].top() - pair[1].top()).abs() < 1.0, "模式選項必須在同一列：{rects:?}");
+        assert!(pair[1].left() - pair[0].right() <= 2.0, "模式選項之間應緊鄰：{rects:?}");
+    }
+    // 分組間距：左邊的換行按鈕與模式組之間要有一般分組的距離。
+    let neighbour = h.get_by(|n| n.role() == Role::Button && n.label().as_deref() == Some("依欄數換行")).rect();
+    assert!(rects[0].left() - neighbour.right() >= 8.0, "模式組與左邊的換行按鈕之間應有分組間距");
+    // 切換：模式跟著變，選中狀態跟著移動。
+    for (name, mode) in [("列塊模式", EditMode::Column), ("十六進位模式", EditMode::Hex), ("文字模式", EditMode::Text)] {
+        h.get_by(|n| n.role() == Role::RadioButton && n.label().as_deref() == Some(name)).click();
+        h.run_steps(2);
+        assert_eq!(h.state().doc().mode, mode, "點 {name} 應切換到 {mode:?}");
+        let toggled: Vec<String> = h.query_all_by(|n| n.role() == Role::RadioButton && n.toggled() == Some(Toggled::True)).filter_map(|n| n.accesskit_node().label()).collect();
+        assert_eq!(toggled, [name], "點 {name} 後只有它被選中");
+    }
+    // 鍵盤也要能用：移到選項上按空白鍵等於點它（原本的一般按鈕支援）。
+    h.get_by(|n| n.role() == Role::RadioButton && n.label().as_deref() == Some("列塊模式")).focus();
+    h.run_steps(1);
+    h.key_press(Key::Space);
+    h.run_steps(2);
+    assert_eq!(h.state().doc().mode, EditMode::Column, "選項取得焦點後按空白鍵應切換模式");
+}
+
+#[cfg(windows)]
+#[test]
+fn selection_runs_in_source_folder_and_drains_both_pipes() {
+    use crate::core::editor::{Selection, TextPosition};
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("selection.cmd");
+    std::fs::write(dir.path().join("relative.txt"), "relative-output\r\n").unwrap();
+    std::fs::write(&file, "@type relative.txt\r\n@echo final-error 1>&2\r\n@exit /b 7\r\n@echo outside-selection\r\n").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.state_mut().doc_mut().editor.selection = Selection::new(TextPosition::new(0, 0), TextPosition::new(3, 0));
+    h.state_mut().run_script();
+    h.state_mut().run_script();
+    let ctx = egui::Context::default();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while h.state().runner.running && std::time::Instant::now() < deadline {
+        h.state_mut().runner.poll(&ctx);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let runner = &h.state().runner;
+    assert_eq!(runner.exit, Some(Ok(7)));
+    assert!(runner.lines.iter().any(|line| line == "relative-output"));
+    assert!(runner.lines.iter().any(|line| line.trim_end() == "final-error"));
+    assert!(!runner.stopped);
+}
+
+/// doc.path 帶 `\\?\` verbatim 前綴（canonicalize 產生）時，run_script 會先清掉前綴：
+/// cmd 不認得 verbatim 路徑，否則 `cd /d "%~dp0"` 會報「系統找不到指定的路徑」。
+#[cfg(windows)]
+#[test]
+fn test_run_script_strips_verbatim_path_prefix() {
+    let dir = std::env::temp_dir().join(format!("madedit-run-verbatim-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("show-cwd.bat");
+    std::fs::write(&file, "@echo off\r\necho %CD%\r\necho %~dp0\r\n").unwrap();
+
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run_steps(2);
+    // 模擬 canonicalize 產生的 verbatim 路徑（真實開檔流程會出現）
+    let verbatim = std::path::PathBuf::from(format!(r"\\?\{}", file.display()));
+    h.state_mut().doc_mut().path = Some(verbatim);
+    h.run_steps(2);
+    h.state_mut().pending.push(C::RunScript);
+    for _ in 0..200 {
+        h.state_mut().runner.poll(&eframe::egui::Context::default());
+        h.run_steps(1);
+        if !h.state().runner.running {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let lines = h.state_mut().runner.text.clone();
+    let dir_norm = dir.to_string_lossy().trim_end_matches('\\').to_lowercase();
+    assert!(
+        lines.to_lowercase().contains(&dir_norm),
+        "verbatim prefix must be stripped so cmd finds the path: {lines}"
+    );
+    assert!(!lines.contains("找不到指定的路徑"), "{lines}");
+    assert_eq!(h.state_mut().runner.exit, Some(Ok(0)));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 停止按鈕不得死鎖：殺樹後 poll 應在短時間內收尾（回歸：等待執行緒持鎖 wait 造成 UI 卡死）。
+#[cfg(windows)]
+#[test]
+fn test_stop_kills_running_process_without_blocking() {
+    use std::time::{Duration, Instant};
+    let mut h = harness();
+    {
+        let runner = &mut h.state_mut().runner;
+        runner.show = true;
+        assert!(
+            runner.start_process("cmd", &["/C".into(), "ping".into(), "-n".into(), "30".into(), "127.0.0.1".into()], None).is_ok()
+        );
+    }
+    h.run_steps(2);
+    assert!(h.state().runner.running);
+    let start = Instant::now();
+    h.state_mut().runner.stop();
+    // stop() 本身不得阻塞；poll 在殺樹後迅速收尾
+    for _ in 0..150 {
+        h.state_mut().runner.poll(&eframe::egui::Context::default());
+        h.run_steps(1);
+        if !h.state().runner.running {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    let state = h.state();
+    assert!(!state.runner.running, "the process must stop quickly");
+    assert!(state.runner.stopped);
+    assert!(start.elapsed() < Duration::from_secs(10), "stop must not deadlock");
+    assert!(state.runner.exit.is_some());
+}
+
+/// 串流輸出必須在程序仍在執行時就顯示（不能等結束才一次補上）。
+#[cfg(windows)]
+#[test]
+fn test_run_script_streams_output_before_exit() {
+    use std::time::Duration;
+    let mut h = harness();
+    h.state_mut().runner.show = true;
+    assert!(h
+        .state_mut()
+        .runner
+        .start_process("cmd", &["/C".into(), "echo ready & ping -n 30 127.0.0.1".into()], None)
+        .is_ok());
+    let mut streamed_while_running = false;
+    for _ in 0..200 {
+        h.state_mut().runner.poll(&eframe::egui::Context::default());
+        let state = h.state();
+        if state.runner.text.contains("ready") {
+            // ping 還在跑：輸出必須已經到手，而不是等 Done 才補
+            streamed_while_running = state.runner.running;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    h.state_mut().runner.stop();
+    for _ in 0..150 {
+        h.state_mut().runner.poll(&eframe::egui::Context::default());
+        if !h.state().runner.running {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    assert!(streamed_while_running, "output must appear while the process is still running");
+    assert!(!h.state().runner.running, "the process must stop after stop()");
+}
+
+/// 關閉代碼折疊時命令只提示、不改變顯示。
+#[test]
+fn test_code_folding_disabled_command_does_nothing() {
+    let dir = std::env::temp_dir().join(format!("madedit-fold-off-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("plain.nut");
+    std::fs::write(&file, "func a() {\n}\n").unwrap();
+    let mut h = harness();
+    assert!(!h.state().settings.code_folding);
+    h.state_mut().open_path(&file);
+    h.run_steps(3);
+    let lines = h.state().doc().editor.lines.len();
+    let rows = {
+        let state = h.state();
+        state.tabs[state.active].view.row_count(&state.doc().editor)
+    };
+    assert_eq!(rows, lines, "folding off keeps one row per line");
+    h.state_mut().pending.push(C::FoldAll);
+    h.run_steps(3);
+    assert!(!h.state().tabs[h.state().active].view.has_folds());
+    assert!(h.query_by_label_contains("代碼折疊已停用").is_some());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 雙擊收藏群組「取代開啟」：未存檔修改先經儲存確認，流程結束後僅開啟群組檔案。
+#[test]
+fn test_open_group_replaces_open_tabs_and_asks_to_save_dirty_ones() {
+    let dir = std::env::temp_dir().join(format!("madedit-open-group-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let dirty = dir.join("dirty.txt");
+    let keeper = dir.join("keeper.txt");
+    let g1 = dir.join("g1.txt");
+    let g2 = dir.join("g2.txt");
+    std::fs::write(&dirty, "old").unwrap();
+    std::fs::write(&keeper, "keep").unwrap();
+    std::fs::write(&g1, "group one").unwrap();
+    std::fs::write(&g2, "group two").unwrap();
+
+    let mut h = harness();
+    h.state_mut().settings.show_file_view = true;
+    h.state_mut().open_path(&dirty);
+    // 製造未存檔修改
+    h.state_mut().doc_mut().replace_all_text("edited");
+    h.state_mut().open_path(&keeper);
+    h.run_steps(3);
+    // 收藏群組包含 g1、g2
+    let mut group = FavoriteGroup::new("工作");
+    group.items.push(FavoriteItem::new(g1.clone()));
+    group.items.push(FavoriteItem::new(g2.clone()));
+    h.state_mut().settings.favorites.push(group);
+    h.run_steps(2);
+
+    let open_ids = |h: &Harness<'static, App>| h.state().tabs.iter().map(|t| t.doc.id).collect::<Vec<_>>();
+    let before = open_ids(&h);
+    assert_eq!(before.len(), 2);
+
+    // 觸發取代開啟：出現儲存確認（dirty 分頁）
+    h.state_mut().pending_open_group = Some(0);
+    h.state_mut().request_close(before.clone(), false);
+    h.run_steps(3);
+    assert!(h.query_by_label_contains("已修改").is_some(), "the dirty tab must ask to save");
+
+    // 選擇「儲存」
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("儲存")).click();
+    h.run_steps(6);
+    let state = h.state();
+    assert!(state.confirm.is_none(), "the close flow is finished");
+    assert_eq!(state.tabs.len(), 2, "only the group files remain open");
+    let names: Vec<String> = state.tabs.iter().map(|t| t.doc.display_name()).collect();
+    assert!(names.contains(&"g1.txt".to_string()) && names.contains(&"g2.txt".to_string()), "{names:?}");
+    let saved = std::fs::read_to_string(&dirty).unwrap();
+    assert_eq!(saved, "edited", "the dirty file was saved through the existing flow");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 重新命名只改顯示名稱：群組名稱不可空白，檔案項目的空白名稱恢復預設顯示。
+#[test]
+fn test_favorite_rename_keeps_group_names_non_blank() {
+    let mut h = harness();
+    h.state_mut().settings.favorites.push(FavoriteGroup::new("舊群組"));
+    h.state_mut().settings.favorites[0].items.push(FavoriteItem::new(std::path::PathBuf::from("/work/a.txt")));
+    h.state_mut().apply_favorite_name(FavTarget::Group(0), "新群組");
+    assert_eq!(h.state().settings.favorites[0].name, "新群組");
+    h.state_mut().apply_favorite_name(FavTarget::Group(0), "   ");
+    assert_eq!(h.state().settings.favorites[0].name, "新群組", "空白群組名稱必須被忽略");
+    h.state_mut().apply_favorite_name(FavTarget::Item(0, 0), " 報價單 ");
+    assert_eq!(h.state().settings.favorites[0].items[0].label(true), "報價單");
+    h.state_mut().apply_favorite_name(FavTarget::Item(0, 0), "");
+    assert_eq!(h.state().settings.favorites[0].items[0].label(true), "a.txt");
+}
+
+/// 右鍵不應清掉選取（Windows 習慣）：點右鍵後選取範圍仍在，選單同時開出來。
+#[test]
+fn test_output_panel_right_click_keeps_selection() {
+    use egui_kittest::kittest::NodeT as _;
+    let mut h = harness();
+    {
+        let runner = &mut h.state_mut().runner;
+        runner.show = true;
+        runner.text = "hello\nworld\nthird".into();
+        runner.lines = vec!["hello".into(), "world".into(), "third".into()];
+        runner.exit = Some(Ok(0));
+    }
+    h.run_steps(3);
+    let is_text_box = |n: &egui_kittest::kittest::AccessKitNode<'_>| n.role() == egui::accesskit::Role::MultilineTextInput;
+    // 目前的自動化選取範圍（起點／終點字元索引）
+    let selection = |h: &Harness<'static, App>| {
+        h.get_by(is_text_box)
+            .accesskit_node()
+            .raw_text_selection()
+            .map(|s| (s.anchor.character_index, s.focus.character_index))
+    };
+    let rect = h.get_by(is_text_box).rect();
+    let inside = egui::pos2(rect.left() + 30.0, rect.center().y);
+    let click = |h: &mut Harness<'static, App>, button, pos| {
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton { pos, button, pressed, modifiers: egui::Modifiers::NONE });
+        }
+        h.run_steps(2);
+    };
+    // 主鍵點一下取得焦點，Ctrl+A 全選
+    click(&mut h, egui::PointerButton::Primary, inside);
+    for pressed in [true, false] {
+        h.event(egui::Event::Key { key: Key::A, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::COMMAND });
+    }
+    h.run_steps(2);
+    let before = selection(&h).expect("ctrl+A sets a selection");
+    assert_ne!(before.0, before.1, "ctrl+A must select all text: {before:?}");
+    // 右鍵：選單要開，選取不能消失
+    click(&mut h, egui::PointerButton::Secondary, inside);
+    assert!(h.query_all_by(|n| n.label().is_some_and(|l| l.contains("全選"))).next().is_some(), "right click opens the menu");
+    let after = selection(&h).expect("the selection survives the right click");
+    assert_ne!(after.0, after.1, "right click must keep the selection: {after:?}");
+    assert_eq!(after, before, "the kept selection is the same range");
+}
+
+/// 右鍵「按住」期間選取就要保留（不能按下取消、放開才又選中造成閃爍）。
+#[test]
+fn test_output_panel_right_press_alone_keeps_selection() {
+    use egui_kittest::kittest::NodeT as _;
+    let mut h = harness();
+    {
+        let runner = &mut h.state_mut().runner;
+        runner.show = true;
+        runner.text = "hello\nworld\nthird".into();
+        runner.lines = vec!["hello".into(), "world".into(), "third".into()];
+        runner.exit = Some(Ok(0));
+    }
+    h.run_steps(3);
+    let is_text_box = |n: &egui_kittest::kittest::AccessKitNode<'_>| n.role() == egui::accesskit::Role::MultilineTextInput;
+    let selection = |h: &Harness<'static, App>| {
+        h.get_by(is_text_box)
+            .accesskit_node()
+            .raw_text_selection()
+            .map(|s| (s.anchor.character_index, s.focus.character_index))
+    };
+    let rect = h.get_by(is_text_box).rect();
+    let inside = egui::pos2(rect.left() + 30.0, rect.center().y);
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: inside, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+    }
+    for pressed in [true, false] {
+        h.event(egui::Event::Key { key: Key::A, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::COMMAND });
+    }
+    h.run_steps(3);
+    let before = selection(&h).expect("ctrl+A sets a selection");
+    assert_ne!(before.0, before.1, "ctrl+A must select all text: {before:?}");
+    // 只按下右鍵，先不放開
+    h.event(egui::Event::PointerButton { pos: inside, button: egui::PointerButton::Secondary, pressed: true, modifiers: egui::Modifiers::NONE });
+    h.run_steps(2);
+    assert_eq!(selection(&h).expect("selection still there while the button is held"), before, "the right press alone must keep the selection");
+    h.event(egui::Event::PointerButton { pos: inside, button: egui::PointerButton::Secondary, pressed: false, modifiers: egui::Modifiers::NONE });
+    h.run_steps(2);
+    assert_eq!(selection(&h).expect("selection still there after release"), before, "the release keeps the same range");
+}
+
+/// 按住右鍵超過 egui 的 click 時限（0.8 秒）再放開，選單仍要彈出來，選取也仍在。
+#[test]
+fn test_output_panel_long_right_press_still_opens_menu() {
+    let mut h = harness();
+    {
+        let runner = &mut h.state_mut().runner;
+        runner.show = true;
+        runner.text = "hello\nworld\nthird".into();
+        runner.lines = vec!["hello".into(), "world".into(), "third".into()];
+        runner.exit = Some(Ok(0));
+    }
+    h.run_steps(3);
+    let is_text_box = |n: &egui_kittest::kittest::AccessKitNode<'_>| n.role() == egui::accesskit::Role::MultilineTextInput;
+    let rect = h.get_by(is_text_box).rect();
+    let inside = egui::pos2(rect.left() + 30.0, rect.center().y);
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: inside, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+    }
+    for pressed in [true, false] {
+        h.event(egui::Event::Key { key: Key::A, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::COMMAND });
+    }
+    h.run_steps(3);
+    // 按住右鍵約 2 秒（每步約 1/60 秒），遠超過 egui 的 0.8 秒 click 上限
+    h.event(egui::Event::PointerButton { pos: inside, button: egui::PointerButton::Secondary, pressed: true, modifiers: egui::Modifiers::NONE });
+    h.run_steps(120);
+    h.event(egui::Event::PointerButton { pos: inside, button: egui::PointerButton::Secondary, pressed: false, modifiers: egui::Modifiers::NONE });
+    h.run_steps(3);
+    assert!(h.query_all_by(|n| n.label().is_some_and(|l| l.contains("全選"))).next().is_some(), "a long right press must still open the menu");
+}
+
+/// 右鍵選單的「輸出到檔案」勾選項：點一下開啟（狀態列回報路徑、檔案收得到輸出），
+/// 再點一下關閉；狀態存在 runner（不進 settings，重開程式回到預設關閉）。
+#[test]
+fn test_output_panel_log_to_file_toggle() {
+    let dir = std::env::temp_dir().join(format!("madedit-panel-log-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let log = dir.join("result.log");
+    let mut h = harness();
+    h.state_mut().runner.log_path = Some(log.clone());
+    {
+        let runner = &mut h.state_mut().runner;
+        runner.show = true;
+        runner.text = "hello".into();
+        runner.lines = vec!["hello".into()];
+        runner.exit = Some(Ok(0));
+    }
+    h.run_steps(3);
+    let output_rect = h.get_by(|n| n.role() == egui::accesskit::Role::MultilineTextInput).rect();
+    let open_menu = |h: &mut Harness<'static, App>| {
+        let pos = egui::pos2(output_rect.left() + 30.0, output_rect.center().y);
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Secondary, pressed, modifiers: egui::Modifiers::NONE });
+        }
+        h.run_steps(3);
+    };
+    let log_item = |checked: bool| {
+        let label = if checked { "✔ 輸出到檔案（result.log）" } else { "　 輸出到檔案（result.log）" };
+        move |n: &egui_kittest::kittest::AccessKitNode<'_>| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some(label)
+    };
+    // 未勾選 → 點一下開啟
+    open_menu(&mut h);
+    assert!(h.query_all_by(log_item(false)).next().is_some(), "the log item starts unchecked");
+    h.get_by(log_item(false)).click();
+    h.run_steps(3);
+    assert!(h.state().runner.log_enabled, "the toggle enables logging");
+    assert!(h.state().status.as_ref().is_some_and(|(m, _)| m.contains("result.log")), "the status bar reports the log path");
+    h.state_mut().runner.push_line("logged line".into());
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), "hello\nlogged line\n", "enabling syncs the file with the panel's current output, then appends");
+    // 再點一下關閉
+    open_menu(&mut h);
+    assert!(h.query_all_by(log_item(true)).next().is_some(), "the item shows checked while enabled");
+    h.get_by(log_item(true)).click();
+    h.run_steps(3);
+    assert!(!h.state().runner.log_enabled, "the toggle disables logging");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Options > General 的「介面字型」可從下拉選單挑選，確定後寫回設定（編輯區字型不變）。
+#[test]
+fn test_options_ui_font_row_sets_interface_font_only() {
+    use eframe::egui::accesskit::Role;
+    let mut h = harness();
+    let editor_font = h.state().settings.font_family.clone();
+    let ui_font = h.state().fonts.families.first().cloned().expect("a system font");
+    h.state_mut().pending.push(C::Options);
+    h.run_steps(3);
+    // 一般頁的外觀區有「介面字型」一列，預設顯示自動
+    let row = |h: &Harness<'static, App>| h.query_by(|n| n.role() == Role::Label && n.value().as_deref() == Some("介面字型")).is_some();
+    assert!(row(&h), "the General page shows an interface font row");
+    let combo = |h: &Harness<'static, App>| h.query_by(|n| n.role() == Role::ComboBox && n.value().as_deref() == Some("自動（預設）")).is_some();
+    assert!(combo(&h), "it defaults to automatic");
+    h.get_by(|n| n.role() == Role::ComboBox && n.value().as_deref() == Some("自動（預設）")).click();
+    h.run_steps(3);
+    h.get_by(|n| n.label().as_deref() == Some(ui_font.as_str())).click();
+    h.run_steps(3);
+    h.get_by_label("確定").click();
+    h.run_steps(3);
+    assert_eq!(h.state().settings.ui_font_family, ui_font, "the picked interface font is saved");
+    assert_eq!(h.state().settings.font_family, editor_font, "the editor font is untouched");
+}
+
+/// 介面字型設定改變時會重建 egui 字型（不必重開程式）。
+#[test]
+fn test_ui_font_change_reapplies_fonts() {
+    let mut h = harness();
+    let font = h.state().fonts.editor_family.clone();
+    assert!(!font.is_empty(), "the harness resolved an editor font");
+    h.state_mut().settings.ui_font_family = font.clone();
+    h.run_steps(3);
+    assert_eq!(h.state().fonts.ui_family, font, "the interface font is applied after the setting changes");
+    h.state_mut().settings.ui_font_family.clear();
+    h.run_steps(3);
+    assert!(h.state().fonts.ui_family.is_empty(), "clearing the setting returns to automatic");
+}
+
+#[test]
+#[ignore]
+fn temp_bench_output_panel() {
+    use std::time::Instant;
+    for lines in [1_000usize, 5_000, 20_000, 100_000] {
+        let mut h = harness();
+        {
+            let runner = &mut h.state_mut().runner;
+            runner.show = true;
+            // 走正式路徑 push_line，超出上限的行會被截掉（與實際運行一致）
+            for i in 0..lines {
+                runner.push_line(format!("src/app/runner.rs:{i}: warning: something happened here"));
+            }
+            runner.exit = Some(Ok(0));
+        }
+        h.run_steps(2);
+        let t = Instant::now();
+        h.run_steps(2);
+        let frame = t.elapsed().as_secs_f64() / 2.0 * 1000.0;
+        // 串流：每幀新增一行
+        let t = Instant::now();
+        for i in 0..5 {
+            h.state_mut().runner.push_line(format!("+{i}"));
+            h.run_steps(1);
+        }
+        let append = t.elapsed().as_secs_f64() / 5.0 * 1000.0;
+        let state = h.state();
+        println!(
+            "pushed={lines} kept={} trimmed={} chars={} frame={frame:.1}ms append_frame={append:.1}ms",
+            state.runner.lines.len(),
+            state.runner.trimmed_lines,
+            state.runner.text.len(),
+        );
+    }
 }

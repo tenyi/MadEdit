@@ -61,6 +61,8 @@ pub struct FontManager {
     pub families: Vec<String>,
     /// 目前實際套用的編輯區字型
     pub editor_family: String,
+    /// 目前實際套用的介面字型（空字串表示沿用 egui 內建字型）
+    pub ui_family: String,
     cjk_family: Option<String>,
 }
 
@@ -85,6 +87,7 @@ impl FontManager {
             collection,
             families,
             editor_family: String::new(),
+            ui_family: String::new(),
             cjk_family,
         }
     }
@@ -132,8 +135,12 @@ impl FontManager {
             .find_map(|(data, has_hangul)| has_hangul.then_some(data))
     }
 
-    /// 依設定的編輯區字型重建 egui 字型定義；`requested` 為空字串時自動挑選
-    pub fn apply(&mut self, ctx: &egui::Context, requested: &str) {
+    /// 依設定的編輯區與介面字型重建 egui 字型定義；參數為空字串時自動（編輯區挑第一個
+    /// 已安裝的等寬字型，介面沿用 egui 內建字型）。
+    ///
+    /// 介面字型只影響 [`FontFamily::Proportional`]（選單、對話框、分頁、狀態列等），
+    /// 編輯區與「執行輸出」面板使用的是 [`EDITOR_FAMILY`]，不會被介面字型影響。
+    pub fn apply(&mut self, ctx: &egui::Context, requested: &str, ui_requested: &str) {
         let mut defs = FontDefinitions::default();
         let mut editor_chain: Vec<String> = Vec::new();
 
@@ -187,6 +194,32 @@ impl FontManager {
             list.push("Hack".into());
         }
 
+        // 介面字型：放在比例字型鏈最前面，CJK／emoji 後備字型仍接在後面補字。
+        // 與編輯區或 CJK 後備字型相同時直接共用已載入的資料，不重複載入整個字型檔。
+        self.ui_family = String::new();
+        if !ui_requested.is_empty() {
+            let shared = if self.editor_family == ui_requested {
+                Some("editor-main")
+            } else if self.cjk_family.as_deref() == Some(ui_requested) {
+                cjk_key
+            } else {
+                None
+            };
+            let key = match shared {
+                Some(key) => Some(key.to_string()),
+                None => self.load_family_probe(ui_requested).map(|(data, _)| {
+                    defs.font_data.insert("ui-main".into(), Arc::new(data));
+                    "ui-main".to_string()
+                }),
+            };
+            if let Some(key) = key {
+                if let Some(list) = defs.families.get_mut(&FontFamily::Proportional) {
+                    list.insert(0, key);
+                }
+                self.ui_family = ui_requested.to_string();
+            }
+        }
+
         // 編輯區字型鏈：使用者字型 → CJK → egui 內建等寬字型與 emoji
         if let Some(mono) = defs.families.get(&FontFamily::Monospace) {
             for f in mono {
@@ -219,7 +252,7 @@ mod tests {
         let mut fm = FontManager::new();
         let Some(cjk) = fm.cjk_family.clone() else { return };
         let ctx = egui::Context::default();
-        fm.apply(&ctx, &cjk);
+        fm.apply(&ctx, &cjk, "");
         ctx.run_ui(Default::default(), |_| {}).textures_delta.clear();
         let ok = ctx.fonts(|f| f.definitions().families[&FontFamily::Proportional].contains(&"editor-main".to_string()));
         assert!(ok, "介面字型鏈缺少 CJK 字型");
@@ -235,9 +268,42 @@ mod tests {
             return;
         }
         let ctx = egui::Context::default();
-        fm.apply(&ctx, "");
+        fm.apply(&ctx, "", "");
         ctx.run_ui(Default::default(), |_| {}).textures_delta.clear();
         let ok = ctx.fonts_mut(|f| f.has_glyph(&egui::FontId::proportional(14.0), HANGUL_PROBE));
         assert!(ok, "UI font chain has no Hangul glyph");
+    }
+
+    /// 指定介面字型時，比例字型鏈最前面換成該字型；編輯區字型家族不受影響，
+    /// 所以「執行輸出」與編輯區仍用編輯區字型。
+    #[test]
+    fn test_ui_font_goes_first_in_proportional_chain_only() {
+        let mut fm = FontManager::new();
+        // 找一個真的載入得到的系統字型
+        let Some(name) = fm.families.clone().into_iter().find(|n| fm.load_family_probe(n).is_some()) else { return };
+        let ctx = egui::Context::default();
+        fm.apply(&ctx, "", &name);
+        ctx.run_ui(Default::default(), |_| {}).textures_delta.clear();
+        assert_eq!(fm.ui_family, name, "the UI font is reported as applied");
+        let proportional = ctx.fonts(|f| f.definitions().families[&FontFamily::Proportional].clone());
+        assert_eq!(proportional.first().map(String::as_str), Some("ui-main"), "UI font leads the proportional chain: {proportional:?}");
+        let editor = ctx.fonts(|f| f.definitions().families[&FontFamily::Name(EDITOR_FAMILY.into())].clone());
+        assert!(!editor.contains(&"ui-main".to_string()), "the editor family must ignore the UI font: {editor:?}");
+    }
+
+    /// 介面字型與編輯區字型相同時共用同一份字型資料，不重複載入字型檔
+    #[test]
+    fn test_ui_font_reuses_editor_font_data() {
+        let mut fm = FontManager::new();
+        let Some(name) = fm.families.clone().into_iter().find(|n| fm.load_family_probe(n).is_some()) else { return };
+        let ctx = egui::Context::default();
+        fm.apply(&ctx, &name, &name);
+        ctx.run_ui(Default::default(), |_| {}).textures_delta.clear();
+        assert_eq!(fm.ui_family, name);
+        let (proportional, loaded_twice) = ctx.fonts(|f| {
+            (f.definitions().families[&FontFamily::Proportional].clone(), f.definitions().font_data.contains_key("ui-main"))
+        });
+        assert_eq!(proportional.first().map(String::as_str), Some("editor-main"), "shared font data: {proportional:?}");
+        assert!(!loaded_twice, "the same font must not be loaded twice");
     }
 }

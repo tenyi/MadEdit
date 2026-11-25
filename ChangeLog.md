@@ -6,6 +6,106 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+- A dockable File View panel (View > File View): its tabbed left panel has a Favorites tree for grouping files. Right-click the Favorites root to add a group, a folder's files, individual files, the active file or all open files, and to switch between names and full paths; right-click a group to rename or delete it, and double-click it to open every file in the group. Missing files are skipped with a status message. Its Open tab lists every editor tab, including preview tabs, for switching files when the tab bar is crowded. Recently opened files are listed below, and favorites persist in `settings.json` without touching the files on disk.
+- PowerShell scripts (`.ps1`, `.psm1`, `.psd1`) open with bundled syntax highlighting: comments, strings, variables, cmdlets, keywords and here-strings are colored without any external files or network access.
+- Squirrel scripts (`.nut`, <https://squirrel-lang.org/>) open with bundled syntax highlighting: classes, functions, keywords, numbers, strings and `//`, `/* */` comments are colored offline.
+- The bundled Squirrel definition also covers the user's ADO database, Win32 and MFC keyword extensions (`ADOSQLCommand`, `ADODataset`, `AttachToDB`, `MB_OK`, `CString`, …); types, functions and constants use distinct colors in the light and dark themes.
+- `.svg` files can be previewed as a graphic (View > Preview): resvg renders the current text into an image shown in a tab or a docked panel, with zoom buttons and Ctrl+wheel zoom, live refresh while editing and parse errors reported in the panel. The menu item is now a checked toggle stored in the settings: while it is checked, opening a `.svg` shows the graphic directly; unchecking closes an active graphic preview.
+- Raster images (`.bmp`, `.jpg`, `.jpeg`, plus `.png`/`.gif`/`.webp`) can be previewed as a graphic the same way (View > Preview): the file is decoded from disk with the `image` crate and shown in a tab or docked panel with zoom, because these files open in hex mode. Its menu item is a checked toggle stored in the settings: while checked, opening such an image shows the graphic directly; unchecking closes an active image preview. Oversized images are scaled down to the GPU texture limit before display.
+- Code folding (View > Code Folding): click the gutter triangles to collapse `{ }` blocks or multi-line comments (consecutive `//` lines, `/* … */`) in C-like files, indentation blocks in Python (plus `#` runs), and braces/comments in PowerShell (`#`, `<# … #>`, here-strings skipped), with `⋯ N lines` on the header, Fold / Unfold (Ctrl+Shift+`[`), Fold All / Unfold All, and automatic unfolding around the caret. Off by default.
+- Multi-line `[ … ]` arrays fold like braces: in C/C++/JSON/Java/JavaScript and the other brace-based languages a line that leaves a `[` open folds until the line that closes it (brackets inside strings and comments are ignored), and Python folds multi-line array literals the same way.
+- INI files (`.ini`, `.cfg`, `.conf`) open with bundled highlighting for sections, keys, values and `;` comments.
+- `.gitignore` (plus `.ignore` and `.dockerignore`) files open with bundled highlighting: `#` comments, `!` negation, glob operators (`*`, `?`, `**`), `[a-z]` character classes, `\` escapes and path separators are colored; `#` works as the line-comment command.
+- Tools > Run Script (F5) runs the current file, or only the selection, and streams stdout/stderr into a resizable "Script Output" panel with exit code, elapsed time and a Stop button. `.nut` uses `nut.exe`, `.py` uses `python -u`, `.lua` uses `lua`; output is decoded as UTF-8 or GBK. F5 previously opened the previous window, which moved to F10.
+- A selection run writes the temporary file in the document's own encoding (a GBK script stays GBK), and the elapsed time stops counting after the run finishes.
+- Options > General has "Automatically reload files changed by other programs". When enabled, a file that was changed on disk and has no unsaved edits is reloaded without the banner; files with unsaved edits still show the usual prompt.
+- Opening a file now detects Big5, GBK/GB18030, Shift_JIS, EUC-KR, EUC-JP and similar encodings from its content (UTF-8 and BOMs are handled first). A GBK `.ini` file opens as GBK instead of being decoded with the Big5 fallback, so Chinese text is no longer garbled.
+- The text in the Script Output panel can be selected and copied: drag to select, Ctrl+C to copy, and right-click (which keeps the selection, like the editor) for Select All, Copy and Clear. Long output still scrolls in the panel; past 5,000 lines or 200 KB the oldest lines are dropped (the panel says how many) so huge outputs cannot slow down the interface.
+- The output panel's context menu has an "Output to file (result.log)" checkbox: when checked, the file is opened from scratch and the panel's current output is written into it (keeping both in sync), then every new line is also written to `result.log` next to `MadEdit.exe` with no size limit — the on-screen cap does not apply to the file. Each F5 run starts the file from scratch; clearing the panel does not touch the file. The checkbox state is remembered across sessions.
+- The editor tab context menu has "Open Folder", which opens the file's folder in the system file manager (with the file selected on Windows and macOS). It is disabled for unsaved documents.
+- Tools > Options > General has an "Interface font" setting (Automatic by default) for menus, dialogs, tabs and the status bar. The editor and the Script Output panel keep using the editor font.
+- View > Script Output shows or hides the Script Output panel and is checked while the panel is open, the same way View > File View works. The panel's state is remembered, including when it was closed with the panel's × or opened automatically by running a script, so the next launch starts the same way.
+- Left double-clicking an editor tab's title closes that tab, like its × button; double-clicking a Markdown preview tab closes the preview. Unsaved changes are still confirmed first.
+- The Script Output panel accepts input while a script is running: a prompt-style input line (`>`) appears at the bottom of the panel, focused once when the process starts, and pressing Enter writes the line to the child process's stdin (echoed as `> line` in the output and `result.log`). Line-based interaction such as batch `set /p` or Python `input()` now works; programs that read the console directly (`pause`, `choice`, full-screen TUIs) still need the Stop button or a real terminal.
+- The File View panel's Open tab shows a "×" at the right end of a row while it is hovered or selected; clicking it closes that tab (a Markdown preview row closes the preview). Double-clicking a row closes it the same way as double-clicking the editor tab's title. Unsaved changes are still confirmed first.
+- The left File View dock can be dragged up to 800 px wide (was 420), and the Explorer tree and content list scroll horizontally when a deep path or a long file name does not fit. The list header stays fixed while the list scrolls vertically, drag a column border to resize that column (the widths are remembered), and a column header click sorts by that column (four-way choice, second click reverses, ▲/▼ marks the active column). While split view is checked the tree stays a plain folder list (the contents are shown in the list below); unchecking it makes the selected folder render its subfolders and files inline again.
+- The File View panel gains an "Explorer" tab: a lazily loaded drive/folder tree (a folder is read only when first expanded) with a filter box that applies only after clicking ">" (or pressing Enter). The filter matches the selected folder's file names only (`*` / `?` wildcards, `;`-separated): matching files appear as leaf rows under the selected folder, unselected folders stay a pure folder tree, and single-clicking a file opens it. A split-view toggle shows the selected folder's contents below the tree — a Name / Modified / Type / Size list (columns adapt to the panel width) with a draggable splitter; double-clicking a folder in the list enters it. Rows show the real Windows shell icons (folders, files by type, drives), a ".." row at the top returns to the parent folder, and clicking a column header sorts by that column (four-way choice, second click reverses, ▲/▼ marks the active column). The list header stays fixed while the list scrolls.
+
+### Changed
+- The four preview entries (Markdown / HTML / SVG / image) are merged into a single checked toggle "Preview" (View menu, and the tab & editor "Preview as" context menus): while checked, opening a file dispatches automatically by extension — `.md`/`.markdown` to the Markdown preview, `.html`/`.htm` to the HTML preview, `.svg` to the graphic preview, `.bmp`/`.jpg`/`.jpeg`/`.png`/`.gif`/`.webp` to the image preview; other types show a status message. Unchecking closes every active preview. The old per-type settings keys are ignored (the new `auto_preview` key replaces them).
+- Editor tabs can be dragged to reorder them with a live preview (like MTT-File-Manager): while dragging, the source tab lifts out with a shadow and follows the pointer while the neighbors animate aside to open a slot; the move commits only on release. Clicking / double-clicking / the close button behave as before.
+- The Squirrel interpreter is now expected as `nut.exe` (previously `ZSSQConsole.exe`) next to MadEdit.exe or on PATH, and `.nut` files show "nut" as their script type in the status bar (syntax highlighting stays the Squirrel definition).
+- Tools > Run Script (F5) recognizes `*.ztrtoml` files (config files of the ztr compression tool): instead of script interpretation it runs `ztr --ztrtoml <file name>` with the working directory set to the file's own folder, so the tool compresses that folder with this configuration. It prefers `ztr.exe` sitting next to MadEdit.exe (bundled release), falling back to PATH; unsaved changes are saved first, as with other F5 runs. The status bar shows the script type as "ztr" (highlighting uses the YAML syntax).
+- In the File View panel's List tab, hovering a favorites entry or a recent-file entry shows a red "×" at the end of the row: clicking it removes only that entry from the favorites/recent list (the file on disk is untouched).
+- Duplicate Line (Edit menu) also accepts `Ctrl+D` (it keeps `Ctrl+Shift+D`), and Cut (`Ctrl+X`) behaves like Visual Studio in text mode: with no selection it cuts the whole current line; with a selection it cuts as before. Hex mode and read-only documents are unaffected.
+- Windows: the menu bar now lives in a custom-drawn title bar together with the app icon and the window buttons (minimize / maximize / close), like VS Code. The bar is 1.5× the menu height, is draggable, and double-clicking toggles maximize; edge resizing and Aero Snap still work. The zoom controls, theme toggle and quick search stay on the bar's right side. Other platforms keep the native title bar and menu bar. Because the window buttons are ordinary EGUI widgets, Windows 11 does not show the Snap Layouts flyout when hovering the maximize button.
+- Editor tabs and the File View panel's tab now use a flat, content-connected style with rounded top corners only (like Windows 11 Explorer), instead of detached rounded buttons, so the selected tab merges with the pane below it.
+- Closing the last tab leaves an empty workspace: MadEdit neither creates an untitled document nor exits, and the editor area offers New and Open.
+- Reloading a file (manually or automatically after an external change) keeps the current scroll position instead of jumping back to the caret or the top of the file.
+- The toolbar's text, column and hex mode buttons are now one three-way choice: a single outlined group holds all three icons, the current mode is filled in the accent colour with an accent outline, and assistive technology is told these are radio buttons instead of three unrelated toggles.
+- The title bar's minimize / maximize / close buttons follow the Windows 11 style: flat full-height tiles without frames of their own, thin drawn glyphs instead of font characters, and Close turns red with a white glyph on hover.
+- In the dark theme the editor area and the tab strip now use the same background as the other panels (the Script Output dock, side panels) instead of the syntax theme's own grey-blue background, which looked hazy next to them; light theme keeps the theme's white background.
+- The title bar's font zoom buttons (A− / A+) no longer paint a background while idle, so they blend into the bar in both themes; the border and hover feedback remain.
+- The horizontal separator line between the menu bar and the toolbar is gone, as are all separators around the title bar's quick controls (font zoom, theme toggle, quick search); at fractional scale factors the title bar height now snaps to whole physical pixels, which removes the thin dark line that could show at the panel seam on 100% / 125% displays.
+
+### Fixed
+- Markdown preview: SVG images are no longer rasterized at their natural size — some packing-record SVGs measure tens of thousands of pixels and froze the interface for minutes (and oversized ones crashed the renderer on the GPU texture-size limit). SVGs now render at a size bounded by the texture limit and are downscaled proportionally when needed.
+- Markdown preview: relative-path images inside HTML `<img src="data/logo.jpeg">` tags (common in README headers) now resolve against the document's folder and render as images with their `height` attribute honored (falling back to fit-to-width), so sizes match the README's intent like in VSCode. GIF files animate (the `egui_extras/gif` loader feature is now enabled). Code-block examples are untouched.
+- Markdown preview keeps remote images offline and scales large local SVGs to the GPU texture limit.
+- Windows: paths shown to the user no longer carry the `\\?\` prefix that `canonicalize` adds. The tab tooltip, Copy Full Path, the File View list, the open/create status messages, the "create this file?" prompt and the print header now show `D:\work\a.txt` instead of `\\?\D:\work\a.txt`.
+
+### 繁體中文
+
+#### 新增
+- 可停靠的「文件視圖」面板（檢視 > 文件視圖）：左側分頁面板中的「收藏」樹可將檔案分組。在「收藏」上按右鍵可新增群組、資料夾中的檔案、個別檔案、使用中的檔案或所有開啟的檔案，並切換顯示檔名／完整路徑；在群組上按右鍵可重新命名或刪除，連按兩下則開啟群組中的所有檔案，已不存在的檔案會略過並顯示訊息。「開啟」頁籤列出所有編輯器分頁（含預覽分頁），分頁列放不下時可切換檔案。下方另列最近開啟的檔案；收藏存於 `settings.json`，不會更動磁碟上的檔案。
+- PowerShell 腳本（`.ps1`、`.psm1`、`.psd1`）內建語法高亮：註解、字串、變數、Cmdlet、關鍵字與 here-string 都會著色，不需要外部檔案或網路。
+- Squirrel 腳本（`.nut`，<https://squirrel-lang.org/>）內建語法高亮：類別、函式、關鍵字、數字、字串與 `//`、`/* */` 註解都會著色，可離線使用。
+- 內建 Squirrel 定義也涵蓋 ADO 資料庫、Win32 與 MFC 擴充關鍵字（`ADOSQLCommand`、`ADODataset`、`AttachToDB`、`MB_OK`、`CString` 等）；型別、函式與常數在淺色與深色主題各有不同顏色。
+- `.svg` 檔案可以圖形預覽（檢視 > 預覽）：以 resvg 將目前內容點陣化，顯示在獨立分頁或並排面板，支援縮放按鈕與 Ctrl+滾輪、編輯時即時更新，解析失敗會在面板顯示訊息。此選單項改為**勾選式並寫入設定**：勾選狀態下打開 `.svg` 直接以圖形顯示；取消勾選會關閉目前的圖形預覽。
+- 點陣圖片（`.bmp`、`.jpg`、`.jpeg`，以及 `.png`／`.gif`／`.webp`）同樣可以圖形預覽（檢視 > 預覽）：這類檔案以十六進位模式開啟，預覽因此直接從磁碟解碼（`image` crate）後顯示在獨立分頁或並排面板，支援縮放；選單項同為**勾選式並寫入設定**，勾選時打開圖片直接以圖形顯示，取消勾選會關閉圖片預覽。超過 GPU 紋理上限的巨型圖會先縮到上限再顯示。
+- 代碼折疊（檢視 > 代碼折疊）：點行號右側小三角可折疊 C 系檔案的 `{ }` 區塊或多行註解（連續 `//` 行、`/* … */`）、Python 的縮排區塊（含 `#` 註解群組），以及 PowerShell 的 `{ }` 與 `#`、`<# … #>` 註解（here-string 會跳過），折疊行顯示「⋯ N 行」；另有折疊/展開（Ctrl+Shift+`[`）、全部折疊、全部展開，游標所在區塊會自動展開。預設關閉。
+- 多行 `[ … ]` 陣列比照大括號折疊：C/C++/JSON/Java/JavaScript 等大括號語系中，一行結束時仍有未閉合的 `[`，折到閉合它的那一行（字串與註解裡的括號會忽略）；Python 的多行陣列字面值同樣可折疊。
+- INI 檔案（`.ini`、`.cfg`、`.conf`）內建高亮：節區、鍵、值與 `;` 註解都會著色。
+- `.gitignore`（含 `.ignore`、`.dockerignore`）內建高亮：`#` 註解、`!` 否定、萬用字元（`*`、`?`、`**`）、`[a-z]` 字元組、`\` 轉義與路徑分隔都會著色，`#` 同時是行註解命令。
+- 「工具 > 執行腳本」（F5）可執行目前檔案或僅執行選取片段，並把 stdout/stderr 串流到可調整大小的「執行輸出」面板，顯示退出碼、耗時與「停止」按鈕。`.nut` 使用 `nut.exe`、`.py` 使用 `python -u`、`.lua` 使用 `lua`；輸出以 UTF-8 或 GBK 解碼。F5 原本是「上一個視窗」，該功能改到 F10。
+- 執行選取片段時，暫存檔沿用文件本身編碼（GBK 腳本仍是 GBK）；執行結束後耗時不再繼續增加。
+- 「工具 > 選項 > 一般」新增「其他程式修改時自動重新載入」：開啟後，磁碟上被修改且沒有未儲存編輯的檔案會直接重新載入，不再顯示提示；有未儲存編輯的檔案仍保留原本的提示流程。
+- 開檔時會依內容辨識 Big5、GBK/GB18030、Shift_JIS、EUC-KR、EUC-JP 等編碼（UTF-8 與 BOM 優先）。GBK 的 `.ini` 會以 GBK 開啟，不再被 Big5 備援編碼解成亂碼。
+- 「執行輸出」面板的文字可以選取與複製：拖曳選取、Ctrl+C 複製，右鍵選單提供「全選／複製／清空」；右鍵不會取消選取（與編輯區一致），長輸出仍可在面板內捲動。輸出超過 5,000 行或 200 KB 時自動捨棄較早的行（面板會顯示省略了多少行），大量輸出不會拖慢介面。
+- 「執行輸出」面板右鍵選單新增「輸出到檔案（result.log）」勾選項：勾選時以清空方式開檔，並把面板目前的輸出整段寫入（兩邊同步），之後每一行都同時寫入 `MadEdit.exe` 同目錄的 `result.log`，檔案沒有大小限制（面板截斷不影響檔案內容）。每次按 F5 運行時檔案從頭寫；中途清除面板不影響檔案。勾選狀態會記住，重開程式沿用。
+- 編輯器分頁右鍵選單新增「開啟檔案所在資料夾」：用系統檔案管理員開啟檔案所在資料夾（Windows/macOS 上會選中該檔案）；未存檔的文件此項停用。
+- 「工具 > 選項 > 一般」新增「介面字型」（預設自動）：指定選單、對話框、分頁與狀態列的字型；編輯區與「執行輸出」面板仍使用編輯區字型。
+- 「檢視 > 運行輸出」可顯示或隱藏「運行輸出」面板，面板開啟時選單會打勾（與「檢視 > 文件視圖」一致）。面板狀態會記住：無論是從選單切換、按面板的 × 關閉，還是執行腳本時自動開啟，下次啟動都沿用最後的顯示／隱藏狀態。
+- 以滑鼠左鍵雙擊編輯器分頁標題即可關閉該分頁（與 × 按鈕相同）；雙擊 Markdown 預覽分頁則關閉該預覽。有未儲存的變更時仍會先詢問。
+- 運行期間「執行輸出」面板可輸入：面板最底部出現提示符（`>`）樣式的輸入行，程序啟動時自動聚焦一次，按 Enter 把該行寫進子程序的 stdin（並以「> 行」回顯到輸出與 `result.log`）。批次檔的 `set /p`、Python 的 `input()` 等行式互動因此可用；直接讀主控台按鍵的程式（`pause`、`choice`、全螢幕 TUI）仍需按「停止」或改用真正的終端。
+- 檔案檢視面板的「開啟」頁籤在列被滑鼠懸停或選中時於列尾顯示「×」，點擊即關閉該分頁（Markdown 預覽列則關閉預覽）；雙擊列與雙擊編輯器分頁標題同效，同樣關閉。未存檔修改仍會先確認。
+- 左側檔案檢視停靠欄可拖曳加寬至 800 px（原上限 420），資源管理器的目錄樹與內容列表在深層路徑或長檔名超出範圍時提供**橫向捲軸**；列表標題固定不隨垂直捲動，可用滑鼠拖曳欄位邊界調整欄寬（欄寬會記住），點擊列頭依該欄排序（四選一，再點切換升降冪，以 ▲/▼ 標示）。勾選分欄時樹保持純資料夾清單（內容由下方列表呈現）；取消勾選後選中資料夾會重新把子資料夾與檔案內聯到樹上。
+- 檔案檢視面板新增「資源管理器」頁籤：懶載入的磁碟／資料夾樹（資料夾首次展開時才讀取），附篩選框——按「>」或 Enter 後才生效，只匹配**選中資料夾**的檔名（`*`／`?` 萬用字元，可用 `;` 分隔多個）：匹配的檔案以葉節點顯示在選中資料夾下，未選中的節點維持純資料夾樹；單擊檔案葉節點即開啟該檔案。勾選分欄開關後，樹下方以「名稱／修改日期／類型／大小」列表顯示所選資料夾內容（欄位隨面板寬度自適應），並可用拖拽分隔條調整上下高度；雙擊列表中的資料夾即進入。列前置**真實 Windows 系統圖示**（資料夾、依副檔名的檔案、磁碟機）；列表首項「..」單擊回上層；點擊列頭依該欄排序（四選一，再點切換升降冪，作用中的欄位以 ▲/▼ 標示）；列表標題行固定，不隨列表捲動。
+
+#### 變更
+- 四個預覽項目（Markdown／HTML／SVG／圖片）合併為單一勾選開關「預覽」（檢視選單，以及分頁與編輯區的「預覽為」右鍵選單同步）：勾選時打開檔案依副檔名自動分發——`.md`/`.markdown` 進 Markdown 預覽、`.html`/`.htm` 進 HTML 預覽、`.svg` 進圖形預覽、`.bmp`/`.jpg`/`.jpeg`/`.png`/`.gif`/`.webp` 進圖片預覽，其他類型顯示狀態訊息；取消勾選會關閉所有作用中的預覽。舊的分項設定鍵不再使用（改由新的 `auto_preview` 鍵取代）。
+- 編輯器分頁標題支援拖動排序，並帶即時預覽（比照 MTT-File-Manager）：拖動時來源分頁浮起（帶陰影）跟隨指針，鄰居以動畫滑開一個空位；鬆手才提交搬移。單擊、雙擊與關閉按鈕行為不變。
+- Squirrel 直譯器改為使用 `nut.exe`（原 `ZSSQConsole.exe`），放在 `MadEdit.exe` 同目錄或 PATH；`.nut` 檔在狀態欄的腳本類型顯示為「nut」（語法高亮仍是 Squirrel 定義）。
+- 「工具 > 執行腳本」（F5）支援 `*.ztrtoml` 檔案（ztr 壓縮工具的配置檔）：不再當腳本解譯，而是以該檔所在目錄為工作目錄執行 `ztr --ztrtoml <檔名>`，直接按此配置壓縮該目錄。優先使用 MadEdit.exe 同目錄的 `ztr.exe`（可捆綁發佈），找不到才依賴 PATH；與其他 F5 運行一樣，未存檔修改會先存檔。狀態欄的腳本類型顯示為「ztr」（高亮沿用 YAML 樣式）。
+- 「文件視圖」面板的「列表」頁中，滑鼠懸停在收藏條目或最近開啟條目上時，列尾會出現紅色「×」：點擊只把該條目從收藏／最近清單移除（不會刪除磁碟上的檔案）。
+- 「複製整行」（編輯選單）新增 `Ctrl+D` 快捷鍵（原有 `Ctrl+Shift+D` 保留）；文字模式下「剪下」（`Ctrl+X`）比照 Visual Studio：沒有選取時剪下目前整行，有選取時行為不變。十六進位模式與唯讀文件不受影響。
+- Windows：選單列移進自繪標題欄，與應用程式圖示、視窗按鈕（最小化／最大化／關閉）同一列（類似 VS Code）。標題欄高度為選單高度的 1.5 倍，可拖動、雙擊可最大化／還原，邊緣縮放與 Aero Snap 貼邊正常。字型縮放、主題切換與快速搜尋保留在同一列右側。其他平台維持原生標題列與選單列。視窗按鈕是一般 EGUI 控件，因此 Windows 11 懸停最大化按鈕時不會顯示 Snap Layouts 浮層。
+- 編輯器分頁與「文件視圖」面板的分頁改為上緣圓角、下緣與內容相連的扁平樣式（類似 Windows 11 檔案總管），不再是有分離感的圓角按鈕；選取的分頁會與下方內容連成一體。
+- 關閉最後一個分頁後改為空白工作區：不再自動建立未命名文件，也不會結束程式；編輯區提供「新增」與「開啟」按鈕。
+- 重新載入檔案（手動或偵測到外部修改後自動載入）會保留目前的捲動位置，不再跳回游標或檔案開頭。
+- 工具列的「文字模式／列塊模式／十六進位模式」改為同一組三選一：三個圖示收在同一個外框內，目前的模式以強調色填滿並加上強調色外框；螢幕閱讀器會讀成選項按鈕（radio），不再是三個互不相關的切換鈕。
+- 標題欄的最小化／最大化／關閉按鈕改為 Windows 11 風格：整欄高的平面熱區、不再自帶底框，字形改由線段繪製（不依賴字型字元），懸停時整格變色，關閉鍵懸停變紅底白叉。
+- 暗色主題下，編輯區與分頁列改用與其他面板（執行輸出停靠欄、側邊面板）一致的背景色，不再使用語法主題自帶的灰藍底（與整體介面相比顯得灰蒙蒙）；淺色主題維持主題原本的白底。
+- 標題欄的字型縮放按鈕（A−／A+）閒置時不再繪製底色，深淺主題都與標題欄融為一體；邊框與懸停回饋保留。
+- 選單列與工具列之間的橫向分隔線移除，標題欄快捷控件（字型縮放、主題切換、快速搜尋）周圍的豎向分隔線也一併移除；標題欄高度在非整數縮放比例（100%／125% 等）下吸附到整數物理像素，消除面板接縫處可能出現的細黑線。
+
+#### 修正
+- Markdown 預覽：SVG 圖片不再按原生尺寸點陣化——部分打包記錄 SVG 原生尺寸高達數萬像素，會讓介面凍結數分鐘，超過 GPU 紋理上限的還會直接崩潰；現在渲染尺寸以紋理上限為界，必要時等比縮小。
+- Markdown 預覽：HTML `<img src="data/logo.jpeg">` 標籤內的相對路徑圖片（README 頁首常見）現在會以文件所在資料夾解析並按 `height` 屬性的高度等比顯示（無 height 時自適應寬度），尺寸與 README 原意（如 VSCode）一致；GIF 檔會播放動畫（啟用 `egui_extras/gif` 載入器特性）；程式碼區塊裡的 `<img>` 範例不受影響。
+- Markdown 預覽維持離線圖片處理，並依 GPU 紋理上限縮小大型本機 SVG。
+- Windows：顯示給使用者的路徑不再帶 `canonicalize` 產生的 `\\?\` 前綴。分頁提示、「複製完整路徑」、文件視圖清單、開啟／建立的狀態訊息、「是否建立新檔案」詢問與列印頁首都改成 `D:\work\a.txt` 這種寫法，不再是 `\\?\D:\work\a.txt`。
+
 ## [0.6.9] - 2026-11-10
 
 ### Changed

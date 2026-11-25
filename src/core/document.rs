@@ -733,8 +733,12 @@ impl Document {
         fresh.editor.set_caret(caret.line, caret.col);
         fresh.syntax = self.syntax.clone();
         fresh.id = self.id;
+        // Keep the version monotonic across reloads: caches keyed by `version` (syntax, find
+        // results, layout) must see the new content, and a second reload would otherwise reuse
+        // the first reload's version number.
+        let next_version = self.version.wrapping_add(1);
         *self = fresh;
-        self.version += 1;
+        self.version = next_version;
         Ok(())
     }
 
@@ -1382,6 +1386,23 @@ mod tests {
         doc.reload(&OpenOptions::default()).unwrap();
         assert_eq!(doc.editor.lines, vec!["v3!"]);
         assert!(!doc.is_modified());
+        let _ = fs::remove_file(&p);
+    }
+
+    #[test]
+    fn test_reload_keeps_the_version_increasing() {
+        let p = temp_path("reload-version.txt");
+        fs::write(&p, "v1").unwrap();
+        let mut doc = Document::open(&p, &OpenOptions::default()).unwrap();
+        let v0 = doc.version;
+        fs::write(&p, "v2!").unwrap();
+        doc.reload(&OpenOptions::default()).unwrap();
+        let v1 = doc.version;
+        assert!(v1 > v0, "重新載入必須更換版本，讓快取失效");
+        fs::write(&p, "v3!").unwrap();
+        doc.reload(&OpenOptions::default()).unwrap();
+        assert!(doc.version > v1, "第二次重新載入也必須更換版本");
+        assert_eq!(doc.editor.lines, vec!["v3!"]);
         let _ = fs::remove_file(&p);
     }
 

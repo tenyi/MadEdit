@@ -19,6 +19,84 @@ pub fn icon_button(ui: &mut Ui, button: egui::Button<'_>, tip: &str, name: &str)
     response
 }
 
+/// The glyph of a Windows caption button (title-bar minimize / maximize / close).
+#[cfg(windows)]
+#[derive(Clone, Copy, PartialEq)]
+pub enum CaptionIcon {
+    Minimize,
+    Maximize,
+    Restore,
+    Close,
+}
+
+/// Windows 11 style caption button: a flat full-height hit area with a thin stroke glyph and no
+/// frame of its own (the previous `Button`-based ones looked like boxed chips against the bar).
+/// Hovering paints the whole tile — Close turns system red with a white glyph, like the native
+/// title bar. `name` is the accessible label; `tip` the tooltip.
+#[cfg(windows)]
+pub fn caption_button(ui: &mut Ui, icon: CaptionIcon, tip: &str, name: &str) -> Response {
+    // Tile fills the whole bar height, so the three buttons read as one caption strip.
+    let height = ui.available_height().max(ui.spacing().interact_size.y);
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(46.0, height), Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(Role::Button, ui.is_enabled(), name));
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.visuals();
+        let text = visuals.widgets.inactive.fg_stroke.color;
+        // The palette's own hovered fill keeps the strip consistent with every other control.
+        let hover_fill = visuals.widgets.hovered.weak_bg_fill;
+        // Windows' fixed caption red (the system ClearType constant, not a theme colour).
+        let close_red = Color32::from_rgb(232, 17, 35);
+        let hovered = response.hovered() || response.is_pointer_button_down_on();
+        let (fill, glyph) = match (icon, hovered) {
+            (CaptionIcon::Close, true) => (close_red, Color32::WHITE),
+            (_, true) => (hover_fill, text),
+            (_, false) => (Color32::TRANSPARENT, text),
+        };
+        let painter = ui.painter().clone();
+        if fill != Color32::TRANSPARENT {
+            painter.rect_filled(rect, 0.0, fill);
+        }
+        let stroke = egui::Stroke::new(1.0, glyph);
+        let c = rect.center();
+        match icon {
+            CaptionIcon::Minimize => {
+                painter.line_segment([c + egui::vec2(-5.0, 0.0), c + egui::vec2(5.0, 0.0)], stroke);
+            }
+            CaptionIcon::Maximize => {
+                painter.rect_stroke(
+                    egui::Rect::from_center_size(c, egui::Vec2::splat(10.0)),
+                    0.0,
+                    stroke,
+                    egui::StrokeKind::Inside,
+                );
+            }
+            CaptionIcon::Restore => {
+                // Two overlapping squares, the back one hidden behind the bar fill isn't needed
+                // on a flat strip: both outlines show, as in the native restore glyph.
+                for offset in [egui::vec2(-2.0, 2.0), egui::vec2(2.0, -2.0)] {
+                    painter.rect_stroke(
+                        egui::Rect::from_center_size(c + offset, egui::Vec2::splat(8.0)),
+                        0.0,
+                        stroke,
+                        egui::StrokeKind::Inside,
+                    );
+                }
+            }
+            CaptionIcon::Close => {
+                painter.line_segment(
+                    [c + egui::vec2(-5.0, -5.0), c + egui::vec2(5.0, 5.0)],
+                    stroke,
+                );
+                painter.line_segment(
+                    [c + egui::vec2(5.0, -5.0), c + egui::vec2(-5.0, 5.0)],
+                    stroke,
+                );
+            }
+        }
+    }
+    response.on_hover_text(tip)
+}
+
 /// Outlines text fields and other inputs drawn in `ui`, which would otherwise vanish into the
 /// light theme's panels and cards, and gives dark fields a softer fill than near-black.
 pub fn outline_fields(ui: &mut Ui) {
@@ -242,6 +320,68 @@ pub fn segmented<T: PartialEq + Clone>(ui: &mut Ui, value: &mut T, choices: &[(T
     });
 }
 
+/// One icon in an [`icon_choices`] group.
+pub struct IconChoice<'a> {
+    pub image: egui::Image<'a>,
+    /// Tooltip text, normally the command name with its shortcut.
+    pub tip: String,
+    /// Accessible name without the menu's "(&F)" mnemonic.
+    pub name: String,
+    pub selected: bool,
+}
+
+/// Mutually exclusive icon buttons drawn as one joined group, for a toolbar choice such as the
+/// text, column and hex edit modes: an outlined strip holds every choice and the current one is
+/// filled and outlined in the accent colour, so the mode in use is visible at a glance and the
+/// group reads as "pick one of these three" instead of three unrelated buttons. Each choice is
+/// announced as a radio button rather than a toggle. Returns the index of the picked choice.
+pub fn icon_choices(ui: &mut Ui, choices: &[IconChoice<'_>]) -> Option<usize> {
+    let visuals = ui.visuals().clone();
+    let icon = egui::vec2(16.0, 16.0);
+    let size = icon + ui.spacing().button_padding * 2.0;
+    // Rows lay controls out right to left; keep the choices in reading order anyway.
+    let rtl = ui.layout().prefer_right_to_left();
+    let mut picked = None;
+    egui::Frame::new()
+        .fill(visuals.widgets.inactive.weak_bg_fill)
+        .stroke(visuals.widgets.inactive.bg_stroke)
+        .corner_radius(6.0)
+        // A one-pixel vertical margin keeps the strip inside the toolbar row instead of making the
+        // whole toolbar taller than the plain icon buttons next to it.
+        .inner_margin(egui::Margin::symmetric(2, 1))
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = 1.0;
+            ui.horizontal(|ui| {
+                let order: Vec<usize> = if rtl { (0..choices.len()).rev().collect() } else { (0..choices.len()).collect() };
+                for index in order {
+                    let choice = &choices[index];
+                    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+                    // Space / Enter on a focused click-sensing widget counts as a click (egui).
+                    if response.clicked() {
+                        picked = Some(index);
+                    }
+                    response.widget_info(|| WidgetInfo::selected(Role::RadioButton, ui.is_enabled(), choice.selected, &choice.name));
+                    let response = response.on_hover_text(choice.tip.as_str());
+                    if ui.is_rect_visible(rect) {
+                        let radius = 4.0;
+                        if choice.selected {
+                            // A soft accent fill keeps a colourful icon legible; the stroke marks
+                            // the current choice even when the pointer is elsewhere.
+                            let tint = if visuals.dark_mode { 0.45 } else { 0.22 };
+                            ui.painter().rect_filled(rect, radius, ACCENT.gamma_multiply(tint));
+                            ui.painter().rect_stroke(rect, radius, egui::Stroke::new(1.5, ACCENT), egui::StrokeKind::Inside);
+                        } else if response.hovered() {
+                            ui.painter().rect_filled(rect, radius, visuals.widgets.hovered.weak_bg_fill);
+                        }
+                        choice.image.paint_at(ui, egui::Rect::from_center_size(rect.center(), icon));
+                        focus_ring(ui, &response, rect, radius, ACCENT);
+                    }
+                }
+            });
+        });
+    picked
+}
+
 /// A page entry in a settings sidebar.
 pub fn nav_item(ui: &mut Ui, selected: bool, text: &str) -> Response {
     list_row(ui, Role::Tab, selected, text, "")
@@ -275,6 +415,130 @@ pub fn list_row(ui: &mut Ui, role: Role, selected: bool, text: &str, detail: &st
         focus_ring(ui, &response, rect.shrink(4.0), 3.0, color);
     }
     response
+}
+
+/// Height of one flat tab; the strip reserves [`TAB_STRIP_HEIGHT`] including its top padding.
+pub const TAB_HEIGHT: f32 = 28.0;
+
+/// Height of a tab strip: the tab plus the 2 px gap above it.
+pub const TAB_STRIP_HEIGHT: f32 = TAB_HEIGHT + 2.0;
+
+/// Horizontal padding inside a tab, on each side of its label.
+const TAB_PAD: f32 = 12.0;
+const TAB_MIN_WIDTH: f32 = 72.0;
+const TAB_MAX_TEXT: f32 = 220.0;
+const TAB_CLOSE_SIZE: f32 = 16.0;
+const TAB_TOP_RADIUS: u8 = 6;
+
+/// Background of a tab strip. Dark mode unifies it with the panes (the selected tab still reads
+/// as part of the content via its outline and the strip's baseline gap); light mode keeps a
+/// slightly darker strip (derived from the panel fill) so the selected tab stands out.
+pub fn tab_strip_bg(ui: &Ui) -> Color32 {
+    let fill = ui.visuals().panel_fill;
+    if ui.visuals().dark_mode { fill } else { fill.gamma_multiply(0.95) }
+}
+
+/// A flat tab attached to the pane below it, in the style of Windows 11 Explorer / UltraEdit:
+/// rounded top corners only, no bottom border, and the selected tab is filled with the pane's
+/// own background so it merges with the content.
+pub struct FlatTab {
+    pub rect: egui::Rect,
+    /// The clickable body of the tab (its close button is separate).
+    pub body: Response,
+    /// The close button, when `close_name` is given.
+    pub close: Option<Response>,
+}
+
+/// Draws one flat tab. `id_salt` must be unique among sibling tabs; `content_bg` is the fill of
+/// the pane below (the selected tab uses it); `close_name` both enables the close button and
+/// names it for screen readers.
+pub fn flat_tab(
+    ui: &mut Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    label: &str,
+    selected: bool,
+    content_bg: Color32,
+    close_name: Option<&str>,
+) -> FlatTab {
+    let visuals = ui.visuals().clone();
+    let font = TextStyle::Button.resolve(ui.style());
+    let color = if selected { visuals.strong_text_color() } else { visuals.text_color() };
+    let measured = ui.painter().layout_no_wrap(label.to_string(), font.clone(), color);
+    let close_space = if close_name.is_some() { TAB_CLOSE_SIZE + 6.0 } else { 0.0 };
+    let width = (measured.size().x.min(TAB_MAX_TEXT) + TAB_PAD * 2.0 + close_space).max(TAB_MIN_WIDTH);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, TAB_HEIGHT), Sense::hover());
+    let close_rect = close_name.map(|_| {
+        egui::Rect::from_center_size(
+            egui::pos2(rect.right() - TAB_CLOSE_SIZE / 2.0 - 6.0, rect.center().y),
+            egui::vec2(TAB_CLOSE_SIZE, TAB_CLOSE_SIZE),
+        )
+    });
+    let body_rect = close_rect.map_or(rect, |close| egui::Rect::from_min_max(rect.min, egui::pos2(close.left() - 2.0, rect.bottom())));
+    let tab_id = ui.scope_id().with(&id_salt);
+    // click_and_drag：編輯器分頁列用 drag 事件實現拖動排序，一般點擊、雙擊行為不變
+    let body = ui.interact(body_rect, tab_id, Sense::click_and_drag());
+    body.widget_info(|| WidgetInfo::selected(Role::Tab, ui.is_enabled(), selected, label));
+    let close = close_rect.map(|close| {
+        let response = ui.interact(close, tab_id.with("close"), Sense::click());
+        if let Some(name) = close_name {
+            response.widget_info(|| WidgetInfo::labeled(Role::Button, ui.is_enabled(), name));
+        }
+        response
+    });
+
+    let radius = egui::CornerRadius { nw: TAB_TOP_RADIUS, ne: TAB_TOP_RADIUS, sw: 0, se: 0 };
+    let painter = ui.painter();
+    if selected {
+        painter.rect_filled(rect, radius, content_bg);
+        painter.rect_stroke(rect, radius, visuals.widgets.noninteractive.bg_stroke, egui::StrokeKind::Inside);
+        // Erase the bottom edge of the outline, so the tab continues into the pane.
+        painter.rect_filled(egui::Rect::from_min_max(egui::pos2(rect.left(), rect.bottom() - 1.5), rect.max), 0, content_bg);
+    } else if body.hovered() || body.has_focus() {
+        painter.rect_filled(rect, radius, visuals.widgets.hovered.weak_bg_fill);
+    }
+
+    let text_right = close_rect.map_or(rect.right() - TAB_PAD, |close| close.left() - 2.0);
+    let text_width = (text_right - rect.left() - TAB_PAD).max(0.0);
+    let mut job = egui::text::LayoutJob { wrap: egui::text::TextWrapping::truncate_at_width(text_width), ..Default::default() };
+    job.append(label, 0.0, egui::TextFormat::simple(font, color));
+    let galley = ui.painter().layout_job(job);
+    ui.painter().galley(egui::pos2(rect.left() + TAB_PAD, rect.center().y - galley.size().y / 2.0), galley, color);
+
+    if let Some(close) = &close {
+        let color = if close.hovered() {
+            visuals.strong_text_color()
+        } else if selected {
+            color.gamma_multiply(0.7)
+        } else {
+            visuals.weak_text_color()
+        };
+        if close.hovered() {
+            ui.painter().rect_filled(close.rect, 4.0, visuals.widgets.hovered.weak_bg_fill);
+        }
+        ui.painter().text(close.rect.center(), egui::Align2::CENTER_CENTER, "×", egui::FontId::proportional(14.0), color);
+    }
+    FlatTab { rect, body, close }
+}
+
+/// Draws the thin line under a tab strip, leaving a gap under the selected tab so it merges
+/// with the pane. `strip` is the strip's full-width rect; `active` is that tab's rect.
+pub fn tab_strip_baseline(ui: &Ui, strip: egui::Rect, active: Option<egui::Rect>) {
+    let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+    let y = strip.bottom() - 0.5;
+    let painter = ui.painter();
+    match active.map(|active| active.intersect(strip)).filter(|active| active.width() > 0.0) {
+        Some(active) => {
+            if active.left() > strip.left() {
+                painter.hline(strip.left()..=active.left(), y, stroke);
+            }
+            if active.right() < strip.right() {
+                painter.hline(active.right()..=strip.right(), y, stroke);
+            }
+        }
+        None => {
+            painter.hline(strip.x_range(), y, stroke);
+        }
+    }
 }
 
 #[cfg(test)]
