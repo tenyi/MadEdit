@@ -388,6 +388,8 @@ pub struct Settings {    pub auto_check_updates: bool,
     pub search_regex: bool,
     pub search_wrap_around: bool,
     pub search_in_selection: bool,
+    /// 查找／取代浮窗上次的位置（右上角錨點）；拖動結束或關閉時更新
+    pub find_window_pos: Option<(f32, f32)>,
 
     // ── 歷史 ──
     pub recent_files: Vec<PathBuf>,
@@ -493,6 +495,7 @@ impl Default for Settings {
             search_regex: false,
             search_wrap_around: true,
             search_in_selection: false,
+            find_window_pos: None,
 
             recent_files: Vec::new(),
             recent_finds: Vec::new(),

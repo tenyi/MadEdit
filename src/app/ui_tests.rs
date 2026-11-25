@@ -41,6 +41,26 @@ fn text(h: &mut Harness<'static, App>) -> String {
     h.state_mut().doc().editor.lines.join("\n")
 }
 
+/// 標題欄快速查找框的歷史下拉：chevron 用 interact 疊在框內右端，不得推進 RTL 布局的
+/// 游標（曾讓縮放按鈕疊進搜尋框），彈層也在標題欄下方而不蓋住同行控件。
+#[test]
+fn test_quick_search_dropdown_does_not_overlap_the_title_bar() {
+    let mut h = harness();
+    h.state_mut().settings.recent_finds = vec!["alpha".into(), "beta".into()];
+    h.run_steps(2);
+    let field = |h: &Harness<'static, App>| h.query_all_by(|n| n.role() == egui::accesskit::Role::TextInput).next().map(|n| n.rect()).unwrap();
+    let button = |h: &mut Harness<'static, App>, label: &str| h.query_all_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some(label)).next().map(|n| n.rect());
+    let field_rect = field(&h);
+    let zoom = button(&mut h, "縮小字型").unwrap();
+    assert!(!field_rect.intersects(zoom), "搜尋框與縮小按鈕重疊：{field_rect:?} vs {zoom:?}");
+    // 展開彈層：選單項在標題欄下方，且仍不與標題欄上的按鈕重疊
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("查找歷史")).click();
+    h.run_steps(3);
+    let item = button(&mut h, "alpha").unwrap();
+    assert!(item.top() >= zoom.bottom(), "彈層蓋住標題欄按鈕：{item:?} vs {zoom:?}");
+    assert!(!item.intersects(field_rect), "彈層蓋住搜尋框：{item:?} vs {field_rect:?}");
+}
+
 #[test]
 fn test_instance_request_restores_window_without_running_ui() {
     let dir = std::env::temp_dir().join(format!("madedit-hidden-instance-{}", std::process::id()));

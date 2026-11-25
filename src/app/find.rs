@@ -2,7 +2,7 @@
 
 use std::hash::{Hash, Hasher};
 
-use eframe::egui::{self, Key, RichText};
+use eframe::egui::{self, Key, RichText, Role, WidgetInfo};
 use regex::Regex;
 
 use super::commands::{plain_label, C};
@@ -23,7 +23,138 @@ pub struct FindBar {
     pub hex: bool,
     pub focus: bool,
     pub info: Option<String>,
+    /// 搜尋／取代歷史下拉是否展開
+    pub history_open: bool,
+    pub replace_history_open: bool,
+    /// 標題欄快速搜尋框的歷史下拉是否展開
+    pub quick_history_open: bool,
+    /// 記憶位置是否已在本輪彈出時應用過（只應用一次，否則會和拖動互相搶位置）
+    pub pos_applied: bool,
     pub(crate) live: LiveSearch,
+}
+
+/// 歷史下拉的選擇結果
+pub(super) enum HistAction {
+    None,
+    /// 選了某一筆歷史
+    Pick(String),
+    /// 移除某一筆歷史
+    Remove(String),
+    /// 清空全部歷史
+    Clear,
+}
+
+/// 歷史下拉：細線 chevron 畫在搜尋框內右端（Argus 樣式），點開與搜尋框同寬的彈層；
+/// 每列右端 hover 紅色「×」移除單筆，底部「清空」。紅 × 樣式拷貝自收藏列表的移除鈕。
+pub(super) fn history_dropdown(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    field: egui::Rect,
+    open: &mut bool,
+    entries: &[String],
+    tooltip: &str,
+    remove_label: &str,
+    clear_label: &str,
+) -> HistAction {
+    use egui::{Color32, Pos2, Shape, Stroke};
+    let mut action = HistAction::None;
+    // chevron 疊在搜尋框內右端，吃掉這一小塊的點擊。
+    // 用 interact 只註冊互動矩形、不佔版面：ui.put 會推進 RTL 布局的游標，
+    // 讓後續控件疊進搜尋框（標題欄拖動區同款做法）。
+    let chev_rect = egui::Rect::from_center_size(
+        egui::pos2(field.right() - 14.0, field.center().y),
+        egui::vec2(22.0, field.height()),
+    );
+    let resp = ui.interact(chev_rect, ui.scope_id().with(id_salt), egui::Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    let hovered = resp.hovered();
+    let clicked = resp.clicked();
+    // tooltip 在任何狀態（含收起時）都要註冊：clone 註冊同名 widget，後面 Popup 仍借用 resp
+    resp.clone().widget_info(|| WidgetInfo::labeled(Role::Button, true, tooltip));
+    resp.clone().on_hover_text(tooltip);
+    let weak = ui.visuals().widgets.noninteractive.text_color();
+    let strong = ui.visuals().text_color();
+    let stroke = Stroke::new(1.5, if hovered { strong } else { weak });
+    let (cx, cy) = (chev_rect.center().x, chev_rect.center().y);
+    ui.painter().add(Shape::line_segment([Pos2::new(cx - 4.0, cy - 2.0), Pos2::new(cx, cy + 2.0)], stroke));
+    ui.painter().add(Shape::line_segment([Pos2::new(cx, cy + 2.0), Pos2::new(cx + 4.0, cy - 2.0)], stroke));
+    if clicked {
+        *open = !*open;
+    }
+    if !*open {
+        return action;
+    }
+    if entries.is_empty() {
+        *open = false;
+        return action;
+    }
+    let popup = egui::Popup::from_toggle_button_response(&resp)
+        .anchor(field)
+        // Frame::new() 沒有底色會讓彈層透明：以主題的 popup 樣式為底，只收緊 margin
+        .frame(egui::Frame::popup(&ui.ctx().global_style()).inner_margin(egui::Margin::symmetric(4, 5)))
+        .open_bool(open)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+    resp.widget_info(|| WidgetInfo::labeled(Role::Button, true, tooltip));
+    resp.on_hover_text(tooltip);
+    popup.show(|ui| {
+        // 外框（含 margin）與搜尋框同寬、左對齊搜尋框；列的視覺拷貝自收藏列表的 item_row
+        let inner_w = field.width() - 8.0;
+        ui.set_min_width(inner_w);
+        ui.set_max_width(inner_w);
+        let body = egui::TextStyle::Body.resolve(ui.style());
+        const CLOSE_W: f32 = 20.0;
+        for entry in entries {
+            let picked;
+            let mut removed = false;
+            let (rect, response) = ui.allocate_exact_size(egui::vec2(inner_w, 22.0), egui::Sense::click());
+            response.widget_info(|| WidgetInfo::labeled(Role::Button, true, entry));
+            // 指標在整行範圍內即整行 hover：文字與「×」一起亮（× 的熱區疊在行內，不能只看 response.hovered）
+            let row_hovered = ui.rect_contains_pointer(rect);
+            if ui.is_rect_visible(rect) {
+                if row_hovered {
+                    ui.painter().rect_filled(rect, 4.0, ui.visuals().widgets.hovered.weak_bg_fill);
+                }
+                let mut layout = egui::text::LayoutJob {
+                    wrap: egui::text::TextWrapping::truncate_at_width((rect.width() - CLOSE_W - 16.0).max(0.0)),
+                    ..Default::default()
+                };
+                layout.append(entry, 0.0, egui::TextFormat::simple(body.clone(), ui.visuals().text_color()));
+                let galley = ui.painter().layout_job(layout);
+                let gp = egui::pos2(rect.left() + 8.0, rect.center().y - galley.size().y / 2.0);
+                ui.painter().galley(gp, galley, ui.visuals().text_color());
+                if row_hovered {
+                    // 列尾獨立熱區的紅「×」：無按鈕底，只有字符變紅（收藏列表移除鈕同款）
+                    let x_rect = egui::Rect::from_min_size(
+                        egui::pos2(rect.right() - 4.0 - CLOSE_W, rect.top()),
+                        egui::vec2(CLOSE_W, rect.height()),
+                    );
+                    let r2 = ui.interact(x_rect, response.id.with("remove"), egui::Sense::click());
+                    r2.widget_info(|| WidgetInfo::labeled(Role::Button, true, remove_label));
+                    removed = r2.clicked();
+                    r2.clone().on_hover_text(remove_label);
+                    let tint = if r2.hovered() { Color32::from_rgb(232, 17, 35) } else { ui.visuals().weak_text_color() };
+                    ui.painter().text(x_rect.center(), egui::Align2::CENTER_CENTER, "×", egui::FontId::proportional(13.0), tint);
+                }
+            }
+            // 點「×」不算選中該列
+            picked = response.clicked() && !removed;
+            if picked {
+                action = HistAction::Pick(entry.clone());
+            } else if removed {
+                action = HistAction::Remove(entry.clone());
+            }
+        }
+        ui.separator();
+        let clear = ui.add_sized([inner_w, 20.0], egui::Button::selectable(false, RichText::new(clear_label).weak().size(body.size)));
+        if clear.clicked() {
+            action = HistAction::Clear;
+        }
+    });
+    // 選中／移除／清空任何一項都自動收起彈層
+    if !matches!(action, HistAction::None) {
+        *open = false;
+    }
+    action
 }
 
 /// The find bar's live result: the regex and the per-line match counts belong to the pattern
@@ -460,13 +591,15 @@ impl App {
     }
 
     pub fn find_bar(&mut self, ui: &mut egui::Ui) {
-        // Matches are highlighted in the editor only while the bar is open.
+        // Matches are highlighted in the editor only while the window is open.
         if self.find.visible {
             self.update_live_search();
         }
         let highlight = if self.find.visible { self.find.live.regex.clone().map(|re| (re, self.find.live.pattern_id)) } else { None };
         self.tab_mut().view.find_regex = highlight;
         if !self.find.visible {
+            // 關閉後重開時重新應用一次記憶位置
+            self.find.pos_applied = false;
             return;
         }
         let mut close = false;
@@ -490,8 +623,9 @@ impl App {
         let lbl_hex = self.t("find.hex_hint", "十六進位，例如 4D 61 64");
         let lbl_wrap = self.t("find.wrap", "循環");
         let lbl_toggle = self.t("find.replace_toggle", "取代…");
-        let lbl_history = self.t("find.history", "搜尋紀錄");
-        let lbl_close = self.t("find.close", "關閉 (Esc)");
+        let lbl_history = self.t("find.history", "查找歷史");
+        let lbl_hist_remove = self.t("find.history_remove", "移除此紀錄");
+        let lbl_hist_clear = self.t("find.history_clear", "清空搜尋紀錄");
         let lbl_replace = form::bare(self.t("find.replace", "取代：")).to_string();
         let lbl_replace_btn = self.t("find.replace_btn", "取代");
         let lbl_replace_all = self.t("find.replace_all", "全部取代");
@@ -512,106 +646,150 @@ impl App {
             Some((self.tf("find.count_n", "共 {n} 個符合", Some(live.total), None), false))
         };
         let error_detail = live.error.clone();
-        bar_frame(ui).show(ui, |ui| {
-            bar_style(ui);
-            let mut field_x = 0.0;
-            ui.horizontal_wrapped(|ui| {
-                let icon = if self.find.replace { "▾" } else { "▸" };
-                if form::icon_button(ui, egui::Button::new(icon).frame(false), lbl_toggle, lbl_toggle).clicked() {
-                    self.find.replace = !self.find.replace;
-                }
-                let hint = if self.find.hex { lbl_hex_hint.clone() } else { lbl_find.clone() };
-                let field = egui::TextEdit::singleline(&mut self.find.query).desired_width(260.0).prefix(RichText::new("🔍").weak()).hint_text(hint);
-                let resp = ui.add(field);
-                field_x = resp.rect.left() - ui.min_rect().left();
-                if failed {
-                    ui.painter().rect_stroke(resp.rect, 6.0, egui::Stroke::new(1.0, ui.visuals().error_fg_color), egui::StrokeKind::Inside);
-                }
-                if resp.changed() {
-                    self.find.info = None;
-                }
-                if std::mem::take(&mut self.find.focus) {
-                    resp.request_focus();
-                    // 全選以便直接輸入新的搜尋文字
-                    if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp.id) {
-                        let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(self.find.query.chars().count()));
-                        state.cursor.set_char_range(Some(all));
-                        state.store(ui.ctx(), resp.id);
-                    }
-                }
-                if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                    do_next = Some(ui.input(|i| i.modifiers.shift));
-                    resp.request_focus();
-                }
-                if !self.settings.recent_finds.is_empty() {
-                    let combo = egui::ComboBox::from_id_salt("find-history").selected_text("").width(0.0).show_ui(ui, |ui| {
-                        for h in self.settings.recent_finds.clone() {
-                            if ui.selectable_label(false, &h).clicked() {
-                                self.find.query = h;
-                            }
+        // 非模態浮窗：自繪緊湊標題列（拖曳由 egui 的整窗拖動承接），位置由 egui 記憶
+        let ctx = ui.ctx().clone();
+        let screen = ctx.content_rect();
+        let title_str = self.t("find.window_title", "查找和替換").to_string();
+        let mut win = egui::Window::new(title_str.clone())
+            .pivot(egui::Align2::RIGHT_TOP)
+            .resizable(false)
+            .collapsible(false)
+            .title_bar(false)
+            .default_pos(egui::pos2(screen.right() - 16.0, screen.top() + 48.0));
+        // 只在彈出的第一幀回到上次位置；若每幀都強制定位，會覆蓋 egui 的拖動增量而拖不動
+        if !self.find.pos_applied {
+            if let Some((x, y)) = self.settings.find_window_pos {
+                win = win.current_pos(egui::pos2(x, y));
+            }
+            self.find.pos_applied = true;
+        }
+        let inner = win.show(&ctx, |ui| {
+                // 緊湊標題列：小字粗體標題 + 右端 hover 紅色「×」（拷貝收藏列表的移除樣式）。
+                // 介面字型鏈只有單一字重，RichText::strong 對中文無效，改以雙重繪製加粗。
+                let lbl_close = self.t("find.close", "關閉 (Esc)");
+                ui.horizontal(|ui| {
+                    let font = egui::FontId::proportional(12.5);
+                    let color = ui.visuals().text_color();
+                    let galley = ui.painter().layout_no_wrap(title_str.clone(), font, color);
+                    let (trect, _) = ui.allocate_exact_size(galley.size() + egui::vec2(1.0, 0.0), egui::Sense::hover());
+                    let tp = trect.left_top();
+                    ui.painter().galley(tp, galley.clone(), color);
+                    ui.painter().galley(tp + egui::vec2(0.7, 0.0), galley, color);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let (rect, resp) = ui.allocate_exact_size(egui::vec2(18.0, 16.0), egui::Sense::click());
+                        resp.widget_info(|| WidgetInfo::labeled(Role::Button, true, &lbl_close));
+                        let weak = ui.visuals().widgets.noninteractive.text_color();
+                        let tint = if resp.hovered() { egui::Color32::from_rgb(232, 17, 35) } else { weak };
+                        let clicked = resp.clicked();
+                        resp.on_hover_text(lbl_close);
+                        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "×", egui::FontId::proportional(13.0), tint);
+                        if clicked {
+                            close = true;
                         }
                     });
-                    combo.response.on_hover_text(lbl_history);
-                }
-                form::toggle_chip(ui, &mut self.settings.search_match_case, "Aa", lbl_case);
-                form::toggle_chip(ui, &mut self.settings.search_whole_word, "ab", lbl_word);
-                form::toggle_chip(ui, &mut self.settings.search_regex, ".*", lbl_regex);
-                form::toggle_chip(ui, &mut self.find.hex, "0x", lbl_hex);
-                form::toggle_chip(ui, &mut self.settings.search_wrap_around, "⟲", lbl_wrap);
-                if let Some((text, bad)) = &status {
-                    let text = RichText::new(text.as_str());
-                    let label = ui.label(if *bad { text.color(ui.visuals().error_fg_color) } else { text.weak() });
-                    if let Some(detail) = &error_detail {
-                        label.on_hover_text(detail.as_str());
+                });
+                ui.separator();
+                bar_style(ui);
+                let mut field_x = 0.0;
+                ui.horizontal_wrapped(|ui| {
+                    let icon = if self.find.replace { "▾" } else { "▸" };
+                    if form::icon_button(ui, egui::Button::new(icon).frame(false), lbl_toggle, lbl_toggle).clicked() {
+                        self.find.replace = !self.find.replace;
                     }
+                    let hint = if self.find.hex { lbl_hex_hint.clone() } else { lbl_find.clone() };
+                    let field = egui::TextEdit::singleline(&mut self.find.query).desired_width(260.0).prefix(RichText::new("🔍").weak()).hint_text(hint);
+                    let resp = ui.add(field);
+                    field_x = resp.rect.left() - ui.min_rect().left();
+                    if failed {
+                        ui.painter().rect_stroke(resp.rect, 6.0, egui::Stroke::new(1.0, ui.visuals().error_fg_color), egui::StrokeKind::Inside);
+                    }
+                    if resp.changed() {
+                        self.find.info = None;
+                    }
+                    if std::mem::take(&mut self.find.focus) {
+                        resp.request_focus();
+                        // 全選以便直接輸入新的搜尋文字
+                        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp.id) {
+                            let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(self.find.query.chars().count()));
+                            state.cursor.set_char_range(Some(all));
+                            state.store(ui.ctx(), resp.id);
+                        }
+                    }
+                    if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                        do_next = Some(ui.input(|i| i.modifiers.shift));
+                        resp.request_focus();
+                    }
+                    // 歷史下拉：chevron 疊在搜尋框內右端
+                    match history_dropdown(ui, "find-history", resp.rect, &mut self.find.history_open, &self.settings.recent_finds, &lbl_history, &lbl_hist_remove, &lbl_hist_clear) {
+                        HistAction::Pick(h) => self.find.query = h,
+                        HistAction::Remove(h) => self.settings.recent_finds.retain(|x| *x != h),
+                        HistAction::Clear => self.settings.recent_finds.clear(),
+                        HistAction::None => {}
+                    }
+                    form::toggle_chip(ui, &mut self.settings.search_match_case, "Aa", lbl_case);
+                    form::toggle_chip(ui, &mut self.settings.search_whole_word, "ab", lbl_word);
+                    form::toggle_chip(ui, &mut self.settings.search_regex, ".*", lbl_regex);
+                    form::toggle_chip(ui, &mut self.find.hex, "0x", lbl_hex);
+                    form::toggle_chip(ui, &mut self.settings.search_wrap_around, "⟲", lbl_wrap);
+                    if let Some((text, bad)) = &status {
+                        let text = RichText::new(text.as_str());
+                        let label = ui.label(if *bad { text.color(ui.visuals().error_fg_color) } else { text.weak() });
+                        if let Some(detail) = &error_detail {
+                            label.on_hover_text(detail.as_str());
+                        }
+                    }
+                    if form::icon_button(ui, egui::Button::new("↑"), &lbl_prev, &lbl_prev).clicked() {
+                        do_next = Some(true);
+                    }
+                    if form::icon_button(ui, egui::Button::new("↓"), &lbl_next, &lbl_next).clicked() {
+                        do_next = Some(false);
+                    }
+                    // The live counter already says when nothing matches.
+                    if let Some(info) = self.find.info.as_deref().filter(|i| !i.is_empty() && (hex_doc || *i != lbl_not_found)) {
+                        ui.label(RichText::new(info).weak());
+                    }
+                });
+                if self.find.replace {
+                    ui.horizontal_wrapped(|ui| {
+                        // Lined up under the find field.
+                        ui.add_space((field_x - ui.spacing().item_spacing.x).max(0.0));
+                        let resp = ui.add(egui::TextEdit::singleline(&mut self.find.replacement).desired_width(260.0).hint_text(lbl_replace.clone()));
+                        if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && can_replace {
+                            do_replace = true;
+                            resp.request_focus();
+                        }
+                    // 歷史下拉與查找行同一套（chevron 疊在取代框內右端）
+                    match history_dropdown(ui, "replace-history", resp.rect, &mut self.find.replace_history_open, &self.settings.recent_replaces, &lbl_history, &lbl_hist_remove, &lbl_hist_clear) {
+                        HistAction::Pick(h) => self.find.replacement = h,
+                        HistAction::Remove(h) => self.settings.recent_replaces.retain(|x| *x != h),
+                        HistAction::Clear => self.settings.recent_replaces.clear(),
+                        HistAction::None => {}
+                    }
+                        if ui.add_enabled(can_replace, egui::Button::new(lbl_replace_btn)).clicked() {
+                            do_replace = true;
+                        }
+                        if ui.add_enabled(can_replace, egui::Button::new(lbl_replace_all)).clicked() {
+                            do_replace_all = true;
+                        }
+                        form::toggle_chip(ui, &mut self.settings.search_in_selection, lbl_in_sel, lbl_in_sel);
+                    });
                 }
-                if form::icon_button(ui, egui::Button::new("↑"), &lbl_prev, &lbl_prev).clicked() {
-                    do_next = Some(true);
-                }
-                if form::icon_button(ui, egui::Button::new("↓"), &lbl_next, &lbl_next).clicked() {
-                    do_next = Some(false);
-                }
-                // The live counter already says when nothing matches.
-                if let Some(info) = self.find.info.as_deref().filter(|i| !i.is_empty() && (hex_doc || *i != lbl_not_found)) {
-                    ui.label(RichText::new(info).weak());
-                }
-                if form::icon_button(ui, egui::Button::new("×").frame(false), lbl_close, lbl_close).clicked() {
+                // While a dialog is open, Esc belongs to the dialog.
+                if self.dialog.is_none() && ui.input(|i| i.key_pressed(Key::Escape)) {
                     close = true;
                 }
             });
-            if self.find.replace {
-                ui.horizontal_wrapped(|ui| {
-                    // Lined up under the find field.
-                    ui.add_space((field_x - ui.spacing().item_spacing.x).max(0.0));
-                    let resp = ui.add(egui::TextEdit::singleline(&mut self.find.replacement).desired_width(260.0).hint_text(lbl_replace.clone()));
-                    if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && can_replace {
-                        do_replace = true;
-                        resp.request_focus();
-                    }
-                    if !self.settings.recent_replaces.is_empty() {
-                        let combo = egui::ComboBox::from_id_salt("replace-history").selected_text("").width(0.0).show_ui(ui, |ui| {
-                            for h in self.settings.recent_replaces.clone() {
-                                if ui.selectable_label(false, &h).clicked() {
-                                    self.find.replacement = h;
-                                }
-                            }
-                        });
-                        combo.response.on_hover_text(lbl_history);
-                    }
-                    if ui.add_enabled(can_replace, egui::Button::new(lbl_replace_btn)).clicked() {
-                        do_replace = true;
-                    }
-                    if ui.add_enabled(can_replace, egui::Button::new(lbl_replace_all)).clicked() {
-                        do_replace_all = true;
-                    }
-                    form::toggle_chip(ui, &mut self.settings.search_in_selection, lbl_in_sel, lbl_in_sel);
-                });
+        // 拖動結束或關閉時記住位置並寫入設定（拖動中每幀存檔太頻繁）
+        if let Some(r) = inner {
+            let p = r.response.rect.right_top();
+            let pos = (p.x, p.y);
+            if close || r.response.drag_stopped() {
+                if self.settings.find_window_pos != Some(pos) {
+                    self.settings.find_window_pos = Some(pos);
+                    self.save_settings();
+                }
             }
-            // While a dialog is open, Esc belongs to the dialog.
-            if self.dialog.is_none() && ui.input(|i| i.key_pressed(Key::Escape)) {
-                close = true;
-            }
-        });
+        }
         if let Some(back) = do_next {
             self.find_next(back);
         }

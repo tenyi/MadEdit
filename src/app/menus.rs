@@ -171,7 +171,7 @@ impl App {
             zooms.reverse();
             parts.reverse();
         }
-        let quick = self.t("find.quick", "快速搜尋");
+        let quick = self.t("find.quick", "快速查找");
         for part in parts.into_iter() {
             match part {
                 0 => {
@@ -195,6 +195,16 @@ impl App {
                         let back = ui.input(|i| i.modifiers.shift);
                         self.find_next(back);
                         resp.request_focus();
+                    }
+                    // 與查找／取代浮窗同一套歷史下拉（chevron 疊在框內右端）
+                    let tip = self.t("find.history", "查找歷史");
+                    let remove = self.t("find.history_remove", "移除此紀錄");
+                    let clear = self.t("find.history_clear", "清空搜尋紀錄");
+                    match super::find::history_dropdown(ui, "quick-history", resp.rect, &mut self.find.quick_history_open, &self.settings.recent_finds, &tip, &remove, &clear) {
+                        super::find::HistAction::Pick(h) => self.find.query = h,
+                        super::find::HistAction::Remove(h) => self.settings.recent_finds.retain(|x| *x != h),
+                        super::find::HistAction::Clear => self.settings.recent_finds.clear(),
+                        super::find::HistAction::None => {}
                     }
                 }
             }

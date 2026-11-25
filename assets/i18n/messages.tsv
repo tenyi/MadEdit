@@ -235,6 +235,9 @@ st.selecting	Selecting	选取中	選択中	선택 중	Auswahl	Seleccionando	Sél
 st.recording	● Recording	● 录制宏	● 記録中	● 기록 중	● Aufnahme	● Grabando	● Enregistrement	● Registrazione	● Gravando
 st.unsaved	Unsaved	尚未保存	未保存	저장되지 않음	Nicht gespeichert	Sin guardar	Non enregistré	Non salvato	Não salvo
 find.find	Find:	查找：	検索：	찾기:	Suchen:	Buscar:	Rechercher :	Trova:	Localizar:
+find.window_title	Find and Replace	查找和替换	検索と置換	찾기 및 바꾸기	Suchen und Ersetzen	Buscar y reemplazar	Rechercher et remplacer	Trova e sostituisci	Localizar e substituir
+find.history_remove	Remove this entry	移除此条记录	この履歴を削除	이 항목 삭제	Diesen Eintrag entfernen	Eliminar esta entrada	Supprimer cette entrée	Rimuovi questa voce	Remover esta entrada
+find.history_clear	Clear search history	清空搜索记录	履歴をすべて消去	검색 기록 지우기	Suchverlauf leeren	Borrar el historial	Effacer l'historique	Cancella cronologia	Limpar histórico
 find.hex_hint	Hex, e.g. 4D 61 64	十六进制，例如 4D 61 64	16進、例 4D 61 64	16진수, 예: 4D 61 64	Hex, z. B. 4D 61 64	Hexadecimal, p. ej. 4D 61 64	Hexadécimal, p. ex. 4D 61 64	Esadecimale, es. 4D 61 64	Hexadecimal, p. ex. 4D 61 64
 find.prev	◀ Previous	◀ 上一个	◀ 前へ	◀ 이전	◀ Zurück	◀ Anterior	◀ Précédent	◀ Precedente	◀ Anterior
 find.next	Next ▶	下一个 ▶	次へ ▶	다음 ▶	Weiter ▶	Siguiente ▶	Suivant ▶	Successivo ▶	Próxima ▶
@@ -250,14 +253,14 @@ find.replace	Replace:	替换为：	置換：	바꿀 내용:	Ersetzen:	Reemplazar
 find.replace_btn	Replace	替换	置換	바꾸기	Ersetzen	Reemplazar	Remplacer	Sostituisci	Substituir
 find.replace_all	Replace All	全部替换	すべて置換	모두 바꾸기	Alle ersetzen	Reemplazar todo	Tout remplacer	Sostituisci tutto	Substituir tudo
 find.in_selection	In Selection	只在选取范围内	選択範囲内のみ	선택 영역만	Nur in Auswahl	Solo en la selección	Dans la sélection	Solo nella selezione	Só na seleção
-find.quick	Quick find	快速搜索	クイック検索	빠른 검색	Schnellsuche	Búsqueda rápida	Recherche rapide	Ricerca rapida	Localização rápida
+find.quick	Quick find	快速查找	クイック検索	빠른 검색	Schnellsuche	Búsqueda rápida	Recherche rapide	Ricerca rapida	Localização rápida
 find.goto_pos	Go to offset (bytes, 0x allowed):	转到位置（字节，可用 0x 十六进制）：	位置へ移動（バイト、0x 可）：	위치로 이동(바이트, 0x 가능):	Gehe zu Offset (Bytes, 0x erlaubt):	Ir al desplazamiento (bytes, se admite 0x):	Aller au décalage (octets, 0x accepté) :	Vai all'offset (byte, 0x ammesso):	Ir para o deslocamento (bytes, 0x permitido):
 find.goto_line	Go to line (line or line:column):	转到行（行号 或 行:栏）：	行へ移動（行 または 行:列）：	줄로 이동(줄 또는 줄:열):	Gehe zu Zeile (Zeile oder Zeile:Spalte):	Ir a la línea (línea o línea:columna):	Aller à la ligne (ligne ou ligne:colonne) :	Vai alla riga (riga o riga:colonna):	Ir para a linha (linha ou linha:coluna):
 find.go	Go	前往	移動	이동	Gehe	Ir	Aller	Vai	Ir
 find.by_bytes	By byte offset	按字节位置	バイト位置	바이트 위치	Nach Byte-Offset	Por posición en bytes	Par position en octets	Per posizione in byte	Por posição em bytes
 find.not_found	Not found	找不到符合的文字	見つかりません	찾을 수 없습니다	Nicht gefunden	No se encontró	Introuvable	Non trovato	Não encontrado
 find.no_results	No results	无结果	結果なし	결과 없음	Keine Treffer	Sin resultados	Aucun résultat	Nessun risultato	Sem resultados
-find.history	Search history	搜索记录	検索履歴	검색 기록	Suchverlauf	Historial de búsqueda	Historique de recherche	Cronologia ricerche	Histórico de pesquisa
+find.history	Search history	查找历史	検索履歴	검색 기록	Suchverlauf	Historial de búsqueda	Historique de recherche	Cronologia ricerche	Histórico de pesquisa
 find.not_found_q	Not found: {q}	找不到「{q}」	見つかりません：{q}	찾을 수 없음: {q}	Nicht gefunden: {q}	No se encontró: {q}	Introuvable : {q}	Non trovato: {q}	Não encontrado: {q}
 find.wrapped	Continued from the other end	已从另一端继续搜索	端から続けて検索しました	다른 끝에서 계속 검색했습니다	Am anderen Ende fortgesetzt	Continuado desde el otro extremo	Repris depuis l'autre extrémité	Continuato dall'altra estremità	Continuado a partir da outra extremidade
 find.bad_encoding	Current encoding cannot represent the search text	目前编码无法表示搜索文字	現在の文字コードでは検索文字列を表せません	현재 인코딩으로 검색 텍스트를 표현할 수 없습니다	Die Kodierung kann den Suchtext nicht darstellen	La codificación no puede representar el texto	L'encodage ne peut pas représenter le texte	La codifica non può rappresentare il testo	A codificação não pode representar o texto

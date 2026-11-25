@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+- The Find bar becomes a floating, modeless "Find and Replace" window (like UltraEdit): the editor stays usable while it is open, the window drags by its compact title row (or any blank area), closes with the title-row "×" or Escape, and remembers its position across reopenings and restarts. Its search and replace fields share one window (the replacement row unfolds via "Replace…") with all the previous options, live match counts, Enter / Shift+Enter navigation and history. The search and replace history drop down from a thin chevron inside each field (Argus-style): one row per entry with a red "×" at the right end to remove it and "Clear search history" at the bottom, and picking an entry closes the list. The title bar's Quick find box gets the same history dropdown.
+
+### 繁體中文
+
+#### 新增
+- 查找列改為浮動的非模態「查找和替換」視窗（仿 UltraEdit）：開啟時編輯器仍可正常操作，視窗可拖動緊湊標題列（或任意空白處）移動、以標題列右端「×」或 Esc 關閉，並記住位置（關閉後重開與重新啟動皆回到原處）。查找與取代合併在同一視窗（以「取代…」展開取代列），原有的選項、即時符合計數、Enter／Shift+Enter 導航與歷史全部保留。查找與取代欄位的歷史改為欄位內右端細線箭頭下拉（Argus 風格）：每一列右端 hover 紅色「×」移除單筆、底部「清空搜尋紀錄」，點選任一筆自動收起清單。標題欄的「快速查找」框也接入同一套歷史下拉。
+
 ## [0.6.10] - 2026-11-25
 
 ### Added
