@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.6.10] - 2026-11-25
+
 ### Added
 - A dockable File View panel (View > File View): its tabbed left panel has a Favorites tree for grouping files. Right-click the Favorites root to add a group, a folder's files, individual files, the active file or all open files, and to switch between names and full paths; right-click a group to rename or delete it, and double-click it to open every file in the group. Missing files are skipped with a status message. Its Open tab lists every editor tab, including preview tabs, for switching files when the tab bar is crowded. Recently opened files are listed below, and favorites persist in `settings.json` without touching the files on disk.
 - PowerShell scripts (`.ps1`, `.psm1`, `.psd1`) open with bundled syntax highlighting: comments, strings, variables, cmdlets, keywords and here-strings are colored without any external files or network access.
@@ -399,7 +401,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Added
 - Initial project. The Slint version implemented encoding support, a custom-drawn editor, a large-file engine, rectangular selection, find and replace, syntax highlighting, go-to-line, line endings, bookmarks, external change monitoring and the classic UI.
 
-[Unreleased]: https://github.com/tenyi/MadEdit/compare/v0.6.9...HEAD
+[Unreleased]: https://github.com/tenyi/MadEdit/compare/v0.6.10...HEAD
+[0.6.10]: https://github.com/tenyi/MadEdit/compare/v0.6.9...v0.6.10
 [0.6.9]: https://github.com/tenyi/MadEdit/compare/v0.6.8...v0.6.9
 [0.6.8]: https://github.com/tenyi/MadEdit/compare/v0.6.7...v0.6.8
 [0.6.7]: https://github.com/tenyi/MadEdit/compare/v0.6.6...v0.6.7
