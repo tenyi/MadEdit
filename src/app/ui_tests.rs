@@ -4116,7 +4116,7 @@ fn test_output_panel_log_to_file_toggle() {
         h.run_steps(3);
     };
     let log_item = |checked: bool| {
-        let label = if checked { "✔ 輸出到檔案（result.log）" } else { "　 輸出到檔案（result.log）" };
+        let label = if checked { "✔ 輸出到檔案（腳本同名.result）" } else { "　 輸出到檔案（腳本同名.result）" };
         move |n: &egui_kittest::kittest::AccessKitNode<'_>| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some(label)
     };
     // 未勾選 → 點一下開啟
