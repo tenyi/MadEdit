@@ -737,15 +737,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn probe_drives_exist() {
-        let found: Vec<String> = (b'A'..=b'Z')
-            .filter_map(|c| {
-                let root = format!("{}:\\", char::from(c));
-                Path::new(&root).is_dir().then_some(root)
-            })
-            .collect();
-        println!("[probe] drives = {found:?}");
-        assert!(!found.is_empty(), "至少應探測到 C:");
+    fn explorer_lists_existing_platform_roots() {
+        let roots = Explorer::default().roots();
+        assert!(!roots.is_empty());
+        assert!(roots.iter().all(|root| root.is_absolute() && root.is_dir()));
+        #[cfg(not(windows))]
+        assert_eq!(roots, [PathBuf::from("/")]);
     }
 
     #[test]

@@ -3647,7 +3647,14 @@ fn test_title_bar_contents_stay_above_the_toolbar() {
     let mut h = harness();
     h.run_steps(3);
     let toolbar_top = h.get_by_label("復原").rect().top();
-    for name in ["檔案(F)", "檢視(V)", "說明(H)", "關閉", "最小化"] {
+    let controls = [
+        "檔案(F)", "檢視(V)", "說明(H)",
+        #[cfg(windows)]
+        "關閉",
+        #[cfg(windows)]
+        "最小化",
+    ];
+    for name in controls {
         let rect = h.get_by_label(name).rect();
         assert!(
             rect.bottom() < toolbar_top,
