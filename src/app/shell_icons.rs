@@ -5,16 +5,22 @@
 //! - 檔案以「副檔名 + SHGFI_USEFILEATTRIBUTES」查詢，不必檔案真的存在；
 //!   相同副檔名共用同一張貼圖。
 //! - 取 LARGEICON（32px）貼圖、繪製在 16pt 槽位，高 DPI 下依然清晰。
+#[cfg(windows)]
 use std::collections::HashMap;
 
 use egui::TextureHandle;
+#[cfg(windows)]
 use windows::core::PCWSTR;
+#[cfg(windows)]
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, BITMAP, BITMAPINFO,
     BITMAPINFOHEADER, DIB_RGB_COLORS,
 };
+#[cfg(windows)]
 use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_NORMAL;
+#[cfg(windows)]
 use windows::Win32::UI::Shell::{SHGetFileInfoW, SHGFI_FLAGS, SHGFI_ICON, SHGFI_LARGEICON, SHGFI_USEFILEATTRIBUTES, SHFILEINFOW};
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, ICONINFO};
 
 /// 非 Windows 平台的空實作（呼叫端回退到向量圖示）。
