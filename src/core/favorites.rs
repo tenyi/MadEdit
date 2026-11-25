@@ -175,6 +175,7 @@ mod tests {
         std::fs::write(&file, "a").unwrap();
         let mut group = FavoriteGroup::new("工作");
         assert!(group.add(file.clone()));
+        std::fs::create_dir(dir.join("sub")).unwrap();
         let spelled = dir.join("sub").join("..").join("a.txt");
         assert!(!group.add(spelled), "同一個檔案的不同寫法不應重複加入");
         assert_eq!(group.items.len(), 1);

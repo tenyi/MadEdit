@@ -8,22 +8,6 @@ use std::sync::Arc;
 
 use super::i18n::Lang;
 
-/// 內容雜湊（位元組版）：直接把位元組餵給 FxHash 變體，與 `content_hash(&str)` 同族
-fn hash_bytes(bytes: &[u8]) -> u64 {
-    const MUL: u64 = 0x517c_c1b7_2722_0a95;
-    let mut hash: u64 = 0x9e37_79b9_7f4a_7c15;
-    let (chunks, rem) = bytes.as_chunks::<8>();
-    for c in chunks {
-        hash = (hash.rotate_left(5) ^ u64::from_le_bytes(*c)).wrapping_mul(MUL);
-    }
-    if !rem.is_empty() {
-        let mut tail = [0u8; 8];
-        tail[..rem.len()].copy_from_slice(rem);
-        hash = (hash.rotate_left(5) ^ u64::from_le_bytes(tail)).wrapping_mul(MUL);
-    }
-    hash ^ (bytes.len() as u64).wrapping_mul(MUL)
-}
-
 /// 預覽面板回傳的動作
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SvgAction {
@@ -38,8 +22,7 @@ pub struct SvgPreview {
     /// 停靠位置；與 Markdown 預覽共用同一組 Placement
     pub placement: super::mdpreview::Placement,
     rendered: Option<Rendered>,
-    /// 內容雜湊與文件版本；兩者都沒變就沿用上次的點陣化
-    hash: u64,
+    /// The document version rendered for this tab.
     version: u64,
     dark: bool,
     /// 相對於適配大小的縮放（1.0 = 剛好填滿面板）
@@ -49,20 +32,16 @@ pub struct SvgPreview {
     /// 本幀面板範圍（App 判斷 Ctrl+滾輪是否交給預覽）
     pub rect: Rect,
     error: Option<String>,
-    /// resvg 選項：把系統字型目錄載入 fontdb，`<text>` 才能以 monospace 等字族顯示
+    /// Shares the font selected for diagram text.
     options: resvg::usvg::Options<'static>,
 }
 
-impl Default for SvgPreview {
-    fn default() -> Self {
-        let mut options = resvg::usvg::Options::default();
-        // 空的 fontdb 一個字都畫不出來：載入系統字型目錄（Windows/macOS/Linux 各自的路徑），
-        // 讓 SVG 裡的 monospace／sans-serif／serif 等通用字族與具名字型都能匹配。
-        options.fontdb_mut().load_system_fonts();
+impl SvgPreview {
+    pub fn new(font: Option<(String, fontique::Blob<u8>)>) -> Self {
+        let options = super::mdpreview::svg_options(font);
         Self {
             placement: super::mdpreview::Placement::Tab,
             rendered: None,
-            hash: 0,
             version: 0,
             dark: false,
             zoom: 1.0,
@@ -72,9 +51,7 @@ impl Default for SvgPreview {
             options,
         }
     }
-}
 
-impl SvgPreview {
     pub fn docked(&self) -> bool {
         self.placement != super::mdpreview::Placement::Tab
     }
@@ -86,21 +63,17 @@ impl SvgPreview {
         }
     }
 
-    /// 內容或主題變更時重新點陣化；相同內容沿用上次結果。
-    /// 版本只在同一份文件的編輯之間比較，跨版本重算以 內容雜湊 擋掉無效的重建。
-    pub fn refresh(&mut self, ctx: &egui::Context, bytes: &[u8], version: u64, dark: bool) {
-        let hash = hash_bytes(bytes);
-        if self.rendered.is_some() && self.hash == hash && self.dark == dark {
+    pub fn refresh(&mut self, ctx: &egui::Context, text: impl FnOnce() -> String, version: u64, dark: bool) {
+        if self.rendered.is_some() && self.version == version && self.dark == dark {
             return;
         }
-        self.hash = hash;
         self.version = version;
         self.dark = dark;
         self.error = None;
         // 點陣化尺寸不得超過 GPU 紋理上限（多數裝置 2048/8192）：取 SVG 寬高比，
         // 長邊貼著上限縮放。之後的滾輪縮放只是顯示大小，不重渲染。
         let max_side = ctx.input(|i| i.max_texture_side).min(4096) as f32;
-        let rendered = resvg::usvg::Tree::from_data(bytes, &self.options)
+        let rendered = resvg::usvg::Tree::from_data(text().as_bytes(), &self.options)
             .map_err(|e| format!("{e}"))
             .and_then(|svg| {
                 let size = svg.size();
@@ -130,8 +103,13 @@ impl SvgPreview {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(title).strong());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    for (label, zoom) in [("1:1", 0.0_f32), ("＋", 0.2), ("－", -0.2)] {
-                        if ui.button(label).clicked() {
+                    for (label, zoom, key, zh) in [
+                        ("1:1", 0.0_f32, "md.zoom_reset", "還原 100%"),
+                        ("＋", 0.2, "md.zoom_in", "放大（Ctrl+滾輪）"),
+                        ("－", -0.2, "md.zoom_out", "縮小（Ctrl+滾輪）"),
+                    ] {
+                        let name = super::i18n::translate(lang, key, zh);
+                        if super::form::icon_button(ui, egui::Button::new(label), name, name).clicked() {
                             self.zoom = if zoom == 0.0 { 1.0 } else { (self.zoom + zoom).clamp(0.1, 8.0) };
                         }
                     }
@@ -227,22 +205,20 @@ mod tests {
     #[test]
     fn test_refresh_skips_unchanged_content() {
         let ctx = egui::Context::default();
-        let mut preview = SvgPreview::default();
-        preview.refresh(&ctx, GOOD.as_bytes(), 1, false);
+        let mut preview = SvgPreview::new(None);
+        preview.refresh(&ctx, || GOOD.into(), 1, false);
         let first = preview.rendered.clone();
-        preview.refresh(&ctx, GOOD.as_bytes(), 1, false);
+        preview.refresh(&ctx, || panic!("unchanged document was read"), 1, false);
         assert!(preview.rendered.is_some());
         assert!(preview.error.is_none());
         // 相同內容：rendered 沿用（still Some），不會變成 None
         assert_eq!(preview.rendered, first);
-        preview.refresh(&ctx, BAD.as_bytes(), 2, false);
+        preview.refresh(&ctx, || BAD.into(), 2, false);
         assert!(preview.error.is_some(), "changed content re-renders and reports the error");
     }
 
     #[test]
-    fn test_default_options_have_system_fonts() {
-        // `<text>` 能顯示的前提：fontdb 內有字型（load_system_fonts 在 Default 裡完成）
-        let preview = SvgPreview::default();
-        assert!(preview.options.fontdb.len() > 0, "system fonts must be loaded");
+    fn preview_without_a_fallback_font_does_not_scan_the_system() {
+        assert!(SvgPreview::new(None).options.fontdb.is_empty());
     }
 }

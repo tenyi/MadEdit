@@ -20,6 +20,7 @@ pub fn icon_button(ui: &mut Ui, button: egui::Button<'_>, tip: &str, name: &str)
 }
 
 /// The glyph of a Windows caption button (title-bar minimize / maximize / close).
+#[cfg(windows)]
 #[derive(Clone, Copy, PartialEq)]
 pub enum CaptionIcon {
     Minimize,
@@ -32,6 +33,7 @@ pub enum CaptionIcon {
 /// frame of its own (the previous `Button`-based ones looked like boxed chips against the bar).
 /// Hovering paints the whole tile — Close turns system red with a white glyph, like the native
 /// title bar. `name` is the accessible label; `tip` the tooltip.
+#[cfg(windows)]
 pub fn caption_button(ui: &mut Ui, icon: CaptionIcon, tip: &str, name: &str) -> Response {
     // Tile fills the whole bar height, so the three buttons read as one caption strip.
     let height = ui.available_height().max(ui.spacing().interact_size.y);

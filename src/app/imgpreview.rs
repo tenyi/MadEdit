@@ -103,8 +103,13 @@ impl ImagePreview {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(title).strong());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    for (label, zoom) in [("1:1", 0.0_f32), ("＋", 0.2), ("－", -0.2)] {
-                        if ui.button(label).clicked() {
+                    for (label, zoom, key, zh) in [
+                        ("1:1", 0.0_f32, "md.zoom_reset", "還原 100%"),
+                        ("＋", 0.2, "md.zoom_in", "放大（Ctrl+滾輪）"),
+                        ("－", -0.2, "md.zoom_out", "縮小（Ctrl+滾輪）"),
+                    ] {
+                        let name = super::i18n::translate(lang, key, zh);
+                        if super::form::icon_button(ui, egui::Button::new(label), name, name).clicked() {
                             self.zoom = if zoom == 0.0 { 1.0 } else { (self.zoom + zoom).clamp(0.1, 8.0) };
                         }
                     }

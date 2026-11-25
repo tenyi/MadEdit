@@ -6,8 +6,8 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{channel, Receiver};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Instant;
@@ -21,8 +21,51 @@ use crate::core::encoding;
 
 /// Runner 訊息：一行輸出，或子程序結束
 enum Msg {
-    Line(String),
+    Output { text: String, starts_line: bool, ends_line: bool },
+    InputFailed(String),
     Done(Result<i32, String>),
+}
+
+// Keep both memory use and delivery latency bounded for output without newlines.
+// A decoder belongs to one logical line so a chunk boundary may split a character.
+fn forward_output(pipe: impl Read, tx: SyncSender<Msg>) {
+    const CHUNK: u64 = 16 * 1024;
+    let mut reader = BufReader::new(pipe);
+    let mut bytes = Vec::with_capacity(CHUNK as usize);
+    let mut decoder = None;
+    loop {
+        bytes.clear();
+        let Ok(n) = Read::by_ref(&mut reader).take(CHUNK).read_until(b'\n', &mut bytes) else { break };
+        if n == 0 && decoder.is_none() {
+            break;
+        }
+        let ends_line = bytes.ends_with(b"\n") || n < CHUNK as usize;
+        let starts_line = decoder.is_none();
+        let decoder_ref = decoder.get_or_insert_with(|| {
+            let encoding = match std::str::from_utf8(&bytes) {
+                Err(err) if err.error_len().is_some() => encoding_rs::GBK,
+                _ => encoding_rs::UTF_8,
+            };
+            encoding.new_decoder_without_bom_handling()
+        });
+        let mut text = String::with_capacity(decoder_ref.max_utf8_buffer_length(bytes.len()).unwrap());
+        let (_, consumed, _) = decoder_ref.decode_to_string(&bytes, &mut text, ends_line);
+        debug_assert_eq!(consumed, n);
+        if ends_line {
+            if text.ends_with('\n') {
+                text.pop();
+                if text.ends_with('\r') {
+                    text.pop();
+                }
+            }
+            decoder = None;
+        }
+        if !(starts_line && ends_line && text.is_empty())
+            && tx.send(Msg::Output { text, starts_line, ends_line }).is_err()
+        {
+            break;
+        }
+    }
 }
 
 /// 面板保留的輸出行數上限。面板每次內容變動都要重新排版整段文字，行數無限成長會讓
@@ -65,8 +108,8 @@ pub struct ScriptRunner {
     pid: Option<u32>,
     /// 等待子程序結束的執行緒（單位型 JoinHandle）
     worker: Option<JoinHandle<()>>,
-    /// 子程序 stdin：面板輸入行透過它把一行送進子程序（內層 None 表示已關閉）
-    stdin: Option<Arc<Mutex<Option<ChildStdin>>>>,
+    /// A bounded queue keeps pipe writes off the UI thread.
+    stdin: Option<SyncSender<String>>,
     /// 輸入行的內容（運行中顯示在面板底部的提示符輸入框）
     pub(crate) input: String,
     /// 程序剛啟動：面板下一次畫出輸入框時向它要一次焦點（只搶一次，不打斷編輯）
@@ -74,7 +117,7 @@ pub struct ScriptRunner {
     /// 跟隨捲動游標：已經「跟到底」過的輸出行數；有新行到達時面板再捲一次到底
     pub(crate) follow_seen: usize,
     /// 選中片段的臨時檔案，運行結束後刪除
-    temp_file: Option<PathBuf>,
+    temp_file: Option<tempfile::TempPath>,
     /// 使用者按下停止
     pub stopped: bool,
     /// 最近一次有效的選取範圍（字元索引），供右鍵「複製」使用；
@@ -115,18 +158,24 @@ impl Default for ScriptRunner {
 impl ScriptRunner {
     /// 新增一行輸出（同步維護可選取文字框用的全文）
     pub(crate) fn push_line(&mut self, line: String) {
-        // 記錄檔先寫原始行（不受面板截斷影響，無大小限制）
-        if self.log_enabled
-            && let Some(f) = &mut self.log_file
-        {
-            let _ = f.write_all(line.as_bytes());
-            let _ = f.write_all(b"\n");
+        self.push_output(line, true, true);
+    }
+
+    fn push_output(&mut self, text: String, starts_line: bool, ends_line: bool) {
+        if let Some(log) = &mut self.log_file {
+            let _ = log.write_all(text.as_bytes());
+            if ends_line {
+                let _ = log.write_all(b"\n");
+            }
         }
-        self.lines.push(line.clone());
-        if !self.text.is_empty() {
-            self.text.push('\n');
+        if starts_line || self.lines.is_empty() {
+            if !self.lines.is_empty() {
+                self.text.push('\n');
+            }
+            self.lines.push(String::new());
         }
-        self.text.push_str(&line);
+        self.text.push_str(&text);
+        self.lines.last_mut().unwrap().push_str(&text);
         self.trim_output();
     }
 
@@ -295,6 +344,9 @@ impl ScriptRunner {
 
     /// 啟動子程序；stdout 與 stderr 各由一條執行緒逐行轉發
     pub fn start_process(&mut self, program: &str, args: &[String], cwd: Option<&Path>) -> Result<(), String> {
+        if self.running {
+            return Err("script already running".into());
+        }
         let mut command = Command::new(program);
         command
             .args(args)
@@ -315,69 +367,50 @@ impl ScriptRunner {
         let pid = child.id();
         let stdout = child.stdout.take().expect("stdout piped");
         let stderr = child.stderr.take().expect("stderr piped");
-        // stdin 交給面板輸入行：包一層 Option 讓結束/停止時能單獨關閉（子程序收到 EOF）
-        let stdin = Arc::new(Mutex::new(Some(child.stdin.take().expect("stdin piped"))));
+        let mut stdin = child.stdin.take().expect("stdin piped");
+        let (tx, rx) = sync_channel::<Msg>(32);
+        let input_errors = tx.clone();
+        let (input_tx, input_rx) = sync_channel::<String>(4);
+        std::thread::spawn(move || {
+            for line in input_rx {
+                if let Err(err) = stdin.write_all(line.as_bytes()).and_then(|()| stdin.write_all(b"\r\n")) {
+                    let _ = input_errors.send(Msg::InputFailed(err.to_string()));
+                    break;
+                }
+            }
+        });
         let child = Arc::new(Mutex::new(child));
-        let (tx, rx) = channel::<Msg>();
+        let mut pipe_workers = Vec::new();
 
         // stdout 與 stderr 型別不同：分別包裝成統一的 Read 再交給同一條讀取邏輯
         let readers: Vec<Box<dyn Read + Send>> = vec![Box::new(stdout), Box::new(stderr)];
         for pipe in readers {
             let tx = tx.clone();
-            // 輸出執行緒不保留 JoinHandle：channel 斷線或程序結束後自行退出
-            std::thread::spawn(move || {
-                let mut reader = BufReader::new(pipe);
-                let mut buf = Vec::new();
-                loop {
-                    buf.clear();
-                    match reader.read_until(b'\n', &mut buf) {
-                        Ok(0) => break,
-                        Ok(_) => {
-                            if buf.last() == Some(&b'\n') {
-                                buf.pop();
-                                if buf.last() == Some(&b'\r') {
-                                    buf.pop();
-                                }
-                            }
-                            if buf.is_empty() {
-                                continue;
-                            }
-                            let line = match std::str::from_utf8(&buf) {
-                                Ok(text) => text.to_string(),
-                                Err(_) => {
-                                    let (decoded, _, _) = encoding_rs::GBK.decode(&buf);
-                                    decoded.into_owned()
-                                }
-                            };
-                            if tx.send(Msg::Line(line)).is_err() {
-                                break;
-                            }
-                        }
-                        Err(_) => break,
-                    }
-                }
-            });
+            pipe_workers.push(std::thread::spawn(move || forward_output(pipe, tx)));
         }
+        let temp_file = self.temp_file.take();
         self.worker = Some({
             let child = Arc::clone(&child);
             std::thread::spawn(move || {
                 // 短鎖輪詢 try_wait：絕不持鎖阻塞，否則 UI 執行緒 stop() 會死鎖
                 let code = loop {
-                    let polled = child.lock().ok().and_then(|mut c| c.try_wait().ok()).flatten();
-                    match polled.map(|status| status.code().unwrap_or(-1)) {
-                        Some(code) => break Ok(code),
-                        None => std::thread::sleep(std::time::Duration::from_millis(100)),
+                    let polled = child.lock().expect("runner process lock").try_wait();
+                    match polled {
+                        Ok(Some(status)) => break Ok(status.code().unwrap_or(-1)),
+                        Ok(None) => std::thread::sleep(std::time::Duration::from_millis(25)),
+                        Err(err) => break Err(err.to_string()),
                     }
                 };
-                let _ = tx.send(Msg::Done(match code {
-                    Ok(code) => Ok(code),
-                    Err(e) => Err(e),
-                }));
+                for reader in pipe_workers {
+                    let _ = reader.join();
+                }
+                drop(temp_file);
+                let _ = tx.send(Msg::Done(code));
             })
         });
         self.child = Some(child);
         self.pid = Some(pid);
-        self.stdin = Some(Arc::clone(&stdin));
+        self.stdin = Some(input_tx);
         self.input.clear();
         self.focus_input = true;
         self.rx = Some(rx);
@@ -390,13 +423,15 @@ impl ScriptRunner {
     }
 
     /// 收取子程序輸出與結束事件；背景執行緒活著時安排重繪
-    pub fn poll(&mut self, ctx: &egui::Context) {
+    pub fn poll(&mut self, ctx: &egui::Context) -> Option<String> {
+        let mut input_error = None;
         // 先取出接收端，才能在同一輪迴圈裡同時收訊息與改動自身
-        let Some(rx) = self.rx.take() else { return };
+        let rx = self.rx.take()?;
         let mut keep_rx = true;
-        loop {
+        for _ in 0..64 {
             match rx.try_recv() {
-                Ok(Msg::Line(line)) => self.push_line(line),
+                Ok(Msg::Output { text, starts_line, ends_line }) => self.push_output(text, starts_line, ends_line),
+                Ok(Msg::InputFailed(err)) => input_error = Some(err),
                 Ok(Msg::Done(result)) => {
                     self.running = false;
                     // 凍結耗時：結束後面板不再繼續計時
@@ -408,9 +443,7 @@ impl ScriptRunner {
                             Err(e)
                         }
                     });
-                    if let Some(tmp) = self.temp_file.take() {
-                        let _ = std::fs::remove_file(tmp);
-                    }
+
                     if let Some(worker) = self.worker.take() {
                         let _ = worker.join();
                     }
@@ -424,10 +457,7 @@ impl ScriptRunner {
                     keep_rx = false;
                     break;
                 }
-                Err(std::sync::mpsc::TryRecvError::Empty) => {
-                    ctx.request_repaint_after(std::time::Duration::from_millis(100));
-                    break;
-                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     self.running = false;
                     keep_rx = false;
@@ -436,32 +466,20 @@ impl ScriptRunner {
             }
         }
         if keep_rx {
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
             self.rx = Some(rx);
         }
+        input_error
     }
 
     /// 把一行輸入寫進子程序 stdin（面板輸入行按 Enter 送出）。
     /// 同時以「> 行」回顯到輸出與記錄檔，方便對照腳本停在什麼提示上。
     /// 程序已結束或管道寫入失敗時回傳錯誤，由呼叫端提示使用者。
     pub fn send_line(&mut self, line: &str) -> Result<(), String> {
+        self.stdin.as_ref().ok_or("process exited")?
+            .try_send(line.to_owned()).map_err(|err| err.to_string())?;
         self.push_line(format!("> {line}"));
-        let sent = self
-            .stdin
-            .as_ref()
-            .and_then(|stdin| stdin.lock().ok())
-            .and_then(|mut guard| {
-                guard.as_mut().map(|stdin| {
-                    // Windows 主控程式慣用 CRLF；兩種行尾管道都能接受，用 CRLF 更穩
-                    stdin.write_all(line.as_bytes()).is_ok()
-                        && stdin.write_all(b"\r\n").is_ok()
-                        && stdin.flush().is_ok()
-                })
-            });
-        if sent == Some(true) {
-            Ok(())
-        } else {
-            Err("process exited".into())
-        }
+        Ok(())
     }
 }
 
@@ -476,10 +494,11 @@ impl Drop for ScriptRunner {
 
 /// 把選取片段寫入暫存檔（保留原副檔名，直譯器才知道語言）。
 /// 內容以呼叫端提供的位元組寫入，讓暫存檔沿用原檔編碼（例如 GBK）。
-pub fn write_selection_temp(name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
-    let path = std::env::temp_dir().join(format!("madedit_run_{name}"));
-    std::fs::write(&path, bytes)?;
-    Ok(path)
+pub fn write_selection_temp(name: &str, bytes: &[u8]) -> std::io::Result<tempfile::TempPath> {
+    let suffix = Path::new(name).extension().and_then(|ext| ext.to_str()).unwrap_or_default();
+    let mut file = tempfile::Builder::new().prefix("madedit_run_").suffix(&format!(".{suffix}")).tempfile()?;
+    file.write_all(bytes)?;
+    Ok(file.into_temp_path())
 }
 
 /// 依副檔名選擇直譯器。`.nut` 優先使用 MadEdit.exe 同目錄的 nut.exe（Squirrel 主控台），
@@ -509,7 +528,8 @@ impl App {
     /// 工具 → 運行腳本（F5）：有選取時只運行選中片段，否則運行整個檔案
     pub fn run_script(&mut self) {
         if self.runner.running {
-            self.runner.stop();
+            self.runner.show = true;
+            return;
         }
         // `*.ztrtoml`：ztr 壓縮配置檔，直接在所在目錄執行 `ztr --ztrtoml <檔名>`。
         if self.run_ztr_config() {
@@ -556,8 +576,9 @@ impl App {
                         return;
                     }
                 };
-                self.runner.temp_file = Some(tmp.clone());
-                tmp
+                let path = tmp.to_path_buf();
+                self.runner.temp_file = Some(tmp);
+                path
             }
             None => {
                 let Some(path) = self.doc().path.clone() else {
@@ -575,10 +596,11 @@ impl App {
         };
         // cmd 等外部程式不認得 `\\?\` verbatim 路徑（cd /d "%~dp0" 會失敗），先清掉前綴
         let file = crate::core::favorites::clean_path(file);
-        // 記錄檔跟著腳本走：所在目錄／腳本主名.result（選取片段未有檔案時用臨時檔位置）
+        // 記錄檔跟著腳本走：所在目錄／腳本檔名.result（選取片段未有檔案時用臨時檔位置）
         self.runner.script_path = self.doc().path.clone().or_else(|| Some(file.clone()));
         args.push(file.display().to_string());
-        let cwd = file.parent().map(|p| p.to_path_buf());
+        let cwd = self.doc().path.clone().map(crate::core::favorites::clean_path)
+            .and_then(|source| source.parent().map(Path::to_owned));
         self.launch_runner(program, args, cwd.as_deref());
     }
 
@@ -636,9 +658,7 @@ impl App {
         }
         if let Err(e) = self.runner.start_process(&program, &args, cwd) {
             // 啟動失敗時不會有 Done 事件，立即清掉暫存檔
-            if let Some(tmp) = self.runner.temp_file.take() {
-                let _ = std::fs::remove_file(tmp);
-            }
+            self.runner.temp_file = None;
             self.runner.exit = Some(Err(e.clone()));
             self.runner.push_line(e);
         }
@@ -854,6 +874,7 @@ impl App {
                     let line = std::mem::take(&mut self.runner.input);
                     if let Err(e) = self.runner.send_line(&line) {
                         let hint = format!("{} {e}", self.t("run.input_fail", "無法傳送到程序（可能已結束）："));
+                        self.runner.input = line;
                         self.set_status(hint);
                     }
                     resp.request_focus();
@@ -957,6 +978,9 @@ mod tests {
     fn test_selection_temp_file_keeps_content_and_extension() {
         let bytes = "print(\"hi\");\n".as_bytes();
         let tmp = write_selection_temp("madedit_test_selection.nut", bytes).expect("write temp");
+        let other = write_selection_temp("madedit_test_selection.nut", b"second").unwrap();
+        assert_ne!(tmp.to_path_buf(), other.to_path_buf());
+        drop(other);
         assert_eq!(tmp.extension().and_then(|e| e.to_str()), Some("nut"));
         assert_eq!(std::fs::read(&tmp).unwrap(), bytes);
         let _ = std::fs::remove_file(tmp);
@@ -990,6 +1014,24 @@ mod tests {
         assert_eq!(selected_or_all("abc", Some((0, 99))), "abc");
         // 字元索引而非位元組索引
         assert_eq!(selected_or_all("中文abc", Some((1, 3))), "文a");
+    }
+
+    #[test]
+    fn long_output_preserves_split_utf8_in_the_panel_and_log() {
+        let text = format!("{}中文{}", "x".repeat(16383), "z".repeat(17000));
+        let (tx, rx) = sync_channel(8);
+        forward_output(text.as_bytes(), tx);
+        let mut runner = ScriptRunner::default();
+        let log = tempfile::NamedTempFile::new().unwrap();
+        runner.log_path = Some(log.path().to_owned());
+        runner.set_log_enabled(true).unwrap();
+        for msg in rx {
+            if let Msg::Output { text, starts_line, ends_line } = msg {
+                runner.push_output(text, starts_line, ends_line);
+            }
+        }
+        assert_eq!(runner.lines, [text.clone()]);
+        assert_eq!(std::fs::read_to_string(log.path()).unwrap(), format!("{text}\n"));
     }
 
     /// stdin 互動：send_line 寫進子程序並以「> 行」回顯；程序結束後 stdin 關閉、輸入行清空
@@ -1114,8 +1156,8 @@ mod tests {
         runner.script_path = Some(PathBuf::from(r"D:\work\demo\a.py"));
         assert_eq!(runner.resolved_log_path(), Some(PathBuf::from(r"D:\work\demo\a.py.result")));
         // ztr 配置等多段副檔名：整個檔名後直接追加
-        runner.script_path = Some(PathBuf::from("/opt/cfg/run.ztr.toml"));
-        assert_eq!(runner.resolved_log_path(), Some(PathBuf::from("/opt/cfg/run.ztr.toml.result")));
+        runner.script_path = Some(PathBuf::from("/opt/cfg/run.ztrtoml"));
+        assert_eq!(runner.resolved_log_path(), Some(PathBuf::from("/opt/cfg/run.ztrtoml.result")));
         // 沒有腳本路徑：退回 MadEdit.exe 同目錄
         let runner = ScriptRunner::default();
         let default = runner.resolved_log_path().expect("a default path");

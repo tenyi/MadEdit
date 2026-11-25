@@ -1,3 +1,17 @@
+# Images in Markdown preview
+
+The in-app preview displays local images. Opening a Markdown document never requests an HTTP or HTTPS image, including badges and HTML image tags. A relative path resolves against the saved document's directory. Save an untitled document before using relative image paths.
+
+The local SVG loader rasterizes large images in the background and caps their dimensions at the GPU texture limit. Mermaid and math use the diagram loader. Keep HTTP byte loaders and network fetching disabled in the Cargo features for the preview.
+
+<!-- ═════════════════════════════════════════════════════════════════════════
+保留的技術實現文檔（未啟用）：遠端／HTTP 圖片的完整移植指南。
+註釋原因：上游評審決定 Markdown 預覽保持完全離線（不發 HTTP 請求），不給開源
+使用者增加網路隱私上的思想負擔；但技術實現完整可用，指南內容保留於此不刪除。
+對應程式碼：src/app/mdpreview.rs 檔尾的註釋程式碼（RemoteSvgLoader）。
+需要啟用時取消該處與 Cargo.toml 的相關註釋，再參考本指南。
+════════════════════════════════════════════════════════════════════════ --><!--
+
 # egui Markdown 遠端／本地圖片渲染：實現思路與踩坑指南
 
 > 本文件記錄 MadEdit 為 Markdown 預覽加入「遠端圖片（含 SVG 徽章）與 HTML `<img>` 標籤渲染」的
@@ -162,3 +176,5 @@ let viewer = CommonMarkViewer::new()
 - README 內 `<img>` 本地相對圖片按 `height` 屬性分層顯示，與 VSCode 觀感一致；
 - GIF 自動播放動畫；
 - 大 SVG 不再凍結（首幀從 400 秒降到 3 秒內，之後由快取秒開）、不再崩潰。
+
+-->

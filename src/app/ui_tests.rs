@@ -2427,10 +2427,10 @@ fn test_file_view_list_remove_buttons_clear_favorites_and_recent() {
         s.show_file_view = true;
         s.favorites_recent_expanded = true;
         let mut group = FavoriteGroup::new("常用");
-        group.add(std::path::PathBuf::from("G:\\tmp\\fav-a.txt"));
+        group.add(std::env::temp_dir().join("fav-a.txt"));
         s.favorites.push(group);
         s.favorites[0].expanded = true;
-        s.recent_files.push(std::path::PathBuf::from("G:\\tmp\\recent-a.txt"));
+        s.recent_files.push(std::env::temp_dir().join("recent-a.txt"));
     }
     h.run_steps(3);
     // 收藏列懸停 → 列尾 × 出現 → 點擊只移除收藏條目
@@ -2664,9 +2664,8 @@ fn test_double_clicking_open_list_row_closes_document() {
 fn test_explorer_tree_expands_and_filter_shows_matching_files() {
     use egui::accesskit::Role;
     use egui_kittest::kittest::NodeT;
-    // fixture 放在 target/ 下：磁碟鏈短、同層目錄少，整棵樹只有幾十行（雙擊計時才不會被渲染拖垮）。
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(r"target\ex-fixture");
-    let _ = std::fs::remove_dir_all(&dir);
+    let fixture = tempfile::tempdir().unwrap();
+    let dir = fixture.path().to_path_buf();
     std::fs::create_dir_all(dir.join("sub")).unwrap();
     std::fs::write(dir.join("a.txt"), "a").unwrap();
     std::fs::write(dir.join("b.rs"), "b").unwrap();
@@ -2680,21 +2679,9 @@ fn test_explorer_tree_expands_and_filter_shows_matching_files() {
         .build_eframe(|cc| App::new(cc, Vec::new(), None));
     h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
     h.state_mut().settings.show_file_view = true;
-    // 注入整條展開鏈（target/ 下各層目錄不多，樹很小）並直接設為選中。
-    {
-        let root = std::path::PathBuf::from(format!("{}{}", dir.components().next().unwrap().as_os_str().to_string_lossy(), std::path::MAIN_SEPARATOR));
-        let mut chain = root.clone();
-        let mut expanded = vec![root];
-        for c in dir.components().filter_map(|c| match c {
-            std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
-            _ => None,
-        }) {
-            chain.push(c);
-            expanded.push(chain.clone());
-        }
-        h.state_mut().explorer.expanded = expanded.into_iter().collect();
-        h.state_mut().explorer.selected = Some(dir.clone());
-    }
+    h.state_mut().explorer.set_test_root(dir.clone());
+    h.state_mut().explorer.expanded.insert(dir.clone());
+    h.state_mut().explorer.selected = Some(dir.clone());
     h.run_steps(3);
     h.get_by(|n| n.role() == Role::Tab && n.label().as_deref() == Some("資源管理器")).click();
     h.run_steps(3);
@@ -2702,6 +2689,7 @@ fn test_explorer_tree_expands_and_filter_shows_matching_files() {
     let button_labels = |h: &Harness<'static, App>| -> Vec<String> {
         h.get_all_by_role(Role::Button).map(|n| n.accesskit_node().label().unwrap_or_default()).collect()
     };
+    h.get_by_label("執行篩選");
     assert!(button_labels(&h).iter().any(|l| l == "sub"), "子資料夾 sub 應顯示");
     assert!(button_labels(&h).iter().any(|l| l == "a.txt"), "未篩選時應顯示全部檔案（a.txt）");
     assert!(button_labels(&h).iter().any(|l| l == "b.rs"), "未篩選時應顯示全部檔案（b.rs）");
@@ -2801,7 +2789,6 @@ fn test_explorer_tree_expands_and_filter_shows_matching_files() {
     assert!(!h.state().explorer.split, "前置：分欄應已關閉");
     let tree_after_uncheck = button_labels(&h);
     assert!(tree_after_uncheck.iter().any(|l| l == "a.txt"), "取消分欄後樹應刷新出所選資料夾的檔案：{tree_after_uncheck:?}");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// 「以圖形預覽（SVG）」勾選狀態：勾選後打開 .svg 直接以圖形顯示；
@@ -2820,6 +2807,7 @@ fn test_svg_auto_preview_opens_graphic_on_open() {
     h.run_steps(3);
     assert!(h.state().is_svg_preview_tab(), "勾選狀態下打開 svg 應直接顯示圖形");
     assert!(h.state().tabs[0].svg_preview.is_some(), "應已建立圖形預覽");
+    h.get_by_label("放大（Ctrl+滾輪）");
 
     // 取消勾選（等同再點一次選單項）：設定關閉、預覽分頁關閉
     h.state_mut().pending.push(C::PreviewAuto);
@@ -3672,7 +3660,14 @@ fn test_title_bar_contents_stay_above_the_toolbar() {
     let mut h = harness();
     h.run_steps(3);
     let toolbar_top = h.get_by_label("復原").rect().top();
-    for name in ["檔案(F)", "檢視(V)", "說明(H)", "關閉", "最小化"] {
+    let controls = [
+        "檔案(F)", "檢視(V)", "說明(H)",
+        #[cfg(windows)]
+        "關閉",
+        #[cfg(windows)]
+        "最小化",
+    ];
+    for name in controls {
         let rect = h.get_by_label(name).rect();
         assert!(
             rect.bottom() < toolbar_top,
@@ -3773,6 +3768,32 @@ fn test_toolbar_edit_modes_are_one_three_way_choice() {
     h.key_press(Key::Space);
     h.run_steps(2);
     assert_eq!(h.state().doc().mode, EditMode::Column, "選項取得焦點後按空白鍵應切換模式");
+}
+
+#[cfg(windows)]
+#[test]
+fn selection_runs_in_source_folder_and_drains_both_pipes() {
+    use crate::core::editor::{Selection, TextPosition};
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("selection.cmd");
+    std::fs::write(dir.path().join("relative.txt"), "relative-output\r\n").unwrap();
+    std::fs::write(&file, "@type relative.txt\r\n@echo final-error 1>&2\r\n@exit /b 7\r\n@echo outside-selection\r\n").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.state_mut().doc_mut().editor.selection = Selection::new(TextPosition::new(0, 0), TextPosition::new(3, 0));
+    h.state_mut().run_script();
+    h.state_mut().run_script();
+    let ctx = egui::Context::default();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while h.state().runner.running && std::time::Instant::now() < deadline {
+        h.state_mut().runner.poll(&ctx);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let runner = &h.state().runner;
+    assert_eq!(runner.exit, Some(Ok(7)));
+    assert!(runner.lines.iter().any(|line| line == "relative-output"));
+    assert!(runner.lines.iter().any(|line| line.trim_end() == "final-error"));
+    assert!(!runner.stopped);
 }
 
 /// doc.path 帶 `\\?\` verbatim 前綴（canonicalize 產生）時，run_script 會先清掉前綴：
@@ -3890,7 +3911,7 @@ fn test_code_folding_disabled_command_does_nothing() {
     let file = dir.join("plain.nut");
     std::fs::write(&file, "func a() {\n}\n").unwrap();
     let mut h = harness();
-    h.state_mut().settings.code_folding = false;
+    assert!(!h.state().settings.code_folding);
     h.state_mut().open_path(&file);
     h.run_steps(3);
     let lines = h.state().doc().editor.lines.len();
@@ -4210,21 +4231,3 @@ fn temp_bench_output_panel() {
         );
     }
 }
-
-
-
-#[test]
-fn tmp_timing_real_readme() {
-    let path = std::path::Path::new(r"G:\back\share\sparrow\里程碑备份\sparrow\README.md");
-    let mut h = harness();
-    h.state_mut().open_path(path);
-    h.run_steps(3);
-    h.state_mut().pending.push(crate::app::commands::C::PreviewMarkdown);
-    for i in 0..6 {
-        let t = std::time::Instant::now();
-        h.run_steps(2);
-        println!("step {i}: {:?}", t.elapsed());
-    }
-}
-
-

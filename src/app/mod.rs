@@ -1793,7 +1793,9 @@ impl eframe::App for App {
             self.open_group_now(gi);
         }
         self.fif.poll(&ctx);
-        self.runner.poll(&ctx);
+        if let Some(err) = self.runner.poll(&ctx) {
+            self.set_status(format!("{} {err}", self.t("run.input_fail", "無法傳送到程序（可能已結束）：")));
+        }
         // 「執行輸出」面板也會被面板上的 × 與執行腳本（自動開啟）改變顯示狀態，
         // 這裡統一同步到設定，下次啟動沿用最後的顯示/隱藏。
         if self.runner.show != self.settings.show_script_output {

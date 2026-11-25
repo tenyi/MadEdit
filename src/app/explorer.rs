@@ -102,6 +102,11 @@ impl Default for Explorer {
 }
 
 impl Explorer {
+    #[cfg(test)]
+    pub(super) fn set_test_root(&mut self, path: PathBuf) {
+        self.drives = Some(vec![path]);
+    }
+
     /// 磁碟機（非 Windows 是根 `/`），只探測一次。
     fn roots(&mut self) -> Vec<PathBuf> {
         if self.drives.is_none() {
@@ -234,12 +239,14 @@ impl App {
             } else {
                 apply_tip.clone()
             };
-            let clicked = ui.add(egui::Button::new(">").selected(active)).on_hover_text(tip).clicked();
+            let clicked = super::form::icon_button(ui, egui::Button::new(">").selected(active), &tip, &apply_tip).clicked();
             if enter || clicked {
                 self.explorer.apply_filter();
                 state_changed = true;
             }
-            if ui.add(egui::Checkbox::new(&mut self.explorer.split, "")).on_hover_text(split_tip).changed() {
+            let split = ui.checkbox(&mut self.explorer.split, "").on_hover_text(&split_tip);
+            split.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, ui.is_enabled(), self.explorer.split, &split_tip));
+            if split.changed() {
                 state_changed = true;
                 // 開啟分欄時確保已有選中資料夾（沒有則退回磁碟機根）。
                 if self.explorer.split && self.explorer.selected.is_none() {
@@ -730,15 +737,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn probe_drives_exist() {
-        let found: Vec<String> = (b'A'..=b'Z')
-            .filter_map(|c| {
-                let root = format!("{}:\\", char::from(c));
-                Path::new(&root).is_dir().then_some(root)
-            })
-            .collect();
-        println!("[probe] drives = {found:?}");
-        assert!(!found.is_empty(), "至少應探測到 C:");
+    fn explorer_lists_existing_platform_roots() {
+        let roots = Explorer::default().roots();
+        assert!(!roots.is_empty());
+        assert!(roots.iter().all(|root| root.is_absolute() && root.is_dir()));
+        #[cfg(not(windows))]
+        assert_eq!(roots, [PathBuf::from("/")]);
     }
 
     #[test]

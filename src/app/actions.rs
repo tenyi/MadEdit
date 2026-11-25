@@ -117,8 +117,7 @@ impl App {
         let lang = self.ui_lang();
         let tab = self.tab_mut();
         let Some(mut pv) = tab.svg_preview.take() else { return };
-        let bytes = tab.doc.text().into_bytes();
-        pv.refresh(&ctx, &bytes, tab.doc.version, Self::is_dark(&ctx));
+        pv.refresh(&ctx, || tab.doc.text(), tab.doc.version, Self::is_dark(&ctx));
         let area = ui.available_rect_before_wrap();
         let action = match pv.placement {
             Placement::Tab => pv.ui(ui, lang),
@@ -214,8 +213,8 @@ impl App {
             return;
         }
         {
-            let tab = self.tab_mut();
-            let pv = tab.svg_preview.get_or_insert_with(super::svgpreview::SvgPreview::default);
+            let tab = &mut self.tabs[self.active];
+            let pv = tab.svg_preview.get_or_insert_with(|| super::svgpreview::SvgPreview::new(self.fonts.diagram_font()));
             if pv.placement != super::mdpreview::Placement::Tab {
                 pv.set_placement(super::mdpreview::Placement::Tab);
             }
@@ -232,14 +231,20 @@ impl App {
         if !ctx.is_loader_installed(super::mdpreview::DiagramLoader::ID) {
             super::mdpreview::DiagramLoader::install(ctx, self.fonts.diagram_font());
         }
-        // 帶查詢串的遠端 SVG（GitHub 徽章等）：內建 SvgLoader 不認得 `?` 後的副檔名，補位載入
-        if !ctx.is_loader_installed(super::mdpreview::RemoteSvgLoader::ID) {
-            super::mdpreview::RemoteSvgLoader::install(ctx, self.fonts.diagram_font());
+        // Clamp large local SVGs before uploading them to the GPU.
+        if !ctx.is_loader_installed(super::mdpreview::LocalSvgLoader::ID) {
+            super::mdpreview::LocalSvgLoader::install(ctx, self.fonts.diagram_font());
         }
+        // 保留的技術實現（未啟用）：遠端 SVG 載入器已註釋保留於 mdpreview.rs 檔尾——
+        // Markdown 預覽保持完全離線（不發 HTTP 請求），技術實現不刪除；啟用步驟見該處說明。
+        // if !ctx.is_loader_installed(super::mdpreview::RemoteSvgLoader::ID) {
+        //     super::mdpreview::RemoteSvgLoader::install(ctx, self.fonts.diagram_font());
+        // }
     }
 
-    /// 開啟／聚焦目前 .md 文件的 Markdown 預覽（含 Mermaid 圖表與遠端圖片）
-    pub(super) fn preview_markdown(&mut self) {        if !self.doc().is_markdown() {
+    /// 開啟／聚焦目前 .md 文件的 Markdown 預覽（含 Mermaid 圖表與本機圖片）
+    pub(super) fn preview_markdown(&mut self) {
+        if !self.doc().is_markdown() {
             self.set_status(self.t("md.not_markdown", "Markdown 預覽僅支援 .md 檔案"));
             return;
         }
