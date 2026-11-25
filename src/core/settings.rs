@@ -409,7 +409,7 @@ impl Default for Settings {
             last_update_check: 0,
             skipped_update: String::new(),
             font_family: String::new(),
-            font_size: 14.0,
+            font_size: 16.0,
             ui_font_family: String::new(),
             output_log_to_file: false,
             show_script_output: false,
