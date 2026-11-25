@@ -412,8 +412,8 @@ impl Default for Settings {
             font_size: 16.0,
             ui_font_family: String::new(),
             output_log_to_file: false,
-            show_script_output: false,
-            auto_preview: false,
+            show_script_output: true,
+            auto_preview: true,
             fixed_width: false,
             tab_size: 4,
             indent_size: 4,
@@ -447,8 +447,8 @@ impl Default for Settings {
             favorites: Vec::new(),
             favorites_show_names_only: true,
             favorites_recent_expanded: false,
-            // 預設關閉：面板是新的工作區，從「檢視 → 文件視圖」開啟
-            show_file_view: false,
+            // 預設開啟：面板是常用的檔案工作區，可從「檢視 → 文件視圖」關閉
+            show_file_view: true,
             file_view_width: 240.0,
             explorer: ExplorerOptions::default(),
 
@@ -730,11 +730,11 @@ mod tests {
         assert!(!back.favorites_show_names_only);
         assert!(back.show_file_view);
         assert_eq!(back.file_view_width, 320.0);
-        // 舊版設定檔沒有收藏欄位：使用預設值（面板關閉、僅顯示名稱）
+        // 舊版設定檔沒有收藏欄位：使用預設值（面板開啟、僅顯示名稱）
         let legacy: Settings = serde_json::from_str(r#"{"tab_size": 8}"#).unwrap();
         assert!(legacy.favorites.is_empty());
         assert!(legacy.favorites_show_names_only);
-        assert!(!legacy.show_file_view);
+        assert!(legacy.show_file_view);
     }
 
     #[test]
@@ -786,16 +786,24 @@ mod tests {
     }
 
     #[test]
-    fn test_svg_auto_preview_defaults_off_and_roundtrips() {
-        assert!(!Settings::default().auto_preview, "預設不自動開啟預覽");
+    fn test_auto_preview_defaults_on_and_roundtrips() {
+        assert!(Settings::default().auto_preview, "預設自動開啟預覽");
         let mut s = Settings::default();
-        s.auto_preview = true;
+        s.auto_preview = false;
         let back: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
-        assert!(back.auto_preview, "勾選狀態必須寫入並讀回設定");
-        // 舊版設定檔的分項開關欄位已合併為 auto_preview：未知欄位忽略、維持關閉
+        assert!(!back.auto_preview, "取消勾選必須寫入並讀回設定");
+        // 舊版設定檔的分項開關欄位已合併為 auto_preview：未知欄位忽略、回退預設（開）
         let legacy: Settings =
             serde_json::from_str(r#"{"tab_size": 8, "svg_auto_preview": true, "img_auto_preview": true, "md_auto_preview": true}"#).unwrap();
-        assert!(!legacy.auto_preview);
+        assert!(legacy.auto_preview);
+    }
+
+    #[test]
+    fn test_default_view_toggles_are_on() {
+        let d = Settings::default();
+        assert!(d.show_file_view, "文件視圖預設顯示");
+        assert!(d.show_script_output, "運行輸出預設顯示");
+        assert_eq!(d.font_size, 16.0, "預設字型大小 16");
     }
 
     #[test]
@@ -833,6 +841,6 @@ mod tests {
         assert!(partial.show_line_numbers);
         assert!(partial.ui_font_family.is_empty(), "missing ui_font_family means automatic");
         assert!(!partial.output_log_to_file, "missing log toggle defaults to off");
-        assert!(!partial.show_script_output, "missing Script Output state defaults to hidden");
+        assert!(partial.show_script_output, "missing Script Output state defaults to shown");
     }
 }

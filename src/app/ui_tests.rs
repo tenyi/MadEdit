@@ -10,10 +10,22 @@ use super::favorites::FavTarget;
 use super::{App, Confirm};
 use crate::core::favorites::{FavoriteGroup, FavoriteItem};
 
+/// 與版面無關的預設開啟面板（預覽／文件視圖／運行輸出）在測試一律先關閉：
+/// 大多數測試只要編輯區本身，需要面板的測試各自顯式開啟。
+fn quiet_settings() -> crate::core::settings::Settings {
+    crate::core::settings::Settings {
+        auto_preview: false,
+        show_file_view: false,
+        show_script_output: false,
+        ..Default::default()
+    }
+}
+
 fn harness() -> Harness<'static, App> {
     // 強制 1.0 縮放：kittest 的真實視窗可能落在不同縮放比例的顯示器上，
     // 版面斷言（座標、可視範圍）必須與顯示器 DPI 無關，和視覺迴歸測試一致。
-    let mut h = Harness::builder().allow_missing_glyphs().with_pixels_per_point(1.0).with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, Vec::new(), None));
+    let quiet = quiet_settings();
+    let mut h = Harness::builder().allow_missing_glyphs().with_pixels_per_point(1.0).with_size([1000.0, 700.0]).build_eframe(move |cc| App::with_settings(cc, Vec::new(), None, quiet, None));
     // 測試機的系統語言不一定是繁體中文，按鈕文字固定用原文
     h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
     h.run_steps(3);
@@ -981,7 +993,7 @@ fn test_close_save_with_second_confirm_still_closes() {
     // 關閉時選「儲存」而存檔需要再確認（檔案已被外部修改）：確認覆寫後仍要完成關閉
     let p = std::env::temp_dir().join(format!("madedit_ui_close_{}.txt", std::process::id()));
     std::fs::write(&p, "old").unwrap();
-    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, vec![p.clone()], None));
+    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::with_settings(cc, vec![p.clone()], None, quiet_settings(), None));
     h.run_steps(3);
     type_text(&mut h, "x");
     std::fs::write(&p, "changed outside").unwrap();
@@ -1004,7 +1016,7 @@ fn test_open_missing_file_asks_to_create_new_file() {
     // 選擇建立後分頁綁定原路徑，存檔會真的把檔案寫出來
     let p = std::env::temp_dir().join(format!("madedit_ui_create_{}.txt", std::process::id()));
     let _ = std::fs::remove_file(&p);
-    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, vec![p.clone()], None));
+    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::with_settings(cc, vec![p.clone()], None, quiet_settings(), None));
     h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
     h.run_steps(3);
     assert!(matches!(h.state_mut().confirm, Some(Confirm::CreateNew { .. })), "檔案不存在時應詢問是否建立");
@@ -1023,7 +1035,7 @@ fn test_open_missing_file_cancel_creates_nothing() {
     // 取消建立時不得新增分頁，也不得在磁碟上留下檔案
     let p = std::env::temp_dir().join(format!("madedit_ui_create_cancel_{}.txt", std::process::id()));
     let _ = std::fs::remove_file(&p);
-    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, vec![p.clone()], None));
+    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::with_settings(cc, vec![p.clone()], None, quiet_settings(), None));
     h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
     h.run_steps(3);
     let before = h.state_mut().tabs.len();
@@ -1216,7 +1228,7 @@ fn test_markdown_preview_follows_editor_scroll() {
     let p = dir.join("long.md");
     let body: String = (0..150).map(|i| format!("## 標題 {i}\n\n段落 {i}\n\n")).collect();
     std::fs::write(&p, body).unwrap();
-    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, vec![p.clone()], None));
+    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::with_settings(cc, vec![p.clone()], None, quiet_settings(), None));
     h.run_steps(3);
     h.state_mut().pending.push(super::C::PreviewMarkdown);
     h.run_steps(2);
@@ -1345,7 +1357,7 @@ fn test_markdown_preview_docks_at_half_size() {
     // 內含寬圖表，確認內容不會把面板撐大
     let table = format!("\n| {} |\n| {} |\n| {} |\n", ["欄位"; 12].join(" | "), ["---"; 12].join(" | "), ["LongUnbrokenCellValue"; 12].join(" | "));
     std::fs::write(&p, format!("# 標題\n\n```mermaid\nflowchart LR\n  A[很長很長的節點一] --> B[很長很長的節點二] --> C[很長很長的節點三] --> D[很長很長的節點四]\n```\n{table}")).unwrap();
-    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, vec![p.clone()], None));
+    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::with_settings(cc, vec![p.clone()], None, quiet_settings(), None));
     h.run_steps(3);
     h.state_mut().pending.push(super::C::PreviewMarkdown);
     h.run_steps(3);
@@ -1444,7 +1456,7 @@ fn test_markdown_preview_follows_active_tab() {
     let (a, b) = (dir.join("a.md"), dir.join("b.md"));
     std::fs::write(&a, "# A\n").unwrap();
     std::fs::write(&b, "# B\n").unwrap();
-    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, vec![a, b], None));
+    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::with_settings(cc, vec![a, b], None, quiet_settings(), None));
     h.run_steps(3);
     h.state_mut().activate(0);
     h.state_mut().pending.push(C::PreviewAuto);
@@ -1607,7 +1619,8 @@ fn test_every_dialog_keeps_its_buttons_inside_its_window() {
 
 fn dialogs_keep_their_buttons_inside(size: egui::Vec2) {
     use eframe::egui::accesskit::Role;
-    let mut h = Harness::builder().allow_missing_glyphs().with_pixels_per_point(1.0).with_size(size).build_eframe(|cc| App::new(cc, Vec::new(), None));
+    let quiet = quiet_settings();
+    let mut h = Harness::builder().allow_missing_glyphs().with_pixels_per_point(1.0).with_size(size).build_eframe(move |cc| App::with_settings(cc, Vec::new(), None, quiet, None));
     h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
     h.run_steps(3);
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
@@ -2258,7 +2271,7 @@ fn test_find_in_files_clear_survives_the_same_frame_drawing() {
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("clear.txt");
     std::fs::write(&file, "needle one\nplain\nneedle two\n").unwrap();
-    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, vec![file.clone()], None));
+    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::with_settings(cc, vec![file.clone()], None, quiet_settings(), None));
     h.state_mut().settings.find_in_files.opened_files_only = true;
     h.run_steps(3);
     h.state_mut().start_find_in_files("needle".into(), None);

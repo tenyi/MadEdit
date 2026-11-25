@@ -34,6 +34,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - The editor uses the bundled **Fixedsys Excelsior 3.01** font (FSEX300) at size 16 by default: the font is embedded in the executable, so the classic Fixedsys look works with no font installation on any platform. CJK and other scripts still fall back to the platform fonts; choosing another font in View > Font overrides the default as before.
 
 ### Changed
+- View > Preview, View > File View and View > Script Output are now checked by default: the best-experience workspace (auto preview dispatch, the File View dock and the Script Output panel) is shown from the first launch. Unchecking any of them hides it as before and is remembered.
 - The four preview entries (Markdown / HTML / SVG / image) are merged into a single checked toggle "Preview" (View menu, and the tab & editor "Preview as" context menus): while checked, opening a file dispatches automatically by extension — `.md`/`.markdown` to the Markdown preview, `.html`/`.htm` to the HTML preview, `.svg` to the graphic preview, `.bmp`/`.jpg`/`.jpeg`/`.png`/`.gif`/`.webp` to the image preview; other types show a status message. Unchecking closes every active preview. The old per-type settings keys are ignored (the new `auto_preview` key replaces them).
 - "Preview as > Markdown" is now a checked toggle stored in the settings (like the SVG/image previews): while checked, opening a `.md`/`.markdown` file enters the preview directly; unchecking closes the active preview. The check state also shows in the tab's and editor's "Preview as" context menus.
 - Editor tabs can be dragged to reorder them with a live preview (like MTT-File-Manager): while dragging, the source tab lifts out with a shadow and follows the pointer while the neighbors animate aside to open a slot; the move commits only on release. Clicking / double-clicking / the close button behave as before.
@@ -87,6 +88,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - 編輯區預設使用內建的 **Fixedsys Excelsior 3.01** 字型（FSEX300），大小 16：字型直接嵌入執行檔，任何平台都無需安裝即可重現經典 Fixedsys 觀感。中日韓等字元仍走平台後備字型；在「檢視 > 字型」選擇其他字型即可覆蓋預設。
 
 #### 變更
+- 「檢視 > 預覽」「檢視 > 文件視圖」「檢視 > 運行輸出」改為**預設勾選**：第一次啟動即是體驗最好的工作區（自動預覽分發、文件視圖停靠欄與運行輸出面板）。取消勾選照舊隱藏對應面板並記住狀態。
 - 四個預覽項目（Markdown／HTML／SVG／圖片）合併為單一勾選開關「預覽」（檢視選單，以及分頁與編輯區的「預覽為」右鍵選單同步）：勾選時打開檔案依副檔名自動分發——`.md`/`.markdown` 進 Markdown 預覽、`.html`/`.htm` 進 HTML 預覽、`.svg` 進圖形預覽、`.bmp`/`.jpg`/`.jpeg`/`.png`/`.gif`/`.webp` 進圖片預覽，其他類型顯示狀態訊息；取消勾選會關閉所有作用中的預覽。舊的分項設定鍵不再使用（改由新的 `auto_preview` 鍵取代）。
 - 「預覽為 > Markdown」改為勾選式並寫入設定（與 SVG／圖片預覽相同）：勾選時打開 `.md`／`.markdown` 檔直接進入預覽，取消勾選會關閉目前的預覽。勾選狀態也會顯示在分頁與編輯區的「預覽為」右鍵選單。
 - 編輯器分頁標題支援拖動排序，並帶即時預覽（比照 MTT-File-Manager）：拖動時來源分頁浮起（帶陰影）跟隨指針，鄰居以動畫滑開一個空位；鬆手才提交搬移。單擊、雙擊與關閉按鈕行為不變。
