@@ -16,6 +16,9 @@ use crate::core::editor::{char_visual_columns, EditorState, Selection, TextPosit
 use crate::core::encoding;
 use crate::core::model::{EditMode, NewLineFormat};
 
+/// Seconds a compared tab must stay unchanged before the window compares again.
+const REFRESH_DELAY: f64 = 0.3;
+
 /// Both files are held in memory, so larger ones are refused.
 const MAX_COMPARE_SIZE: u64 = 256 * 1024 * 1024;
 const BYTES_PER_ROW: usize = 16;
@@ -49,8 +52,9 @@ pub enum CompareError {
 enum Content {
     Text {
         lines: [Vec<String>; 2],
-        /// The terminator after each line, for comparing newline styles.
-        eols: [Vec<Eol>; 2],
+        /// The terminator after each line, for comparing newline styles; `None` where they
+        /// are not known (an open tab with mixed newlines), so they are not compared.
+        eols: [Option<Vec<Eol>>; 2],
         options: TextOptions,
         diff: TextDiff,
         widths: [usize; 2],
@@ -73,7 +77,7 @@ impl Content {
     /// Compares the text again under its options.
     fn rediff(&mut self) {
         let Content::Text { lines, eols, options, diff, bounds, inline, .. } = self else { return };
-        *diff = compare::diff_lines_with(&lines[0], &lines[1], [Some(&eols[0]), Some(&eols[1])], *options);
+        *diff = compare::diff_lines_with(&lines[0], &lines[1], [eols[0].as_deref(), eols[1].as_deref()], *options);
         *bounds = [diff.line_bounds(false), diff.line_bounds(true)];
         inline.clear();
     }
@@ -112,6 +116,15 @@ pub struct CompareView {
     /// Document version of each side's text tab when compared (`None`: not open), so edits
     /// and undo there compare again.
     pub(super) sources: [Option<u64>; 2],
+    /// Each side's path resolved once (canonical where it exists), so finding its tab every
+    /// frame compares paths instead of asking the file system.
+    resolved: [PathBuf; 2],
+    /// Rows the text panes showed last frame, to tell whether a difference is in view.
+    visible: f32,
+    /// When a compared tab last changed (seconds, egui time), and the versions seen then: the
+    /// window compares again once they have stayed the same for `REFRESH_DELAY`.
+    changed_at: Option<f64>,
+    seen: [Option<u64>; 2],
 }
 
 /// A merge of the current difference: on `side`, lines `target` (now `expected`) become
@@ -172,7 +185,8 @@ impl CompareView {
     /// Compares two files. `open_lines` are the current lines of a side already open as text
     /// (unsaved edits included); other sides are read from disk. Binary data, files too large to
     /// open as text, or `binary` compare bytes. `open_eols` are the open sides' newline styles
-    /// (their lines all end that way), and `text` what a text comparison ignores.
+    /// (their lines all end that way; `None`: unknown, such as mixed newlines), and `text` what
+    /// a text comparison ignores.
     pub fn load(paths: [&Path; 2], binary: bool, open_lines: [Option<Vec<String>>; 2], open_eols: [Option<Eol>; 2], text: TextOptions, opts: &OpenOptions) -> Result<Self, CompareError> {
         let names = paths.map(crate::core::display_path);
         let mut info = [String::new(), String::new()];
@@ -207,16 +221,19 @@ impl CompareView {
             // Each side's lines and the terminator after each one.
             let decode = |s: Result<Vec<String>, Vec<u8>>, eol: Option<Eol>, info: &mut String| match s {
                 Ok(lines) => {
-                    let mut eols = vec![eol.unwrap_or(Eol::Lf); lines.len()];
-                    if let Some(last) = eols.last_mut() {
-                        *last = Eol::None;
-                    }
+                    let eols = eol.map(|eol| {
+                        let mut eols = vec![eol; lines.len()];
+                        if let Some(last) = eols.last_mut() {
+                            *last = Eol::None;
+                        }
+                        eols
+                    });
                     (lines, eols)
                 }
                 Err(b) => {
                     let d = encoding::detect_and_decode(&b, opts.default_encoding, opts.fallback_encoding, opts.enforce_default_encoding);
                     *info = text_info(d.encoding.name(), d.has_bom, encoding::detect_newlines(&d.text).dominant);
-                    (EditorState::from_text(&d.text).lines, compare::line_endings(&d.text))
+                    (EditorState::from_text(&d.text).lines, Some(compare::line_endings(&d.text)))
                 }
             };
             let [(l, le), (r, re)] = [decode(l, open_eols[0], &mut info[0]), decode(r, open_eols[1], &mut info[1])];
@@ -226,8 +243,9 @@ impl CompareView {
             content.rediff();
             content
         };
+        let resolved = paths.map(|p| p.canonicalize().unwrap_or_else(|_| p.to_path_buf()));
         let paths = paths.map(Path::to_path_buf);
-        let mut view = Self { paths, names, binary, content, hunk: None, run: None, offset: Vec2::ZERO, scroll: 0.0, hscroll: 0.0, info, goto_row: None, drawn_w: 0.0, keys: true, rect: Rect::NOTHING, toolbar: Vec::new(), sources: [None, None] };
+        let mut view = Self { paths, names, binary, content, hunk: None, run: None, offset: Vec2::ZERO, scroll: 0.0, hscroll: 0.0, info, goto_row: None, drawn_w: 0.0, keys: true, rect: Rect::NOTHING, toolbar: Vec::new(), sources: [None, None], resolved, visible: 0.0, changed_at: None, seen: [None, None] };
         view.next();
         Ok(view)
     }
@@ -236,8 +254,45 @@ impl CompareView {
     /// the target side, its lines to replace (and their current text, to check the target
     /// has not changed since), and the source lines to put there.
     pub fn merge_plan(&self, to_right: bool) -> Option<MergePlan> {
+        self.merge_plan_at(self.hunk?, to_right)
+    }
+
+    /// After comparing again, the difference that is still the same change as `old` (same
+    /// lines on both sides), nearest to where it was; it becomes current. `None` when that
+    /// change is gone.
+    fn find_change(&mut self, old: &MergePlan, to_right: bool) -> Option<usize> {
         let Content::Text { lines, diff, bounds, .. } = &self.content else { return None };
-        let range = diff.hunks.get(self.hunk?)?;
+        let (src, dst) = if to_right { (0, 1) } else { (1, 0) };
+        // Compared in place: no copies of the differences' lines.
+        let found = diff
+            .hunks
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| {
+                let span = |p: usize| bounds[p][r.start]..bounds[p][r.end];
+                lines[dst][span(dst)] == old.expected[..] && lines[src][span(src)] == old.source[..]
+            })
+            // Nearest to where it was, on either side: an edit moves line numbers only in the
+            // file it was made in, so the other side's distance is exact for the same change.
+            .min_by_key(|(_, r)| bounds[dst][r.start].abs_diff(old.target.start).min(bounds[src][r.start].abs_diff(old.source_range.start)))
+            .map(|(h, _)| h);
+        self.hunk = found;
+        found
+    }
+
+    /// After comparing again: the outlined change (`outlined`, taken before) stays current
+    /// if it is still there, found by its lines; otherwise only a difference in view becomes
+    /// current. Never by index, which a change elsewhere shifts.
+    fn retarget(&mut self, outlined: Option<MergePlan>) {
+        if outlined.and_then(|old| self.find_change(&old, true)).is_none() {
+            self.hunk = None;
+            self.keep_hunk();
+        }
+    }
+
+    fn merge_plan_at(&self, hunk: usize, to_right: bool) -> Option<MergePlan> {
+        let Content::Text { lines, diff, bounds, .. } = &self.content else { return None };
+        let range = diff.hunks.get(hunk)?;
         let (src, dst) = if to_right { (0, 1) } else { (1, 0) };
         let span = |p: usize| bounds[p][range.start]..bounds[p][range.end];
         let target = span(dst);
@@ -270,13 +325,12 @@ impl CompareView {
     /// Carries the position over from the comparison this one replaces (after a merge): the
     /// same difference index, now the one after the merged difference, and the same scroll.
     fn keep_place(&mut self, old: &CompareView) {
-        let n = match &self.content {
-            Content::Text { diff, .. } => diff.hunks.len(),
-            Content::Binary { .. } => return,
-        };
-        self.hunk = old.hunk.filter(|_| n > 0).map(|h| h.min(n - 1));
+        if self.is_binary() {
+            return;
+        }
         self.goto_row = None;
-        (self.scroll, self.hscroll, self.drawn_w) = (old.scroll, old.hscroll, old.drawn_w);
+        (self.scroll, self.hscroll, self.drawn_w, self.visible) = (old.scroll, old.hscroll, old.drawn_w, old.visible);
+        self.retarget(old.merge_plan(true));
     }
 
     /// The text options in effect (`None` for a binary comparison).
@@ -295,12 +349,55 @@ impl CompareView {
         }
         *options = opts;
         let _ = diff;
+        let outlined = self.merge_plan(true);
         self.content.rediff();
-        let n = match &self.content {
-            Content::Text { diff, .. } => diff.hunks.len(),
-            Content::Binary { .. } => 0,
+        self.retarget(outlined);
+    }
+
+    /// Replaces one side's text (from its tab, after an edit) and compares again, keeping the
+    /// other side as loaded and the place in the window.
+    fn replace_side(&mut self, side: usize, new_lines: Vec<String>, eol: Option<Eol>, info: String) {
+        let Content::Text { lines, eols, widths, .. } = &mut self.content else { return };
+        widths[side] = new_lines.iter().map(|l| l.chars().take(MAX_DRAWN_CHARS).map(char_visual_columns).sum::<usize>()).max().unwrap_or(0);
+        eols[side] = eol.map(|eol| {
+            let mut e = vec![eol; new_lines.len()];
+            if let Some(last) = e.last_mut() {
+                *last = Eol::None;
+            }
+            e
+        });
+        lines[side] = new_lines;
+        self.info[side] = info;
+        self.content.rediff();
+    }
+
+    /// After comparing again: keeps the current difference's index where it still exists;
+    /// with none current, the first difference at or after the view becomes current, so
+    /// Alt+arrows can merge a difference that just appeared.
+    fn keep_hunk(&mut self) {
+        let Content::Text { diff, .. } = &self.content else { return };
+        let n = diff.hunks.len();
+        self.hunk = match self.hunk {
+            _ if n == 0 => None,
+            Some(h) if h < n => Some(h),
+            // Only a difference in view: a merge must never change one the user can't see.
+            _ => {
+                let i = diff.hunks.partition_point(|h| (h.end as f32) <= self.scroll);
+                diff.hunks.get(i).filter(|h| (h.start as f32) < self.scroll + self.visible).map(|_| i)
+            }
         };
-        self.hunk = self.hunk.filter(|_| n > 0).map(|h| h.min(n - 1));
+    }
+
+    /// Makes difference `h` current and brings it into view.
+    fn show_hunk(&mut self, h: usize) {
+        let Content::Text { diff, .. } = &self.content else { return };
+        if let Some(r) = diff.hunks.get(h) {
+            self.hunk = Some(h);
+            let visible = r.start as f32 >= self.scroll && (r.start as f32) < self.scroll + self.visible;
+            if !visible {
+                self.goto_row = Some(r.start);
+            }
+        }
     }
 
     /// Sets what is shown under a side that came from an open tab.
@@ -378,6 +475,21 @@ impl CompareView {
     }
 
     fn summary(&self, lang: Lang) -> String {
+        let t = |key: &str, zh: &'static str| i18n::translate(lang, key, zh);
+        // What the comparison could not do, said even when nothing differs.
+        let note = match &self.content {
+            Content::Text { eols, options, .. } if !options.ignore_eol && eols.iter().any(Option::is_none) => Some(t("cmp.eol_unknown", "已開啟的檔案混用換行符號，未比較換行符號")),
+            Content::Binary { diff, .. } if diff.alignment_skipped => Some(t("cmp.align_skipped", "差異範圍太大，未逐位元組對齊位移的資料")),
+            _ => None,
+        };
+        let main = self.summary_counts(lang);
+        match note {
+            Some(n) => format!("{main} · {n}"),
+            None => main,
+        }
+    }
+
+    fn summary_counts(&self, lang: Lang) -> String {
         let t = |key: &str, zh: &'static str| i18n::translate(lang, key, zh);
         if self.is_identical() {
             return t("cmp.identical", "兩個檔案內容相同").to_string();
@@ -478,10 +590,10 @@ impl CompareView {
         // The text options, under the toolbar: changing one compares again and is remembered.
         if let Some(mut o) = self.text_options() {
             let before = o;
-            let [l_blank, l_case, l_eol] = super::dialogs::compare_option_labels(lang);
+            let [l_blank, l_case, l_ws, l_eol] = super::dialogs::compare_option_labels(lang);
             egui::Panel::top("compare-options").show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    for (label, value) in [(l_blank, &mut o.ignore_blank_lines), (l_case, &mut o.ignore_case), (l_eol, &mut o.ignore_eol)] {
+                    for (label, value) in [(l_blank, &mut o.ignore_blank_lines), (l_case, &mut o.ignore_case), (l_ws, &mut o.ignore_whitespace), (l_eol, &mut o.ignore_eol)] {
                         let r = ui.checkbox(value, label);
                         toolbar.push(r.id);
                     }
@@ -520,6 +632,7 @@ impl CompareView {
         let gap = Rect::from_min_max(pos2(xs[0] + pane_w, body.top()), pos2(xs[1], body.bottom()));
         let map = Rect::from_min_max(pos2(xs[1] + pane_w, body.top()), pos2(full.right(), body.bottom()));
         let visible = (body.height() / row_h).max(1.0);
+        self.visible = visible;
         let rows = diff.rows.len();
         let max_scroll = (rows as f32 - visible + 1.0).max(0.0);
         let gutters = [0, 1].map(|p| (digits(lines[p].len()) as f32 + 1.0) * cw);
@@ -615,7 +728,7 @@ impl CompareView {
                 let row = diff.rows[ri];
                 if let (RowKind::Changed, Some(l), Some(r)) = (row.kind, row.left, row.right) {
                     inline.entry(ri).or_insert_with(|| {
-                        let (a, b) = compare::inline_diff(&lines[0][l], &lines[1][r]);
+                        let (a, b) = compare::inline_diff(&lines[0][l], &lines[1][r], *options);
                         [a, b]
                     });
                 }
@@ -658,8 +771,9 @@ impl CompareView {
                 if !options.ignore_eol
                     && row.kind == RowKind::Changed
                     && let (Some(l), Some(r)) = (row.left, row.right)
-                    && eols[0].get(l) != eols[1].get(r)
-                    && let Some(mark) = eol_mark(eols[p].get(k).copied().unwrap_or(Eol::None))
+                    && let [Some(le), Some(re)] = &*eols
+                    && le.get(l) != re.get(r)
+                    && let Some(mark) = eol_mark([le, re][p].get(k).copied().unwrap_or(Eol::None))
                 {
                     let format = egui::TextFormat { background: CHANGED_WORDS, color: visuals.strong_text_color(), ..egui::TextFormat::simple(font.clone(), visuals.text_color()) };
                     job.append(mark, cw * 0.5, format);
@@ -836,8 +950,7 @@ impl CompareView {
 
 /// The file name first, so a long folder is what gets cut off; the full path as a tooltip.
 fn path_label(ui: &mut egui::Ui, path: &str) {
-    let name = file_name(path);
-    let folder = path[..path.len() - name.len()].trim_end_matches(['/', '\\']);
+    let (name, folder) = name_and_folder(path);
     ui.label(egui::RichText::new(name).strong()).on_hover_text(path);
     ui.add(egui::Label::new(egui::RichText::new(folder).weak()).truncate()).on_hover_text(path);
 }
@@ -1072,15 +1185,24 @@ impl App {
     fn load_compare(&self, paths: &[PathBuf; 2], binary: bool) -> Result<CompareView, CompareError> {
         let open = [0, 1].map(|i| self.text_tab(&paths[i]).map(|t| &self.tabs[t].doc));
         let open_lines = open.map(|d| d.map(|d| d.editor.lines.clone()));
+        // A tab with mixed newlines does not keep each line's terminator: not compared.
         let open_eols = open.map(|d| {
-            d.map(|d| match d.newline {
+            d.filter(|d| !d.mixed_newlines).map(|d| match d.newline {
                 NewLineFormat::Dos => Eol::CrLf,
                 NewLineFormat::Unix => Eol::Lf,
                 NewLineFormat::Mac => Eol::Cr,
             })
         });
         let mut view = CompareView::load([&paths[0], &paths[1]], binary, open_lines, open_eols, self.compare_text_options(), &self.open_options())?;
-        view.sources = self.compare_sources(paths);
+        // A side taken from a tab is matched by that tab's own path from now on: it may be
+        // spelled differently from the canonical path (Save As keeps the dialog's spelling).
+        for (side, doc) in open.iter().enumerate() {
+            if let Some(p) = doc.and_then(|d| d.path.clone()) {
+                view.resolved[side] = p;
+            }
+        }
+        view.sources = self.compare_sources(&view);
+        view.seen = view.sources;
         if !view.is_binary() {
             for (side, doc) in open.into_iter().enumerate() {
                 if let Some(d) = doc {
@@ -1091,22 +1213,43 @@ impl App {
         Ok(view)
     }
 
-    /// The document version of each path's text tab (`None` when it is not open as text).
-    fn compare_sources(&self, paths: &[PathBuf; 2]) -> [Option<u64>; 2] {
-        [0, 1].map(|i| self.text_tab(&paths[i]).map(|t| self.tabs[t].doc.version))
+    /// The tab showing a compared side as text, matched by path without asking the file
+    /// system (cheap enough for every frame).
+    fn compare_tab(&self, view: &CompareView, side: usize) -> Option<usize> {
+        let (given, resolved) = (&view.paths[side], &view.resolved[side]);
+        self.tabs.iter().position(|t| t.doc.mode == EditMode::Text && !t.doc.hex_only && t.doc.path.as_deref().is_some_and(|p| p == resolved || p == given))
+    }
+
+    /// The tab of a compared side, for merging: matched like the window matches it, else by
+    /// `same_target` (a path spelled differently), which then becomes the side's path, so the
+    /// window refreshes from that tab too.
+    fn side_tab(&mut self, side: usize) -> Option<usize> {
+        let view = self.compare.as_ref()?;
+        if let Some(t) = self.compare_tab(view, side) {
+            return Some(t);
+        }
+        let t = self.text_tab(&view.paths[side])?;
+        let p = self.tabs[t].doc.path.clone()?;
+        self.compare.as_mut()?.resolved[side] = p;
+        Some(t)
+    }
+
+    /// The document version of each side's text tab (`None` when it is not open as text).
+    fn compare_sources(&self, view: &CompareView) -> [Option<u64>; 2] {
+        [0, 1].map(|i| self.compare_tab(view, i).map(|t| self.tabs[t].doc.version))
     }
 
     /// What text comparisons ignore, from the settings.
     pub(super) fn compare_text_options(&self) -> TextOptions {
         let s = &self.settings;
-        TextOptions { ignore_blank_lines: s.compare_ignore_blank_lines, ignore_case: s.compare_ignore_case, ignore_eol: s.compare_ignore_eol }
+        TextOptions { ignore_blank_lines: s.compare_ignore_blank_lines, ignore_case: s.compare_ignore_case, ignore_whitespace: s.compare_ignore_whitespace, ignore_eol: s.compare_ignore_eol }
     }
 
     /// Stores new text compare options in the settings (saved right away, like View toggles)
     /// and compares the open window again under them.
     pub(super) fn set_compare_text_options(&mut self, o: TextOptions) {
         let s = &mut self.settings;
-        (s.compare_ignore_blank_lines, s.compare_ignore_case, s.compare_ignore_eol) = (o.ignore_blank_lines, o.ignore_case, o.ignore_eol);
+        (s.compare_ignore_blank_lines, s.compare_ignore_case, s.compare_ignore_whitespace, s.compare_ignore_eol) = (o.ignore_blank_lines, o.ignore_case, o.ignore_whitespace, o.ignore_eol);
         self.save_settings();
         if let Some(view) = self.compare.as_mut() {
             view.set_text_options(o);
@@ -1121,30 +1264,54 @@ impl App {
     /// Copies the compare window's current difference to the right (`to_right`) or left file.
     /// The change goes through the target's tab (opened first if needed) as one undoable
     /// edit, so it is saved, or undone, like any other edit.
-    fn merge_compare(&mut self, to_right: bool) {
+    pub(super) fn merge_compare(&mut self, to_right: bool) {
+        // Edits not yet compared (within the refresh delay) are compared now, so a merge right
+        // after typing works instead of reporting the file as changed. The merge goes ahead
+        // only if the change the user was looking at is still there (found by its lines, not
+        // its index, which an edit above it shifts); otherwise the refreshed view is shown
+        // with that change gone, and nothing is merged on this key press.
+        if self.compare.as_ref().is_some_and(|v| !v.is_binary() && self.compare_sources(v) != v.sources) {
+            let before = self.compare.as_ref().and_then(|v| v.merge_plan(to_right));
+            self.refresh_compare();
+            let Some(view) = self.compare.as_mut() else { return };
+            let kept = before.as_ref().and_then(|old| view.find_change(old, to_right));
+            if let Some(h) = kept {
+                view.show_hunk(h);
+            } else {
+                // As after any refresh: a difference in view becomes current, for the next press.
+                view.retarget(None);
+                let msg = if before.is_some() {
+                    self.t("cmp.merge_changed", "差異已變更，請確認後再合併")
+                } else {
+                    self.t("cmp.merge_selected", "已選取畫面中的差異，再按一次即可合併")
+                };
+                let msg = msg.to_string();
+                self.set_status(msg);
+                return;
+            }
+        }
         let Some(view) = self.compare.as_ref() else { return };
         let Some(MergePlan { side, target, expected, source_range, source }) = view.merge_plan(to_right) else { return };
         let path = view.path(side).to_path_buf();
-        let source_path = view.path(1 - side).to_path_buf();
         let title = self.t("cmp.merge_fail", "無法合併").to_string();
         let fail = |app: &mut Self, key: &str, zh: &'static str| {
             let text = format!("{}\n{}", crate::core::display_path(&path), app.t(key, zh));
             app.message(&title, text);
         };
         // Both sides must still be what the window shows; otherwise compare again first.
-        let stale = |app: &Self, p: &Path, range: &Range<usize>, lines: &[String]| {
-            app.text_tab(p).is_some_and(|t| app.tabs[t].doc.editor.lines.get(range.clone()) != Some(lines))
+        let stale = |app: &mut Self, side: usize, range: &Range<usize>, lines: &[String]| {
+            app.side_tab(side).is_some_and(|t| app.tabs[t].doc.editor.lines.get(range.clone()) != Some(lines))
         };
-        if stale(self, &source_path, &source_range, &source) || stale(self, &path, &target, &expected) {
+        if stale(self, 1 - side, &source_range, &source) || stale(self, side, &target, &expected) {
             self.refresh_compare();
             let text = self.t("cmp.merge_stale", "檔案內容已變更，已重新比較，請再試一次").to_string();
             self.message(&title, text);
             return;
         }
-        if self.text_tab(&path).is_none() && !self.open_path(&path) {
+        if self.side_tab(side).is_none() && !self.open_path(&path) {
             return;
         }
-        let Some(ti) = self.text_tab(&path) else {
+        let Some(ti) = self.side_tab(side) else {
             fail(self, "cmp.merge_not_text", "目標檔案未以文字模式開啟");
             return;
         };
@@ -1153,7 +1320,7 @@ impl App {
             return;
         }
         // A file just opened for the merge must still hold the compared lines too.
-        if stale(self, &path, &target, &expected) {
+        if stale(self, side, &target, &expected) {
             self.refresh_compare();
             let text = self.t("cmp.merge_stale", "檔案內容已變更，已重新比較，請再試一次").to_string();
             self.message(&title, text);
@@ -1166,9 +1333,37 @@ impl App {
         self.set_status(msg);
     }
 
-    /// Compares the same files again (after a merge), keeping the place in the window.
+    /// Compares again after a compared tab changed, keeping the place in the window. Sides
+    /// open in tabs are taken from them; a side not open keeps the text loaded before, so an
+    /// edit does not read the other file again. Only a side whose tab was closed is read from
+    /// disk again (a full reload).
     fn refresh_compare(&mut self) {
-        let Some(old) = self.compare.take() else { return };
+        let Some(mut view) = self.compare.take() else { return };
+        let now = self.compare_sources(&view);
+        let closed = (0..2).any(|i| view.sources[i].is_some() && now[i].is_none());
+        if !view.is_binary() && !closed {
+            // The outlined change, to keep it current by its lines rather than its index.
+            let outlined = view.merge_plan(true);
+            for side in 0..2 {
+                if let Some(t) = self.compare_tab(&view, side).filter(|_| now[side] != view.sources[side]) {
+                    let d = &self.tabs[t].doc;
+                    let eol = (!d.mixed_newlines).then_some(match d.newline {
+                        NewLineFormat::Dos => Eol::CrLf,
+                        NewLineFormat::Unix => Eol::Lf,
+                        NewLineFormat::Mac => Eol::Cr,
+                    });
+                    let info = text_info(d.encoding.name(), d.has_bom, Some(d.newline));
+                    let lines = d.editor.lines.clone();
+                    view.replace_side(side, lines, eol, info);
+                }
+            }
+            view.retarget(outlined);
+            (view.sources, view.seen) = (now, now);
+            view.changed_at = None;
+            self.compare = Some(view);
+            return;
+        }
+        let old = view;
         match self.load_compare(&old.paths, old.binary) {
             Ok(mut view) => {
                 view.keep_place(&old);
@@ -1181,11 +1376,25 @@ impl App {
 
     /// Shows the compare window (its own native window where the backend supports it).
     pub fn show_compare(&mut self, ctx: &egui::Context) {
-        // A compared tab was edited, undone, opened or closed: compare again.
-        if let Some(v) = self.compare.as_ref().filter(|v| !v.is_binary())
-            && self.compare_sources(&v.paths) != v.sources
-        {
-            self.refresh_compare();
+        // A compared tab was edited, undone, opened or closed: compare again once the changes
+        // pause, rather than on every keystroke.
+        let now = ctx.input(|i| i.time);
+        if let Some(v) = self.compare.as_ref().filter(|v| !v.is_binary()) {
+            let current = self.compare_sources(v);
+            if current != v.sources {
+                let v = self.compare.as_mut().unwrap();
+                // Each further change restarts the wait, so steady typing never re-diffs.
+                if current != v.seen || v.changed_at.is_none() {
+                    v.seen = current;
+                    v.changed_at = Some(now);
+                }
+                let wait = REFRESH_DELAY - (now - v.changed_at.unwrap_or(now));
+                if wait <= 0.0 {
+                    self.refresh_compare();
+                } else {
+                    ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
+                }
+            }
         }
         let Some(mut view) = self.compare.take() else { return };
         let lang = self.ui_lang();
@@ -1210,6 +1419,12 @@ impl App {
 
 fn file_name(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
+}
+
+/// A shown path's file name and its folder (without the trailing separator).
+pub(super) fn name_and_folder(path: &str) -> (&str, &str) {
+    let name = file_name(path);
+    (name, path[..path.len() - name.len()].trim_end_matches(['/', '\\']))
 }
 
 #[cfg(test)]
@@ -1338,9 +1553,97 @@ e");
     }
 
     #[test]
+    fn unknown_line_endings_are_not_compared_and_say_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = write(dir.path(), "a.txt", b"x\r\ny\n");
+        let b = write(dir.path(), "b.txt", b"x\ny\n");
+        let counted = TextOptions { ignore_eol: false, ..TextOptions::default() };
+        // From disk, each line's ending is known: the CRLF line differs.
+        let v = CompareView::load([&a, &b], false, [None, None], [None, None], counted, &opts()).unwrap();
+        assert!(!v.is_identical());
+        // The left side from a tab with mixed newlines: its endings are unknown, so not
+        // compared, and the summary says why.
+        let open = Some(vec!["x".to_string(), "y".to_string(), String::new()]);
+        let v = CompareView::load([&a, &b], false, [open, None], [None, None], counted, &opts()).unwrap();
+        assert!(v.is_identical());
+        assert!(v.summary(Lang::ZhTw).contains("未比較換行符號"), "{}", v.summary(Lang::ZhTw));
+        // A tab with one newline style is compared as ending every line that way.
+        let open = Some(vec!["x".to_string(), "y".to_string(), String::new()]);
+        let v = CompareView::load([&a, &b], false, [open, None], [Some(Eol::Lf), None], counted, &opts()).unwrap();
+        assert!(v.is_identical() && !v.summary(Lang::ZhTw).contains("未比較"));
+    }
+
+    #[test]
+    fn only_a_difference_in_view_is_selected_automatically() {
+        let dir = tempfile::tempdir().unwrap();
+        let body: String = (0..200).map(|i| format!("line {i}\n")).collect();
+        let a = write(dir.path(), "a.txt", format!("A\n{body}").as_bytes());
+        let b = write(dir.path(), "b.txt", format!("B\n{body}").as_bytes());
+        let mut v = CompareView::load([&a, &b], false, [None, None], [None, None], TextOptions::default(), &opts()).unwrap();
+        (v.hunk, v.visible) = (None, 20.0);
+        // Scrolled to the bottom, the only difference (row 0) is out of view: none selected.
+        v.scroll = 150.0;
+        v.keep_hunk();
+        assert_eq!(v.hunk, None);
+        // In view, it is.
+        v.scroll = 0.0;
+        v.keep_hunk();
+        assert_eq!(v.hunk, Some(0));
+        // show_hunk brings an off-screen difference into view.
+        v.scroll = 150.0;
+        v.show_hunk(0);
+        assert_eq!(v.goto_row, Some(0));
+    }
+
+    #[test]
+    fn changing_options_keeps_the_outlined_change() {
+        let dir = tempfile::tempdir().unwrap();
+        // Blank-only differences above the real one; ignoring blank lines removes them.
+        let a = write(dir.path(), "a.txt", b"x\n\ny\n\nz\nLEFT\nend\n");
+        let b = write(dir.path(), "b.txt", b"x\ny\nz\nRIGHT\nend\n");
+        let mut v = CompareView::load([&a, &b], false, [None, None], [None, None], TextOptions::default(), &opts()).unwrap();
+        v.visible = 50.0;
+        let Content::Text { diff, .. } = &v.content else { panic!() };
+        let real = diff.hunks.len() - 1;
+        v.hunk = Some(real);
+        let before = v.merge_plan(true).unwrap();
+        assert_eq!(before.source, vec!["LEFT".to_string()]);
+        v.set_text_options(TextOptions { ignore_blank_lines: true, ..TextOptions::default() });
+        assert_eq!(v.merge_plan(true).unwrap().source, before.source, "still LEFT/RIGHT, not the old index");
+        // Turned back: the same change, at its index again.
+        v.set_text_options(TextOptions::default());
+        assert_eq!(v.hunk, Some(real));
+    }
+
+    #[test]
+    fn a_repeated_change_is_found_where_it_was() {
+        let dir = tempfile::tempdir().unwrap();
+        let mid: String = (0..39).map(|i| format!("m{i}\n")).collect();
+        let a = format!("top\nLEFT\n{mid}LEFT\nend\n");
+        let b = format!("top\nRIGHT\n{mid}RIGHT\nend\n");
+        let pa = write(dir.path(), "a.txt", a.as_bytes());
+        let pb = write(dir.path(), "b.txt", b.as_bytes());
+        let mut v = CompareView::load([&pa, &pb], false, [None, None], [None, None], TextOptions::default(), &opts()).unwrap();
+        v.visible = 100.0;
+        v.hunk = Some(1);
+        let outlined = v.merge_plan(true).unwrap();
+        assert_eq!(outlined.target.start, 41);
+        // 35 lines added at the top of b (the merge target): its line numbers move, a's don't.
+        let pasted: String = (0..35).map(|i| format!("p{i}\n")).collect();
+        let b2 = format!("{pasted}top\nRIGHT\n{mid}RIGHT\nend\n");
+        let lines = EditorState::from_text(&b2).lines;
+        v.replace_side(1, lines, None, String::new());
+        v.retarget(Some(outlined));
+        let now = v.merge_plan(true).unwrap();
+        assert_eq!((now.source_range.start, now.target.start), (41, 76), "the second LEFT/RIGHT, not the first at 36");
+    }
+
+    #[test]
     fn file_name_takes_the_last_component() {
         assert_eq!(file_name(r"C:\a\b.txt"), "b.txt");
         assert_eq!(file_name("/x/y.rs"), "y.rs");
+        assert_eq!(name_and_folder(r"C:\a\b.txt"), ("b.txt", r"C:\a"));
+        assert_eq!(name_and_folder("y.rs"), ("y.rs", ""));
         assert_eq!(digits(0), 1);
         assert_eq!(digits(1000), 4);
     }

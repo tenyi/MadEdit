@@ -887,6 +887,34 @@ fn test_keyboard_shortcuts_dialog_lists_menus_in_two_columns() {
 }
 
 #[test]
+fn test_keyboard_shortcuts_dialog_lists_the_compare_window_keys() {
+    let mut h = harness();
+    h.state_mut().pending.push(C::KeyboardShortcuts);
+    h.run_steps(3);
+    // The compare window's keys have their own section, found by the filter like the others.
+    if let Some(Dialog::Shortcuts { filter }) = &mut h.state_mut().dialog {
+        *filter = "合併".into();
+    }
+    h.run_steps(3);
+    assert!(h.query_by_label("比較視窗").is_some(), "the compare window has its own section");
+    assert!(h.query_by_label_contains("合併到右側（未開啟的檔案會在分頁中開啟").is_some());
+    let undo = h.ctx.format_shortcut(&egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::Z));
+    assert_eq!(h.query_all_by_label_contains(&format!("可用 {undo} 復原")).count(), 2, "both merge rows name the platform's undo key");
+    assert!(h.query_by_label_contains("合併到左側").is_some());
+    if let Some(Dialog::Shortcuts { filter }) = &mut h.state_mut().dialog {
+        *filter = "差異".into();
+    }
+    h.run_steps(3);
+    assert!(h.query_by_label("下一個差異").is_some() && h.query_by_label("上一個差異").is_some());
+    // The section's own name finds all of its keys.
+    if let Some(Dialog::Shortcuts { filter }) = &mut h.state_mut().dialog {
+        *filter = "比較".into();
+    }
+    h.run_steps(3);
+    assert!(h.query_by_label("捲動").is_some() && h.query_by_label_contains("合併到左側").is_some());
+}
+
+#[test]
 fn test_theme_toggle_stays_in_menu_bar_when_toolbar_hidden() {
     use eframe::egui::accesskit::Role;
     let mut h = harness();
@@ -1625,6 +1653,7 @@ fn dialogs_keep_their_buttons_inside(size: egui::Vec2) {
         (C::PurgeHistories, "清除"),
         (C::ConvertEncoding, "轉換"),
         (C::WordCount, "關閉"),
+        (C::CompareFiles, "比較"),
         (C::WindowList, "關閉清單"),
         (C::About, "確定"),
     ];
@@ -4217,4 +4246,407 @@ fn temp_bench_output_panel() {
             state.runner.text.len(),
         );
     }
+}
+
+/// Tools > Compare Files: the dialog defaults to the two most recent tabs, and comparing opens
+/// the side-by-side window with moved lines counted and named navigation buttons.
+#[test]
+fn test_compare_files_dialog_opens_the_compare_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.txt");
+    let b = dir.path().join("b.txt");
+    std::fs::write(&a, "moved line\nsame 1\nsame 2\nold\n").unwrap();
+    std::fs::write(&b, "new\nsame 1\nsame 2\nmoved line\n").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&a);
+    h.state_mut().open_path(&b);
+    h.run_steps(3);
+    h.state_mut().pending.push(C::CompareFiles);
+    h.run_steps(3);
+    let Some(Dialog::Compare { left, right, binary }) = &h.state().dialog else { panic!("no Compare dialog") };
+    assert_eq!(left, &crate::core::display_path(&b), "left is the active tab");
+    assert_eq!(right, &crate::core::display_path(&a), "right is the previous tab");
+    assert!(!binary);
+    click_button(&mut h, "比較");
+    assert!(h.state().dialog.is_none(), "the dialog closes once the window opens");
+    assert!(h.state().compare.as_ref().is_some_and(|v| !v.is_binary()));
+    h.run_steps(2);
+    let summary = h.query_all_by(|n| n.role() == egui::accesskit::Role::Label && n.value().is_some_and(|l| l.contains("2 處差異") && l.contains("移動 2 行"))).count();
+    assert_eq!(summary, 1, "the summary counts both changes and both moved lines");
+    for label in ["上一個差異", "下一個差異"] {
+        assert_eq!(h.query_all_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some(label)).count(), 1, "{label}");
+    }
+    assert_eq!(unnamed_buttons(&h), Vec::<String>::new());
+    // The window is drawn inside the main one here, so its keys need the pointer over it.
+    h.event(egui::Event::PointerGone);
+    h.run_steps(1);
+    h.key_press(Key::Escape);
+    h.run_steps(2);
+    assert!(h.state().compare.is_some(), "keys typed elsewhere are not the compare window's");
+    h.get_by_label("下一個差異").hover();
+    h.run_steps(1);
+    // Alt+Down steps to the second difference; Escape closes the window.
+    h.key_press_modifiers(Modifiers::ALT, Key::ArrowDown);
+    h.run_steps(2);
+    assert_eq!(h.state().compare.as_ref().unwrap().current(), Some(1));
+    h.key_press(Key::Escape);
+    h.run_steps(2);
+    assert!(h.state().compare.is_none());
+}
+
+#[test]
+fn test_compare_merges_through_the_target_tab() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.txt");
+    let b = dir.path().join("b.txt");
+    std::fs::write(&a, "keep
+old
+end
+only left
+").unwrap();
+    std::fs::write(&b, "keep
+new
+end
+").unwrap();
+    let mut h = harness();
+    assert!(h.state_mut().start_compare(&a.display().to_string(), &b.display().to_string(), false));
+    h.run_steps(3);
+    h.get_by_label("合併到右側").hover();
+    h.run_steps(1);
+    // Alt+Right copies the first difference ("old") into b, opened in a tab for it.
+    h.key_press_modifiers(Modifiers::ALT, Key::ArrowRight);
+    h.run_steps(3);
+    let lines = |h: &Harness<'static, App>, p: &std::path::Path| {
+        h.state().tabs.iter().find(|t| t.doc.path.as_deref().is_some_and(|q| crate::app::same_target(q, p))).map(|t| t.doc.editor.lines.clone())
+    };
+    assert_eq!(lines(&h, &b).unwrap(), vec!["keep", "old", "end", ""]);
+    assert_eq!(std::fs::read_to_string(&b).unwrap(), "keep
+new
+end
+", "the merge is not saved by itself");
+    assert!(lines(&h, &a).is_none(), "the source file is not opened");
+    // The window compares again: the next difference ("only left") is now current.
+    let plan = h.state().compare.as_ref().unwrap().merge_plan(false).unwrap();
+    assert_eq!(plan, crate::app::compare::MergePlan { side: 0, target: 3..4, expected: vec!["only left".to_string()], source_range: 3..3, source: Vec::new() });
+    // Alt+Left copies the right side's (empty) lines over it: a deletion in a, opened now.
+    h.key_press_modifiers(Modifiers::ALT, Key::ArrowLeft);
+    h.run_steps(3);
+    assert_eq!(lines(&h, &a).unwrap(), vec!["keep", "old", "end", ""]);
+    assert!(h.state().compare.as_ref().unwrap().is_identical());
+    // Each merge is one undoable edit in its tab.
+    let ti = h.state().tabs.iter().position(|t| t.doc.path.as_deref().is_some_and(|q| crate::app::same_target(q, &a))).unwrap();
+    assert!(h.state_mut().tabs[ti].doc.undo());
+    assert_eq!(lines(&h, &a).unwrap(), vec!["keep", "old", "end", "only left", ""]);
+    // The window notices the undo and compares again once the edits pause.
+    for _ in 0..40 {
+        h.run_steps(1);
+        if !h.state().compare.as_ref().unwrap().is_identical() {
+            break;
+        }
+    }
+    assert!(!h.state().compare.as_ref().unwrap().is_identical(), "the undone merge is a difference again");
+
+    // A source edited after the comparison is not copied as it was: compare again and say so.
+    h.state_mut().tabs[ti].doc.editor.lines[3] = "edited".into();
+    h.key_press_modifiers(Modifiers::ALT, Key::ArrowDown);
+    h.run_steps(2);
+    assert_eq!(h.state().compare.as_ref().unwrap().current(), Some(0));
+    h.key_press_modifiers(Modifiers::ALT, Key::ArrowRight);
+    h.run_steps(3);
+    assert!(matches!(h.state().confirm, Some(Confirm::Message { .. })), "a stale source is reported");
+    assert_eq!(lines(&h, &b).unwrap(), vec!["keep", "old", "end", ""], "b is unchanged");
+    h.state_mut().confirm = None;
+
+    // Shortcuts other than the compare window's own keys still work over it (Ctrl+Z here).
+    let tb = h.state().tabs.iter().position(|t| t.doc.path.as_deref().is_some_and(|q| crate::app::same_target(q, &b))).unwrap();
+    h.state_mut().active = tb;
+    h.run_steps(1);
+    h.get_by_label("合併到右側").hover();
+    h.run_steps(1);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(3);
+    assert_eq!(lines(&h, &b).unwrap(), vec!["keep", "new", "end", ""], "Ctrl+Z undid the merge into b");
+}
+
+#[test]
+fn test_compare_text_options_are_remembered_and_compare_again() {
+    use egui_kittest::kittest::NodeT;
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.txt");
+    let b = dir.path().join("b.txt");
+    std::fs::write(&a, "Hello\r\n\r\nworld\r\n").unwrap();
+    std::fs::write(&b, "hello\nworld\n").unwrap();
+    let mut h = harness();
+    assert!(h.state().settings.compare_ignore_eol && !h.state().settings.compare_ignore_case);
+    assert!(h.state_mut().start_compare(&a.display().to_string(), &b.display().to_string(), false));
+    h.run_steps(2);
+    assert!(!h.state().compare.as_ref().unwrap().is_identical(), "case and a blank line differ");
+    // The window's toggles compare again and are kept in the settings.
+    h.get_by_label("忽略大小寫").click();
+    h.run_steps(2);
+    h.get_by_label("忽略空白行").click();
+    h.run_steps(2);
+    assert!(h.state().settings.compare_ignore_case && h.state().settings.compare_ignore_blank_lines);
+    assert!(h.state().compare.as_ref().unwrap().is_identical(), "only case and a blank line differed");
+    // Line endings now count: CRLF against LF on every terminated line.
+    h.get_by_label("忽略換行符號差異（CRLF／LF／CR）").click();
+    h.run_steps(2);
+    assert!(!h.state().settings.compare_ignore_eol);
+    assert!(!h.state().compare.as_ref().unwrap().is_identical(), "CRLF and LF differ now");
+    // The Compare dialog shows the same options.
+    h.state_mut().compare = None;
+    h.state_mut().pending.push(C::CompareFiles);
+    h.run_steps(3);
+    let checked = |h: &Harness<'static, App>, label: &str| h.get_by_role_and_label(egui::accesskit::Role::Switch, label).accesskit_node().toggled() == Some(egui::accesskit::Toggled::True);
+    assert!(checked(&h, "忽略大小寫") && checked(&h, "忽略空白行") && !checked(&h, "忽略換行符號差異（CRLF／LF／CR）"));
+    // Whitespace: off by default, switched on from the dialog and remembered.
+    assert!(!checked(&h, "忽略空白字元差異（空格／Tab）"));
+    h.get_by_role_and_label(egui::accesskit::Role::Switch, "忽略空白字元差異（空格／Tab）").click();
+    h.run_steps(2);
+    assert!(h.state().settings.compare_ignore_whitespace);
+}
+
+#[test]
+fn test_compare_refreshes_from_tabs_without_rereading_the_other_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.txt");
+    let b = dir.path().join("b.txt");
+    std::fs::write(&a, "x\n").unwrap();
+    std::fs::write(&b, "y\n").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&a);
+    h.run_steps(2);
+    assert!(h.state_mut().start_compare(&a.display().to_string(), &b.display().to_string(), false));
+    h.run_steps(2);
+    assert!(!h.state().compare.as_ref().unwrap().is_identical());
+    // b disappears from disk; editing a's tab still compares again, from the b already loaded.
+    std::fs::remove_file(&b).unwrap();
+    let ta = h.state().tabs.iter().position(|t| t.doc.path.as_deref().is_some_and(|q| crate::app::same_target(q, &a))).unwrap();
+    {
+        let doc = &mut h.state_mut().tabs[ta].doc;
+        doc.edit(crate::core::document::EditKind::Other, 0..1, |ed| ed.lines[0] = "y".into());
+    }
+    // Not on the edit's own frame: once the edits pause.
+    h.run_steps(1);
+    assert!(!h.state().compare.as_ref().unwrap().is_identical(), "not compared again on every keystroke");
+    for _ in 0..40 {
+        h.run_steps(1);
+        if h.state().compare.as_ref().is_some_and(|v| v.is_identical()) {
+            break;
+        }
+    }
+    assert!(h.state().compare.as_ref().unwrap().is_identical(), "compared again with the tab's text and the loaded b");
+    assert!(h.state().confirm.is_none(), "b was not read again");
+
+    // Closing a's tab means reading a from disk again; with b gone too, the window says why
+    // and closes.
+    std::fs::remove_file(&a).unwrap();
+    h.state_mut().tabs.remove(ta);
+    h.state_mut().active = 0;
+    for _ in 0..40 {
+        h.run_steps(1);
+        if h.state().compare.is_none() {
+            break;
+        }
+    }
+    assert!(h.state().compare.is_none(), "a comparison that can't be refreshed closes");
+    assert!(matches!(h.state().confirm, Some(Confirm::Message { .. })), "and says why");
+}
+
+#[test]
+fn test_compare_follows_tabs_with_any_path_spelling_and_waits_for_a_pause() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.txt");
+    let b = dir.path().join("b.txt");
+    std::fs::write(&a, "one\n").unwrap();
+    std::fs::write(&b, "one\n").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&a);
+    h.run_steps(2);
+    // The tab's path spelled as Save As leaves it (not canonical), unlike the compared path.
+    let ta = h.state().tabs.iter().position(|t| t.doc.path.as_deref().is_some_and(|q| crate::app::same_target(q, &a))).unwrap();
+    h.state_mut().tabs[ta].doc.path = Some(dir.path().join(".").join("a.txt"));
+    assert!(h.state_mut().start_compare(&a.display().to_string(), &b.display().to_string(), false));
+    h.run_steps(2);
+    assert!(h.state().compare.as_ref().unwrap().is_identical());
+    let edit = |h: &mut Harness<'static, App>, text: &str| {
+        let text = text.to_string();
+        h.state_mut().tabs[ta].doc.edit(crate::core::document::EditKind::Typing, 0..1, move |ed| ed.lines[0] = text);
+    };
+    // Steady typing: each edit restarts the wait, so nothing is compared mid-typing.
+    for i in 0..30 {
+        edit(&mut h, &format!("typing {i}"));
+        h.run_steps(1);
+        assert!(h.state().compare.as_ref().unwrap().is_identical(), "compared again while typing, at edit {i}");
+    }
+    // Alt+Right after the typing pauses: the comparison catches up first (no "file changed"
+    // message), and the new difference, in view, is the one merged.
+    h.get_by_label("合併到右側").hover();
+    h.run_steps(1);
+    h.key_press_modifiers(Modifiers::ALT, Key::ArrowRight);
+    h.run_steps(3);
+    assert!(h.state().confirm.is_none(), "no stale-file message");
+    let tb = h.state().tabs.iter().position(|t| t.doc.path.as_deref().is_some_and(|q| crate::app::same_target(q, &b))).unwrap();
+    assert_eq!(h.state().tabs[tb].doc.editor.lines[0], "typing 29");
+    // Once the edits pause, the window follows the tab spelled differently too.
+    edit(&mut h, "paused");
+    for _ in 0..40 {
+        h.run_steps(1);
+        if !h.state().compare.as_ref().unwrap().is_identical() {
+            break;
+        }
+    }
+    assert!(!h.state().compare.as_ref().unwrap().is_identical(), "the edit was compared after the pause");
+}
+
+#[test]
+fn test_compare_merge_after_an_edit_keeps_the_outlined_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.txt");
+    let b = dir.path().join("b.txt");
+    std::fs::write(&a, "top\nsame\nmid\nsame 2\nLEFT\nend\n").unwrap();
+    std::fs::write(&b, "top\nsame\nmid\nsame 2\nRIGHT\nend\n").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&a);
+    h.run_steps(2);
+    assert!(h.state_mut().start_compare(&a.display().to_string(), &b.display().to_string(), false));
+    h.run_steps(2);
+    assert_eq!(h.state().compare.as_ref().unwrap().current(), Some(0), "LEFT/RIGHT is outlined");
+    // An edit above it makes a new difference #0, shifting LEFT/RIGHT to #1.
+    let ta = h.state().tabs.iter().position(|t| t.doc.path.as_deref().is_some_and(|q| crate::app::same_target(q, &a))).unwrap();
+    h.state_mut().tabs[ta].doc.edit(crate::core::document::EditKind::Typing, 2..3, |ed| ed.lines[2] = "MID".into());
+    h.get_by_label("合併到右側").hover();
+    h.run_steps(1);
+    h.key_press_modifiers(Modifiers::ALT, Key::ArrowRight);
+    h.run_steps(3);
+    // The outlined change was merged, not the new one at its old index.
+    let tb = h.state().tabs.iter().position(|t| t.doc.path.as_deref().is_some_and(|q| crate::app::same_target(q, &b))).unwrap();
+    assert_eq!(h.state().tabs[tb].doc.editor.lines, vec!["top", "same", "mid", "same 2", "LEFT", "end", ""]);
+
+    // If the outlined change itself was edited, nothing is merged on that press.
+    std::fs::write(&b, "x\nRIGHT\n").unwrap();
+    std::fs::write(&a, "x\nLEFT\n").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&a);
+    h.run_steps(2);
+    assert!(h.state_mut().start_compare(&a.display().to_string(), &b.display().to_string(), false));
+    h.run_steps(2);
+    let ta = h.state().tabs.iter().position(|t| t.doc.path.as_deref().is_some_and(|q| crate::app::same_target(q, &a))).unwrap();
+    h.state_mut().tabs[ta].doc.edit(crate::core::document::EditKind::Typing, 1..2, |ed| ed.lines[1] = "LEFT edited".into());
+    // Merging before the window caught up (the same frame as the edit).
+    h.state_mut().merge_compare(true);
+    assert!(h.state().status.as_ref().is_some_and(|(m, _)| m.contains("差異已變更")), "the outlined change was edited");
+    assert!(!h.state().tabs.iter().any(|t| t.doc.path.as_deref().is_some_and(|q| crate::app::same_target(q, &b))), "not merged: the outlined change was edited");
+    assert!(h.state().confirm.is_none());
+    // The refreshed change is outlined now (it is in view); the next merge copies it as shown.
+    h.run_steps(1);
+    h.state_mut().merge_compare(true);
+    let tb = h.state().tabs.iter().position(|t| t.doc.path.as_deref().is_some_and(|q| crate::app::same_target(q, &b))).unwrap();
+    assert_eq!(h.state().tabs[tb].doc.editor.lines[1], "LEFT edited");
+}
+
+#[test]
+fn test_compare_merges_into_a_tab_opened_later_under_another_path_spelling() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.txt");
+    let b = dir.path().join("b.txt");
+    std::fs::write(&a, "new\n").unwrap();
+    std::fs::write(&b, "old\n").unwrap();
+    let mut h = harness();
+    assert!(h.state_mut().start_compare(&a.display().to_string(), &b.display().to_string(), false));
+    h.run_steps(2);
+    // b is opened after the comparison started, its path spelled differently.
+    h.state_mut().open_path(&b);
+    let tb = h.state().tabs.iter().position(|t| t.doc.path.as_deref().is_some_and(|q| crate::app::same_target(q, &b))).unwrap();
+    h.state_mut().tabs[tb].doc.path = Some(dir.path().join(".").join("b.txt"));
+    h.run_steps(2);
+    h.state_mut().merge_compare(true);
+    h.run_steps(2);
+    assert_eq!(h.state().tabs[tb].doc.editor.lines[0], "new", "merged into that tab");
+    assert!(h.state().compare.as_ref().unwrap().is_identical(), "and the window follows it");
+    assert!(h.state().confirm.is_none());
+}
+
+#[test]
+fn test_compare_merge_with_nothing_outlined_selects_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.txt");
+    let b = dir.path().join("b.txt");
+    std::fs::write(&a, "same\n").unwrap();
+    std::fs::write(&b, "same\n").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&a);
+    h.run_steps(2);
+    assert!(h.state_mut().start_compare(&a.display().to_string(), &b.display().to_string(), false));
+    h.run_steps(2);
+    let ta = h.state().tabs.iter().position(|t| t.doc.path.as_deref().is_some_and(|q| crate::app::same_target(q, &a))).unwrap();
+    h.state_mut().tabs[ta].doc.edit(crate::core::document::EditKind::Typing, 0..1, |ed| ed.lines[0] = "typed".into());
+    h.state_mut().merge_compare(true);
+    assert!(h.state().status.as_ref().is_some_and(|(m, _)| m.contains("再按一次")), "{:?}", h.state().status);
+    assert!(!h.state().tabs.iter().any(|t| t.doc.path.as_deref().is_some_and(|q| crate::app::same_target(q, &b))), "nothing merged yet");
+}
+
+#[test]
+fn test_compare_dialog_picks_sides_from_open_files() {
+    use egui_kittest::kittest::NodeT;
+    use eframe::egui::accesskit::Role;
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("alpha.txt");
+    let b = dir.path().join("beta.txt");
+    std::fs::write(&a, "a\n").unwrap();
+    std::fs::write(&b, "b\n").unwrap();
+    // With nothing open, the list buttons are there but disabled.
+    let mut h = harness();
+    h.state_mut().pending.push(C::CompareFiles);
+    h.run_steps(3);
+    let list = h.get_by_role_and_label(Role::Button, "從已開啟的檔案選擇 右側檔案");
+    assert!(list.accesskit_node().is_disabled(), "no saved files are open");
+    h.state_mut().dialog = None;
+    h.state_mut().open_path(&a);
+    h.state_mut().open_path(&b);
+    h.run_steps(3);
+    h.state_mut().pending.push(C::CompareFiles);
+    h.run_steps(3);
+    // The right side starts as the previous tab (alpha); pick beta from the list instead.
+    h.get_by_role_and_label(Role::Button, "從已開啟的檔案選擇 右側檔案").click();
+    h.run_steps(2);
+    let items: Vec<String> = h.query_all_by(|n| n.role() == Role::Button && n.label().is_some_and(|l| l.contains(".txt    "))).filter_map(|n| n.accesskit_node().label()).collect();
+    assert_eq!(items.len(), 2, "both open files are listed: {items:?}");
+    h.get_by_label_contains("beta.txt    ").click();
+    h.run_steps(2);
+    let Some(Dialog::Compare { left, right, .. }) = &h.state().dialog else { panic!("no Compare dialog") };
+    assert_eq!(right, &crate::core::display_path(&b));
+    assert_eq!(left, &crate::core::display_path(&b), "the left side is unchanged (the active tab)");
+    assert!(h.query_by_label_contains("alpha.txt    ").is_none(), "the list closes after a choice");
+}
+
+#[test]
+fn test_compare_binary_and_unreadable_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.bin");
+    let b = dir.path().join("b.bin");
+    std::fs::write(&a, b"abcdef").unwrap();
+    std::fs::write(&b, b"abXdef").unwrap();
+    let mut h = harness();
+    h.state_mut().pending.push(C::CompareBinary);
+    h.run_steps(3);
+    let missing = dir.path().join("missing.bin");
+    if let Some(Dialog::Compare { left, right, binary }) = &mut h.state_mut().dialog {
+        assert!(*binary, "Compare as Binary presets the option");
+        *left = a.display().to_string();
+        *right = missing.display().to_string();
+    }
+    h.run_steps(2);
+    click_button(&mut h, "比較");
+    assert!(matches!(h.state().confirm, Some(Confirm::Message { .. })), "a missing file reports an error");
+    assert!(h.state().dialog.is_some() && h.state().compare.is_none(), "the dialog stays open to fix the path");
+    h.state_mut().confirm = None;
+    if let Some(Dialog::Compare { right, .. }) = &mut h.state_mut().dialog {
+        *right = b.display().to_string();
+    }
+    h.run_steps(2);
+    click_button(&mut h, "比較");
+    assert!(h.state().compare.as_ref().is_some_and(|v| v.is_binary()));
+    h.run_steps(2);
+    assert!(h.query_all_by(|n| n.value().is_some_and(|l| l.contains("1 個位元組不同"))).next().is_some());
 }

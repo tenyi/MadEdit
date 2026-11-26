@@ -54,13 +54,15 @@ pub struct TextOptions {
     pub ignore_blank_lines: bool,
     /// Upper and lower case.
     pub ignore_case: bool,
+    /// Spaces and tabs: lines that differ only in whitespace compare equal.
+    pub ignore_whitespace: bool,
     /// Line terminator styles (CRLF, LF, CR).
     pub ignore_eol: bool,
 }
 
 impl Default for TextOptions {
     fn default() -> Self {
-        Self { ignore_blank_lines: false, ignore_case: false, ignore_eol: true }
+        Self { ignore_blank_lines: false, ignore_case: false, ignore_whitespace: false, ignore_eol: true }
     }
 }
 
@@ -184,7 +186,7 @@ pub fn diff_lines_with(left: &[String], right: &[String], eols: [Option<&[Eol]>;
     let (mut a, mut b) = (Vec::with_capacity(left.len()), Vec::with_capacity(right.len()));
     for (lines, out) in [(left, &mut a), (right, &mut b)] {
         for l in lines {
-            let text = if opts.ignore_case { Cow::Owned(l.to_lowercase()) } else { Cow::Borrowed(l.as_str()) };
+            let text = compare_key(l, opts);
             let next = ids.len() as u32;
             out.push(*ids.entry(text).or_insert(next));
         }
@@ -268,6 +270,18 @@ fn mark_eol_changes(diff: &mut TextDiff, le: &[Eol], re: &[Eol]) {
     }
 }
 
+/// A line as compared under `opts`: whitespace (spaces, tabs) removed, case folded.
+fn compare_key<'a>(line: &'a str, opts: TextOptions) -> Cow<'a, str> {
+    let mut key = Cow::Borrowed(line);
+    if opts.ignore_whitespace && line.contains(char::is_whitespace) {
+        key = Cow::Owned(line.chars().filter(|c| !c.is_whitespace()).collect());
+    }
+    if opts.ignore_case {
+        key = Cow::Owned(key.to_lowercase());
+    }
+    key
+}
+
 /// Drops the changes made only of blank lines from the hunks, marking their rows ignored.
 fn ignore_blank_hunks(diff: &mut TextDiff, left: &[String], right: &[String]) {
     let blank = |r: &Row| r.left.is_none_or(|l| left[l].trim().is_empty()) && r.right.is_none_or(|l| right[l].trim().is_empty());
@@ -292,18 +306,25 @@ const MAX_INLINE_EDITS: usize = 200;
 /// Word-level differences inside a changed line pair: the byte ranges of `a` and of `b` that
 /// are not shared. Words are runs of letters, digits and `_` (each CJK character on its own),
 /// runs of spaces, or single other characters, as in OxideMerge's word mode.
-pub fn inline_diff(a: &str, b: &str) -> (Vec<Range<usize>>, Vec<Range<usize>>) {
+/// Under `opts`, words that differ only in case (`ignore_case`) are not highlighted, and
+/// whitespace (`ignore_whitespace`) is neither compared nor highlighted.
+pub fn inline_diff(a: &str, b: &str, opts: TextOptions) -> (Vec<Range<usize>>, Vec<Range<usize>>) {
     let whole = |s: &str| if s.is_empty() { Vec::new() } else { std::iter::once(0..s.len()).collect() };
     if a.len() > MAX_INLINE_BYTES || b.len() > MAX_INLINE_BYTES {
         return (whole(a), whole(b));
     }
-    let (ta, tb) = (words(a), words(b));
-    let mut ids: HashMap<&str, u32> = HashMap::new();
+    let keep = |s: &str, w: Vec<Range<usize>>| -> Vec<Range<usize>> {
+        if opts.ignore_whitespace { w.into_iter().filter(|r| !s[r.clone()].chars().all(char::is_whitespace)).collect() } else { w }
+    };
+    let (ta, tb) = (keep(a, words(a)), keep(b, words(b)));
+    let mut ids: HashMap<Cow<'_, str>, u32> = HashMap::new();
     let (mut ia, mut ib) = (Vec::with_capacity(ta.len()), Vec::with_capacity(tb.len()));
     for (s, tokens, out) in [(a, &ta, &mut ia), (b, &tb, &mut ib)] {
         for r in tokens {
+            let word = &s[r.clone()];
+            let key = if opts.ignore_case { Cow::Owned(word.to_lowercase()) } else { Cow::Borrowed(word) };
             let next = ids.len() as u32;
-            out.push(*ids.entry(&s[r.clone()]).or_insert(next));
+            out.push(*ids.entry(key).or_insert(next));
         }
     }
     let mut ops = Vec::new();
@@ -571,6 +592,9 @@ pub struct BinaryDiff {
     pub moved: Vec<MovedBlock>,
     /// The aligned layout both hex panes are drawn from, in display order.
     pub stretches: Vec<Stretch>,
+    /// The changed region was too large to align byte by byte: bytes shifted by an insertion
+    /// or deletion line up only where a relocated block was found.
+    pub alignment_skipped: bool,
 }
 
 impl BinaryDiff {
@@ -596,7 +620,9 @@ impl BinaryDiff {
         [0, 1].map(|i| (k < s.count[i]).then(|| s.start[i] + k))
     }
 
-    /// Whether display cell `d` is a difference.
+    /// Whether display cell `d` is a difference (the slow, cell-by-cell check the run scans
+    /// are tested against).
+    #[cfg(test)]
     pub fn cell_differs(&self, a: &[u8], b: &[u8], d: usize) -> bool {
         match (self.stretch_at(d), self.cell(d)) {
             (Some(s), _) if s.matched => false,
@@ -606,72 +632,133 @@ impl BinaryDiff {
         }
     }
 
-    /// The next run of differing display cells at or after `from`.
+    /// The next run of differing display cells at or after `from`. Bytes are compared a
+    /// stretch at a time, so long runs and long equal spans cost a slice scan, not a lookup
+    /// per cell.
     pub fn next_run(&self, a: &[u8], b: &[u8], from: usize) -> Option<Range<usize>> {
         let first = self.stretches.partition_point(|s| s.at + s.len <= from);
-        for s in self.stretches.iter().skip(first).filter(|s| !s.matched) {
-            let lo = from.max(s.at) - s.at;
-            // Both sides have bytes up to `both`; past it every cell differs.
-            let both = s.count[0].min(s.count[1]);
-            let (x, y) = (&a[s.start[0]..s.start[0] + both], &b[s.start[1]..s.start[1] + both]);
-            let start = if lo < both {
-                lo + common_prefix(&x[lo..], &y[lo..])
-            } else {
-                lo
-            };
-            if start >= s.len {
-                continue;
+        for (i, s) in self.stretches.iter().enumerate().skip(first) {
+            let Some(p) = s.first_diff(a, b, from.max(s.at) - s.at) else { continue };
+            let n = s.leading_diff(a, b, p);
+            let mut end = s.at + p + n;
+            // A run reaching the end of its stretch can go on into the next ones.
+            if p + n == s.len {
+                for t in &self.stretches[i + 1..] {
+                    let m = t.leading_diff(a, b, 0);
+                    end += m;
+                    if m < t.len {
+                        break;
+                    }
+                }
             }
-            let mut end = start + 1;
-            while end < s.len && self.cell_differs(a, b, s.at + end) {
-                end += 1;
-            }
-            // A run can go on into the next stretch.
-            let mut end = s.at + end;
-            while end < self.cells() && self.cell_differs(a, b, end) {
-                end += 1;
-            }
-            return Some(s.at + start..end);
+            return Some(s.at + p..end);
         }
         None
     }
 
     /// The last run of differing display cells ending at or before `before`.
     pub fn prev_run(&self, a: &[u8], b: &[u8], before: usize) -> Option<Range<usize>> {
-        let mut at = before.min(self.cells());
-        // Skip matched stretches and equal bytes; stretches are short scans at worst here.
-        while at > 0 {
-            let s = *self.stretch_at(at - 1)?;
-            if s.matched {
-                at = s.at;
-                continue;
-            }
-            let both = s.count[0].min(s.count[1]);
-            let k = at - s.at;
-            if k <= both {
-                let (x, y) = (&a[s.start[0]..s.start[0] + k], &b[s.start[1]..s.start[1] + k]);
-                let same = common_suffix(x, y);
-                if same == k {
-                    at = s.at;
-                    continue;
-                }
-                at -= same;
-            }
-            break;
-        }
-        if at == 0 {
+        let before = before.min(self.cells());
+        if before == 0 {
             return None;
         }
-        let end = at;
-        while at > 0 && self.cell_differs(a, b, at - 1) {
-            at -= 1;
+        let last = self.stretches.partition_point(|s| s.at + s.len < before).min(self.stretches.len() - 1);
+        for i in (0..=last).rev() {
+            let s = &self.stretches[i];
+            let Some(p) = s.last_diff(a, b, before.min(s.at + s.len) - s.at) else { continue };
+            let n = s.trailing_diff(a, b, p + 1);
+            let end = s.at + p + 1;
+            let mut start = end - n;
+            if n == p + 1 {
+                for t in self.stretches[..i].iter().rev() {
+                    let m = t.trailing_diff(a, b, t.len);
+                    start -= m;
+                    if m < t.len {
+                        break;
+                    }
+                }
+            }
+            return Some(start..end);
         }
-        Some(at..end)
+        None
+    }
+}
+
+impl Stretch {
+    /// Cells `0..both` have a byte on both sides; the rest have one on one side only.
+    fn both(&self) -> usize {
+        self.count[0].min(self.count[1])
+    }
+
+    fn shared<'a>(&self, a: &'a [u8], b: &'a [u8]) -> (&'a [u8], &'a [u8]) {
+        let both = self.both();
+        (&a[self.start[0]..self.start[0] + both], &b[self.start[1]..self.start[1] + both])
+    }
+
+    /// The first differing cell at or after `k`.
+    fn first_diff(&self, a: &[u8], b: &[u8], k: usize) -> Option<usize> {
+        if self.matched || k >= self.len {
+            return None;
+        }
+        let both = self.both();
+        if k < both {
+            let (x, y) = self.shared(a, b);
+            let p = k + common_prefix(&x[k..], &y[k..]);
+            if p < both {
+                return Some(p);
+            }
+        }
+        (both < self.len).then(|| k.max(both))
+    }
+
+    /// The last differing cell before `k`.
+    fn last_diff(&self, a: &[u8], b: &[u8], k: usize) -> Option<usize> {
+        if self.matched || k == 0 {
+            return None;
+        }
+        let both = self.both();
+        if k > both {
+            return Some(k - 1);
+        }
+        let (x, y) = self.shared(a, b);
+        let same = common_suffix(&x[..k], &y[..k]);
+        (same < k).then(|| k - 1 - same)
+    }
+
+    /// How many cells from `k` on differ in a row.
+    fn leading_diff(&self, a: &[u8], b: &[u8], k: usize) -> usize {
+        if self.matched {
+            return 0;
+        }
+        let both = self.both();
+        if k >= both {
+            return self.len - k.min(self.len);
+        }
+        let (x, y) = self.shared(a, b);
+        let n = x[k..].iter().zip(&y[k..]).take_while(|(p, q)| p != q).count();
+        if k + n == both { n + self.len - both } else { n }
+    }
+
+    /// How many cells before `k` differ in a row.
+    fn trailing_diff(&self, a: &[u8], b: &[u8], k: usize) -> usize {
+        if self.matched {
+            return 0;
+        }
+        let both = self.both();
+        let (x, y) = self.shared(a, b);
+        let upto = k.min(both);
+        let n = x[..upto].iter().rev().zip(y[..upto].iter().rev()).take_while(|(p, q)| p != q).count();
+        if k > both {
+            // The one-sided cells all differ; the shared ones before them count if they run on.
+            (k - both) + n
+        } else {
+            n
+        }
     }
 }
 
 pub fn diff_bytes(a: &[u8], b: &[u8]) -> BinaryDiff {
-    let moved = if a == b { Vec::new() } else { moved_blocks(a, b) };
+    let (moved, alignment_skipped) = if a == b { (Vec::new(), false) } else { moved_blocks(a, b) };
     let stretches = layout(&aligned_chain(&moved), [a.len(), b.len()]);
     let mut differing = 0;
     for s in stretches.iter().filter(|s| !s.matched) {
@@ -684,7 +771,7 @@ pub fn diff_bytes(a: &[u8], b: &[u8]) -> BinaryDiff {
             }
         }
     }
-    BinaryDiff { differing, moved, stretches }
+    BinaryDiff { differing, moved, stretches, alignment_skipped }
 }
 
 /// The moved blocks that keep their order in both files, longest in total: those that can be
@@ -846,13 +933,16 @@ fn relocated_blocks(left: &[u8], right: &[u8]) -> Vec<MovedBlock> {
 }
 
 /// Moved blocks: exact relocations, plus shifted runs found by aligning the changed region.
-/// Sorted by source offset; at most `MAX_MOVED_BLOCKS`.
-fn moved_blocks(left: &[u8], right: &[u8]) -> Vec<MovedBlock> {
+/// Sorted by source offset; at most `MAX_MOVED_BLOCKS`. Also whether the alignment had to be
+/// skipped for size.
+fn moved_blocks(left: &[u8], right: &[u8]) -> (Vec<MovedBlock>, bool) {
     let mut out = relocated_blocks(left, right);
     let shift_hint = out.iter().map(|m| m.source.start.abs_diff(m.target.start)).filter(|&s| s <= WIDE_BAND).max().unwrap_or(0);
-    add_aligned_runs(&mut out, aligned_runs(left, right, shift_hint));
+    let runs = aligned_runs(left, right, shift_hint);
+    let skipped = runs.is_none();
+    add_aligned_runs(&mut out, runs.unwrap_or_default());
     out.sort_unstable_by_key(|m| m.source.start);
-    out
+    (out, skipped)
 }
 
 // Local alignment, after OxideMerge: a banded edit-distance alignment between the common
@@ -868,8 +958,8 @@ const WIDE_WIDTH: usize = 2 * WIDE_BAND + 1;
 const ALIGN_CONTEXT: usize = ALIGN_BAND + MIN_MOVED_BLOCK;
 
 /// Shifted runs `(left range, right range)` of equal bytes found by aligning the region
-/// that differs. Empty when the region is too large for the cell budget.
-fn aligned_runs(left: &[u8], right: &[u8], shift_hint: usize) -> Vec<(Range<usize>, Range<usize>)> {
+/// that differs. `None` when the region is too large for the cell budget.
+fn aligned_runs(left: &[u8], right: &[u8], shift_hint: usize) -> Option<Vec<(Range<usize>, Range<usize>)>> {
     let prefix = common_prefix(left, right);
     let start = prefix.saturating_sub(ALIGN_CONTEXT);
     let suffix = common_suffix(&left[prefix..], &right[prefix..]).saturating_sub(ALIGN_CONTEXT);
@@ -896,9 +986,9 @@ fn aligned_runs(left: &[u8], right: &[u8], shift_hint: usize) -> Vec<(Range<usiz
     } else if cells(ALIGN_BAND, ALIGN_WIDTH) <= ALIGN_CELLS {
         align_window::<ALIGN_BAND, ALIGN_WIDTH>(l, r)
     } else {
-        return Vec::new();
+        return None;
     };
-    runs.into_iter().map(|(a, b)| (a.start + start..a.end + start, b.start + start..b.end + start)).collect()
+    Some(runs.into_iter().map(|(a, b)| (a.start + start..a.end + start, b.start + start..b.end + start)).collect())
 }
 
 /// Banded edit-distance alignment with a traceback; returns the shifted runs of equal bytes
@@ -1028,11 +1118,11 @@ mod tests {
     #[test]
     fn inline_diff_marks_the_changed_words() {
         let (a, b) = ("Built on XPG 2026-06-13 00:39:14 PDT", "Built on XPG 2026-05-22 03:21:24 PDT");
-        let (ra, rb) = inline_diff(a, b);
+        let (ra, rb) = inline_diff(a, b, TextOptions::default());
         assert_eq!(pieces(a, &ra), vec!["06", "13", "00", "39", "14"]);
         assert_eq!(pieces(b, &rb), vec!["05", "22", "03", "21", "24"]);
         let (a, b) = ("XPG Release RJ-2026.6", "XPG Release RJ-2025.5");
-        let (ra, rb) = inline_diff(a, b);
+        let (ra, rb) = inline_diff(a, b, TextOptions::default());
         assert_eq!(pieces(a, &ra), vec!["2026", "6"]);
         assert_eq!(pieces(b, &rb), vec!["2025", "5"]);
     }
@@ -1040,20 +1130,32 @@ mod tests {
     #[test]
     fn inline_diff_handles_cjk_insertions_and_long_lines() {
         let (a, b) = ("設定名稱 abc", "設定的名稱 abc def");
-        let (ra, rb) = inline_diff(a, b);
+        let (ra, rb) = inline_diff(a, b, TextOptions::default());
         assert!(ra.is_empty());
         assert_eq!(pieces(b, &rb), vec!["的", " def"]);
         assert_eq!(words("a_1  b,c"), vec![0..3, 3..5, 5..6, 6..7, 7..8]);
         let long = "x".repeat(MAX_INLINE_BYTES + 1);
-        assert_eq!(inline_diff(&long, "y"), (vec![0..long.len()], vec![0..1]));
-        assert_eq!(inline_diff("", "a"), (vec![], vec![0..1]));
+        assert_eq!(inline_diff(&long, "y", TextOptions::default()), (vec![0..long.len()], vec![0..1]));
+        assert_eq!(inline_diff("", "a", TextOptions::default()), (vec![], vec![0..1]));
+        // Ignoring case, only the word that differs otherwise is marked.
+        let (a, b) = ("Value FOO", "value bar");
+        let case = TextOptions { ignore_case: true, ..TextOptions::default() };
+        assert_eq!(pieces(a, &inline_diff(a, b, case).0), vec!["FOO"]);
+        // Ignoring whitespace, a tab for spaces is not marked; the changed word still is.
+        let ws = TextOptions { ignore_whitespace: true, ..TextOptions::default() };
+        let (wa, wb) = ("if x\t{ go }", "if  x {  stop }");
+        let (ra, rb) = inline_diff(wa, wb, ws);
+        assert_eq!((pieces(wa, &ra), pieces(wb, &rb)), (vec!["go"], vec!["stop"]));
+        let (ra, _) = inline_diff(wa, wb, TextOptions::default());
+        assert!(pieces(wa, &ra).iter().any(|p| p.contains('\t')));
+        assert_eq!(pieces(a, &inline_diff(a, b, TextOptions::default()).0), vec!["Value", "FOO"]);
 
         // Long, mostly different lines stay within the small word budget: the differing middle
         // (between the shared start and end) is highlighted as one piece.
         let a: String = (0..700).map(|i| format!("a{i} ")).collect::<String>() + "end";
         let b: String = (0..700).map(|i| format!("b{i} ")).collect::<String>() + "end";
         let start = std::time::Instant::now();
-        let (ra, rb) = inline_diff(&a, &b);
+        let (ra, rb) = inline_diff(&a, &b, TextOptions::default());
         assert!(start.elapsed() < std::time::Duration::from_secs(1));
         assert_eq!(ra, vec![0..a.len() - 4]);
         assert_eq!(rb, vec![0..b.len() - 4]);
@@ -1105,7 +1207,7 @@ mod tests {
 
     #[test]
     fn options_ignore_blank_lines_case_and_line_endings() {
-        let opts = |blank, case, eol| TextOptions { ignore_blank_lines: blank, ignore_case: case, ignore_eol: eol };
+        let opts = |blank, case, eol| TextOptions { ignore_blank_lines: blank, ignore_case: case, ignore_whitespace: false, ignore_eol: eol };
         // Blank lines added or removed on their own are not differences when ignored.
         let a = v(&["one", "", "two", "three"]);
         let b = v(&["one", "two", "", "", "three"]);
@@ -1123,6 +1225,13 @@ mod tests {
         let (a, b) = (v(&["Hello", "World"]), v(&["hello", "WORLD"]));
         assert_eq!(diff_lines_with(&a, &b, [None, None], opts(false, false, true)).hunks.len(), 1);
         assert!(diff_lines_with(&a, &b, [None, None], opts(false, true, true)).is_identical());
+
+        // Whitespace: tabs for spaces, or extra spaces, are not differences when ignored.
+        let (a, b) = (v(&["\tint x = 1;", "f(a,b)"]), v(&["    int x  =  1;", "f(a, b)"]));
+        assert_eq!(diff_lines_with(&a, &b, [None, None], TextOptions::default()).hunks.len(), 1);
+        let ws = TextOptions { ignore_whitespace: true, ..TextOptions::default() };
+        assert!(diff_lines_with(&a, &b, [None, None], ws).is_identical());
+        assert!(!diff_lines_with(&a, &v(&["\tint x = 2;", "f(a,b)"]), [None, None], ws).is_identical());
 
         // Line endings: the same text with CRLF on one side and LF on the other.
         let a = v(&["a", "b", ""]);
@@ -1325,6 +1434,66 @@ mod tests {
         assert_eq!(d.cell(at(1, 235)), [None, Some(235)], "inserted bytes face blank cells");
         assert_eq!(d.cell(at(0, 237)), [Some(237), Some(238)], "t lines up again");
         assert_eq!(d.differing, 2 + 4 + 3, "deleted, changed (5 and 5 match) and inserted bytes");
+    }
+
+    #[test]
+    fn binary_runs_match_a_cell_by_cell_scan() {
+        // Pseudo-random edits (changes, insertions, deletions) over a repetitive base.
+        let mut seed = 12345u32;
+        let mut rnd = || {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            seed >> 8
+        };
+        let a: Vec<u8> = (0..3000).map(|i| (i % 97) as u8).collect();
+        let mut b = a.clone();
+        for _ in 0..40 {
+            let at = rnd() as usize % b.len();
+            match rnd() % 3 {
+                0 => b[at] ^= 0x5a,
+                1 => b.insert(at, rnd() as u8),
+                _ => {
+                    b.remove(at);
+                }
+            }
+        }
+        let d = diff_bytes(&a, &b);
+        let brute: Vec<bool> = (0..d.cells()).map(|c| d.cell_differs(&a, &b, c)).collect();
+        assert_eq!(d.differing, brute.iter().filter(|&&x| x).count());
+        // Runs found forwards and backwards cover exactly the differing cells.
+        let mut forward = Vec::new();
+        let mut from = 0;
+        while let Some(r) = d.next_run(&a, &b, from) {
+            assert!(r.start >= from && !r.is_empty());
+            assert!(r.clone().all(|c| brute[c]), "{r:?}");
+            assert!(r.start == 0 || !brute[r.start - 1], "{r:?} starts mid-run");
+            assert!(r.end == brute.len() || !brute[r.end], "{r:?} ends mid-run");
+            from = r.end;
+            forward.push(r);
+        }
+        assert_eq!(forward.iter().map(|r| r.len()).sum::<usize>(), d.differing);
+        let mut backward = Vec::new();
+        let mut before = usize::MAX;
+        while let Some(r) = d.prev_run(&a, &b, before) {
+            before = r.start;
+            backward.push(r);
+        }
+        backward.reverse();
+        assert_eq!(forward, backward);
+    }
+
+    #[test]
+    fn binary_runs_over_a_large_difference_are_fast() {
+        // One 8 MiB stretch that differs throughout: scanned as slices, not cell by cell.
+        let a = vec![1u8; 8 << 20];
+        let b = vec![2u8; (8 << 20) + 5];
+        let start = std::time::Instant::now();
+        let d = diff_bytes(&a, &b);
+        assert_eq!(d.next_run(&a, &b, 0), Some(0..b.len()));
+        assert_eq!(d.prev_run(&a, &b, usize::MAX), Some(0..b.len()));
+        assert!(start.elapsed() < std::time::Duration::from_secs(5), "{:?}", start.elapsed());
+        assert!(d.alignment_skipped, "8 MiB is past the alignment budget, and says so");
+        let small = diff_bytes(&a[..4096], &b[..4100]);
+        assert!(!small.alignment_skipped);
     }
 
     #[test]

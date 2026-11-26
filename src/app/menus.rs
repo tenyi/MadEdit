@@ -636,6 +636,9 @@ impl App {
         ui.separator();
         self.item(ui, C::RunScript);
         ui.separator();
+        self.item(ui, C::CompareFiles);
+        self.item(ui, C::CompareBinary);
+        ui.separator();
         self.item(ui, C::Highlighting);
         self.item(ui, C::FileAssociation);
         self.item(ui, C::SourceFormatter);

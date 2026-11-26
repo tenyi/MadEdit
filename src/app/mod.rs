@@ -3,6 +3,7 @@
 mod actions;
 mod updates;
 pub mod commands;
+mod compare;
 mod i18n;
 mod icons;
 mod dialogs;
@@ -210,6 +211,8 @@ pub struct App {
     fav_root_open: bool,
     /// 開啟中的預覽列印視窗
     preview: Option<preview::PrintPreview>,
+    /// The open Tools > Compare Files window.
+    compare: Option<Box<compare::CompareView>>,
 }
 
 impl App {
@@ -291,6 +294,7 @@ impl App {
             shell_icons: shell_icons::IconCache::default(),
             fav_root_open: true,
             preview: None,
+            compare: None,
         };
         app.load_icons(&cc.egui_ctx);
         app.rebuild_bindings();
@@ -915,8 +919,20 @@ impl App {
         if capturing || self.confirm.is_some() {
             return;
         }
+        // An embedded compare window under the pointer handles its own keys (arrows, Alt+arrows,
+        // Page/Home/End, F8, Escape): the focused editor must not act on them as well, and no
+        // shortcut may take them. Other shortcuts (save, undo) still work.
+        let compare_keys = self.compare.as_ref().is_some_and(|v| v.takes_keys(ctx));
+        if compare_keys {
+            ctx.memory_mut(|m| {
+                if let Some(id) = m.focused() {
+                    m.surrender_focus(id);
+                }
+            });
+        }
         ctx.input_mut(|i| {
             i.events.retain(|ev| match ev {
+                Event::Key { key, pressed: true, .. } if compare_keys && compare::CompareView::is_own_key(*key) => true,
                 Event::Key { key, pressed: true, modifiers, .. } => {
                     let hit = bindings
                         .iter()
@@ -1784,6 +1800,7 @@ impl eframe::App for App {
 
         self.show_dialogs(&ctx);
         self.show_print_preview(&ctx);
+        self.show_compare(&ctx);
         self.show_confirm(&ctx);
         // 收藏群組「取代開啟」：關閉流程（含儲存確認）全部結束後接續開啟群組
         if self.confirm.is_none()

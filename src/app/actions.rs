@@ -1052,6 +1052,13 @@ impl App {
             // ── 工具 ──
             C::Options => self.dialog = Some(Dialog::Options(Box::default())),
             C::RunScript => self.run_script(),
+            C::CompareFiles | C::CompareBinary => {
+                // The left file defaults to the active document, the right one to the previous tab.
+                let path_of = |t: Option<&super::Tab>| t.and_then(|t| t.doc.path.as_deref()).map(crate::core::display_path).unwrap_or_default();
+                let left = path_of(self.tabs.get(self.active));
+                let right = path_of(self.tabs.get(self.prev_active).filter(|_| self.prev_active != self.active));
+                self.dialog = Some(Dialog::Compare { left, right, binary: c == C::CompareBinary });
+            }
             C::Highlighting => self.dialog = Some(Dialog::Highlighting),
             C::FileAssociation => self.message(
                 "檔案類型關聯",

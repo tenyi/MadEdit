@@ -304,6 +304,14 @@ pub struct Settings {    pub auto_check_updates: bool,
     pub col_hint_position: usize,
     pub show_ruler: bool,
     pub show_eol: bool,
+    /// Tools > Compare Files: changes of blank lines only are not differences
+    pub compare_ignore_blank_lines: bool,
+    /// Tools > Compare Files: upper and lower case compare equal
+    pub compare_ignore_case: bool,
+    /// Tools > Compare Files: spaces and tabs are not compared
+    pub compare_ignore_whitespace: bool,
+    /// Tools > Compare Files: line terminator styles (CRLF, LF, CR) compare equal
+    pub compare_ignore_eol: bool,
     pub show_tab: bool,
     pub show_space: bool,
     pub mark_active_line: bool,
@@ -427,6 +435,10 @@ impl Default for Settings {
             col_hint_position: 80,
             show_ruler: true,
             show_eol: false,
+            compare_ignore_blank_lines: false,
+            compare_ignore_case: false,
+            compare_ignore_whitespace: false,
+            compare_ignore_eol: true,
             show_tab: false,
             show_space: false,
             mark_active_line: true,
