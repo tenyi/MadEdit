@@ -269,6 +269,32 @@ pub fn find_in_lines(
     None
 }
 
+/// 多行文字裡的字元索引 →（行, 行內字元欄）
+fn char_index_to_line_col(text: &str, char_idx: usize) -> (usize, usize) {
+    let mut seen = 0usize;
+    for (li, line) in text.split('\n').enumerate() {
+        let len = line.chars().count();
+        if char_idx <= seen + len {
+            return (li, char_idx - seen);
+        }
+        seen += len + 1; // 換行符
+    }
+    let lines: Vec<&str> = text.split('\n').collect();
+    (lines.len().saturating_sub(1), lines.last().map(|l| l.chars().count()).unwrap_or(0))
+}
+
+/// （行, 行內字元欄）→ 字元索引
+fn line_col_to_char_index(text: &str, line: usize, col: usize) -> usize {
+    let mut idx = 0usize;
+    for (li, l) in text.split('\n').enumerate() {
+        if li == line {
+            return idx + col.min(l.chars().count());
+        }
+        idx += l.chars().count() + 1;
+    }
+    idx
+}
+
 /// Matches per line for the live count; summing gives the document total.
 fn count_matches_per_line(lines: &[String], re: &Regex) -> Vec<usize> {
     lines.iter().map(|line| re.find_iter(line).filter(|m| m.start() != m.end()).count()).collect()
@@ -875,18 +901,95 @@ impl App {
                         ui.label(RichText::new(lbl_find.as_str()).size(12.5).weak());
                     });
                     // 查找框：多行、撐滿整行（可搜尋含換行的內容，跨行比對引擎見 find_in_text）。
-                    // 標題列佔位修復後可直接用滿可用寬（總寬＝窗寬−邊距，不再逐幀回饋）
-                    let field_w = ui.available_width();
+                    let field_w = ui.available_width() - 12.0;
                     let hint = if self.find.hex { lbl_hex_hint.clone() } else { String::new() };
                     let hint = if hint.is_empty() { self.t("find.find_what", "查找內容…").to_string() } else { hint };
+                    let query_before = self.find.query.clone();
+                    let query_lines = self.find.query.lines().count().saturating_sub(1);
                     let field = egui::TextEdit::multiline(&mut self.find.query)
                         .desired_width(field_w)
                         .desired_rows(4)
+                        .frame(egui::Frame::NONE)
+                        .margin(egui::Margin::symmetric(6, 4))
                         .prefix(RichText::new("🔍").weak())
                         .hint_text(hint);
-                    let resp = ui.add(field);
-                    if failed {
-                        ui.painter().rect_stroke(resp.rect, 6.0, egui::Stroke::new(1.0, ui.visuals().error_fg_color), egui::StrokeKind::Inside);
+                    // 固定高度滾動容器：TextEdit 隨內容長高，由 ScrollArea 裁剪＋內部捲動；
+                    // 邊框／箭頭錨定容器視口（不隨內容滾動而破版）
+                    let box_h = ui.text_style_height(&egui::TextStyle::Body) * 4.0 + 24.0;
+                    let vp_rect = egui::Rect::from_min_size(egui::pos2(ui.max_rect().left(), ui.cursor().top()), egui::vec2(ui.max_rect().width(), box_h));
+                    // 底色先鋪（TextEdit 已無自身邊框／底色）
+                    ui.painter().rect_filled(vp_rect, 6.0, ui.visuals().extreme_bg_color);
+                    // 佔位推進父級游標（new_child 不推進，後續控件會全部疊上來）
+                    ui.allocate_exact_size(egui::vec2(vp_rect.width(), box_h), egui::Sense::hover());
+                    let mut scroll_ui = ui.new_child(
+                        egui::UiBuilder::new().id_salt("find-query-scroll-area").max_rect(vp_rect.shrink2(egui::vec2(6.0, 4.0))).layout(egui::Layout::top_down(egui::Align::LEFT)),
+                    );
+                    let resp = egui::ScrollArea::vertical()
+                        .id_salt("find-query-scroll")
+                        .auto_shrink([false, false])
+                        .min_scrolled_height(vp_rect.height() - 8.0)
+                        .max_height(vp_rect.height() - 8.0)
+                        .show(&mut scroll_ui, |ui| ui.add(field))
+                        .inner;
+                    // 滾輪：游標整行步進（滾輪上＝往上、滾輪下＝往下；egui 自動把游標行捲入視野）
+                    if ui.rect_contains_pointer(vp_rect) {
+                        let dy = ui.input(|i| i.smooth_scroll_delta.y);
+                        if dy != 0.0 {
+                            let step = ((dy.abs() / ui.text_style_height(&egui::TextStyle::Body)).round() as usize).max(1);
+                            let dir: isize = if dy > 0.0 { -1 } else { 1 };
+                            if let Some(mut st) = egui::TextEdit::load_state(ui.ctx(), resp.id) {
+                                let char_idx = st
+                                    .cursor
+                                    .char_range()
+                                    .map(|r| r.primary.index.0.min(r.secondary.index.0))
+                                    .unwrap_or(0);
+                                let (cur_l, cur_c) = char_index_to_line_col(&self.find.query, char_idx);
+                                let new_l = (cur_l as isize + dir * step as isize).clamp(0, query_lines as isize) as usize;
+                                let line_len = self.find.query.split('\n').nth(new_l).map(|l| l.chars().count()).unwrap_or(0);
+                                let col = cur_c.min(line_len);
+                                let new_idx = line_col_to_char_index(&self.find.query, new_l, col);
+                                st.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(new_idx))));
+                                st.store(ui.ctx(), resp.id);
+                            }
+                        }
+                    }
+                    // 邊框畫在容器視口上：聚焦＝白框、hover／未聚焦＝灰框，查詢錯誤時改紅框
+                    let focused = resp.has_focus();
+                    let hovered = ui.rect_contains_pointer(vp_rect);
+                    let border = if failed {
+                        egui::Stroke::new(1.0, ui.visuals().error_fg_color)
+                    } else if focused {
+                        ui.visuals().widgets.active.bg_stroke
+                    } else if hovered {
+                        ui.visuals().widgets.hovered.bg_stroke
+                    } else {
+                        ui.visuals().widgets.noninteractive.bg_stroke
+                    };
+                    ui.painter().rect_stroke(vp_rect, 6.0, border, egui::StrokeKind::Inside);
+                    // Windows 慣例：純 Enter 觸發查找不換行（還原本幀插入的 \n）；Ctrl+Enter 才插入換行
+                    let enter_pressed = ui.input(|i| i.key_pressed(Key::Enter));
+                    let with_ctrl = ui.input(|i| i.modifiers.ctrl);
+                    if enter_pressed && !with_ctrl {
+                        self.find.query = query_before;
+                        do_next = Some(ui.input(|i| i.modifiers.shift_only()));
+                        resp.request_focus();
+                    } else if enter_pressed && with_ctrl {
+                        // egui 帶修飾鍵時不插入換行：手動在游標處補一個 \n 並移動游標
+                        if self.find.query == query_before {
+                            if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp.id) {
+                                let head = state.cursor.char_range().map_or_else(
+                                    || self.find.query.chars().count(),
+                                    |r| r.primary.index.0.min(r.secondary.index.0),
+                                );
+                                let byte = char_to_byte(&self.find.query, head);
+                                self.find.query.insert(byte, '\n');
+                                state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+                                    egui::text::CCursor::new(head + 1),
+                                    egui::text::CCursor::new(head + 1),
+                                )));
+                                state.store(ui.ctx(), resp.id);
+                            }
+                        }
                     }
                     if resp.changed() {
                         self.find.info = None;
@@ -900,44 +1003,91 @@ impl App {
                             state.store(ui.ctx(), resp.id);
                         }
                     }
-                    if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && !ui.input(|i| i.modifiers.shift_only()) {
-                        do_next = Some(false);
-                        resp.request_focus();
-                    }
-                    // 歷史下拉：chevron 疊在搜尋框內右下角，與從框下展開的彈層連為一體
-                    match history_dropdown(ui, "find-history", resp.rect, &mut self.find.history_open, &self.settings.recent_finds, &lbl_history, &lbl_hist_remove, &lbl_hist_clear) {
+                    // （純 Enter＝下一個、Shift+Enter＝上一個、Ctrl+Enter＝換行，見上方 Enter 處理）
+                    // 歷史下拉：chevron 疊在搜尋框視口右下角（錨定容器，不隨內容滾動）
+                    match history_dropdown(ui, "find-history", vp_rect, &mut self.find.history_open, &self.settings.recent_finds, &lbl_history, &lbl_hist_remove, &lbl_hist_clear) {
                         HistAction::Pick(h) => self.find.query = h,
                         HistAction::Remove(h) => self.settings.recent_finds.retain(|x| *x != h),
                         HistAction::Clear => self.settings.recent_finds.clear(),
                         HistAction::None => {}
                     }
-                    // 狀態列：即時計數／錯誤／操作結果
-                    let mut status_shown = false;
-                    if let Some((text, bad)) = &status {
-                        let text = RichText::new(text.as_str()).size(12.5);
-                        let label = ui.label(if *bad { text.color(ui.visuals().error_fg_color) } else { text.weak() });
-                        if let Some(detail) = &error_detail {
-                            label.on_hover_text(detail.as_str());
+                    // 狀態列：固定一行的槽位（有無內容高度都不變，避免推擠布局）
+                    ui.horizontal(|ui| {
+                        ui.set_min_height(ui.text_style_height(&egui::TextStyle::Body) + 4.0);
+                        if let Some((text, bad)) = &status {
+                            let text = RichText::new(text.as_str()).size(12.5);
+                            let label = ui.label(if *bad { text.color(ui.visuals().error_fg_color) } else { text.weak() });
+                            if let Some(detail) = &error_detail {
+                                label.on_hover_text(detail.as_str());
+                            }
+                        } else if let Some(info) = self.find.info.as_deref().filter(|i| !i.is_empty() && (hex_doc || *i != lbl_not_found)) {
+                            ui.label(RichText::new(info).weak().size(12.5));
                         }
-                        status_shown = true;
-                    }
-                    if let Some(info) = self.find.info.as_deref().filter(|i| !i.is_empty() && (hex_doc || *i != lbl_not_found)) {
-                        ui.label(RichText::new(info).weak().size(12.5));
-                        status_shown = true;
-                    }
-                    if !status_shown {
-                        ui.add_space(ui.text_style_height(&egui::TextStyle::Body));
-                    }
+                    });
                     if self.find.replace {
                         // 替換頁：取代框（與查找框同高）→ 操作排：左齒輪＋選定文字核取方塊、右下一個／替換／全部取代（無上一個）
                         ui.label(RichText::new(lbl_replace.as_str()).size(12.5).weak());
-                        let resp = ui.add(egui::TextEdit::multiline(&mut self.find.replacement).desired_width(ui.available_width()).desired_rows(4).hint_text(lbl_replace.clone()));
-                        if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && can_replace {
+                        let rep_before = self.find.replacement.clone();
+                        let rep_lines = self.find.replacement.lines().count().saturating_sub(1);
+                        let field = egui::TextEdit::multiline(&mut self.find.replacement)
+                            .desired_width(ui.available_width() - 12.0)
+                            .desired_rows(4)
+                            .frame(egui::Frame::NONE)
+                            .margin(egui::Margin::symmetric(6, 4))
+                            .hint_text(lbl_replace.clone());
+                        // 替換框：固定高度滾動容器（同查找框）
+                        let rep_vp = egui::Rect::from_min_size(egui::pos2(ui.max_rect().left(), ui.cursor().top()), egui::vec2(ui.max_rect().width(), box_h));
+                        ui.painter().rect_filled(rep_vp, 6.0, ui.visuals().extreme_bg_color);
+                        ui.allocate_exact_size(egui::vec2(rep_vp.width(), box_h), egui::Sense::hover());
+                        let mut rep_scroll = ui.new_child(
+                            egui::UiBuilder::new().id_salt("replace-scroll-area").max_rect(rep_vp.shrink2(egui::vec2(6.0, 4.0))).layout(egui::Layout::top_down(egui::Align::LEFT)),
+                        );
+                        let resp = egui::ScrollArea::vertical()
+                            .id_salt("replace-scroll")
+                            .auto_shrink([false, false])
+                            .min_scrolled_height(rep_vp.height() - 8.0)
+                            .max_height(rep_vp.height() - 8.0)
+                            .show(&mut rep_scroll, |ui| ui.add(field))
+                            .inner;
+                        if ui.rect_contains_pointer(rep_vp) {
+                            let dy = ui.input(|i| i.smooth_scroll_delta.y);
+                            if dy != 0.0 {
+                                let step = ((dy.abs() / ui.text_style_height(&egui::TextStyle::Body)).round() as usize).max(1);
+                                let dir: isize = if dy > 0.0 { -1 } else { 1 };
+                                if let Some(mut st) = egui::TextEdit::load_state(ui.ctx(), resp.id) {
+                                    let char_idx = st
+                                        .cursor
+                                        .char_range()
+                                        .map(|r| r.primary.index.0.min(r.secondary.index.0))
+                                        .unwrap_or(0);
+                                    let (cur_l, cur_c) = char_index_to_line_col(&self.find.replacement, char_idx);
+                                    let new_l = (cur_l as isize + dir * step as isize).clamp(0, rep_lines as isize) as usize;
+                                    let line_len = self.find.replacement.split('\n').nth(new_l).map(|l| l.chars().count()).unwrap_or(0);
+                                    let col = cur_c.min(line_len);
+                                    let new_idx = line_col_to_char_index(&self.find.replacement, new_l, col);
+                                    st.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(new_idx))));
+                                    st.store(ui.ctx(), resp.id);
+                                }
+                            }
+                        }
+                        let focused = resp.has_focus();
+                        let hovered = ui.rect_contains_pointer(rep_vp);
+                        let border = if focused {
+                            ui.visuals().widgets.active.bg_stroke
+                        } else if hovered {
+                            ui.visuals().widgets.hovered.bg_stroke
+                        } else {
+                            ui.visuals().widgets.noninteractive.bg_stroke
+                        };
+                        ui.painter().rect_stroke(rep_vp, 6.0, border, egui::StrokeKind::Inside);
+                        // Windows 慣例：純 Enter 觸發替換（還原本幀插入的 \n）；Ctrl+Enter 才插入換行
+                        if ui.input(|i| i.key_pressed(Key::Enter)) && !ui.input(|i| i.modifiers.ctrl) && can_replace {
+                            self.find.replacement = rep_before;
                             do_replace = true;
                             resp.request_focus();
                         }
-                        // 歷史下拉與查找框同一套（chevron 疊在取代框內右下角）
-                        match history_dropdown(ui, "replace-history", resp.rect, &mut self.find.replace_history_open, &self.settings.recent_replaces, &lbl_history, &lbl_hist_remove, &lbl_hist_clear) {
+                        // 歷史下拉與查找框同一套（chevron 疊在取代框視口右下角）
+                        match history_dropdown(ui, "replace-history", rep_vp, &mut self.find.replace_history_open, &self.settings.recent_replaces, &lbl_history, &lbl_hist_remove, &lbl_hist_clear) {
                             HistAction::Pick(h) => self.find.replacement = h,
                             HistAction::Remove(h) => self.settings.recent_replaces.retain(|x| *x != h),
                             HistAction::Clear => self.settings.recent_replaces.clear(),

@@ -37,6 +37,69 @@ fn type_text(h: &mut Harness<'static, App>, s: &str) {
     h.run_steps(2);
 }
 
+#[test]
+fn tmp_diag_find_field_overflow() {
+    use egui::accesskit::Role;
+    let mut h = harness();
+    h.state_mut().pending.push(C::Find);
+    h.run_steps(3);
+    h.state_mut().find.query = "dxf\n\n\n\n\n\n\n".into();
+    h.run_steps(3);
+    for (i, n) in h.query_all_by(|n| n.role() == Role::MultilineTextInput).enumerate() {
+        let r = n.rect();
+        println!("multiline{i}: y=[{:.0},{:.0}] h={:.0}", r.top(), r.bottom(), r.height());
+    }
+    let st = h.query_by_label("無結果");
+    if let Some(n) = st {
+        let r = n.rect();
+        println!("無結果: y=[{:.0},{:.0}]", r.top(), r.bottom());
+    }
+    for label in ["上一個", "下一個"] {
+        let n = h.query_all_by(|n| n.role() == Role::Button && n.label().as_deref() == Some(label)).next();
+        if let Some(n) = n {
+            let r = n.rect();
+            println!("{label}: y=[{:.0},{:.0}]", r.top(), r.bottom());
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn tmp_diag_find_field_shot() {
+    let mut h = egui_kittest::Harness::builder()
+        .allow_missing_glyphs()
+        .with_size([460.0, 420.0])
+        .wgpu()
+        .build_eframe(|cc| App::with_settings(cc, Vec::new(), None, quiet_settings(), None));
+    h.state_mut().pending.push(C::Find);
+    h.run_steps(3);
+    h.state_mut().find.query = "dxf\n\n\n\n\n\n\n".into();
+    h.run_steps(3);
+    // 聚焦輸入框（模擬使用者正在輸入的白色邊框狀態）
+    h.state_mut().find.focus = true;
+    h.run_steps(5);
+    let img = h.render().expect("繪製失敗");
+    img.save("target/find-multiline.png").expect("無法儲存截圖");
+}
+
+#[test]
+#[ignore]
+fn tmp_diag_find_field_shot_ppp150() {
+    let mut h = egui_kittest::Harness::builder()
+        .allow_missing_glyphs()
+        .with_pixels_per_point(1.5)
+        .with_size([690.0, 630.0])
+        .wgpu()
+        .build_eframe(|cc| App::with_settings(cc, Vec::new(), None, quiet_settings(), None));
+    h.state_mut().pending.push(C::Find);
+    h.run_steps(3);
+    h.state_mut().find.query = "dxf\n\n\n\n\n\n\n".into();
+    h.state_mut().find.focus = true;
+    h.run_steps(5);
+    let img = h.render().expect("繪製失敗");
+    img.save("target/find-multiline-150.png").expect("無法儲存截圖");
+}
+
 fn text(h: &mut Harness<'static, App>) -> String {
     h.state_mut().doc().editor.lines.join("\n")
 }
