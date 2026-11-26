@@ -61,11 +61,12 @@ pub(super) fn history_dropdown(
     use egui::{Color32, Pos2, Shape, Stroke};
     let mut action = HistAction::None;
     // chevron 疊在搜尋框內右端，吃掉這一小塊的點擊。
+    // chevron 疊在搜尋框內「右下角」，與從框下展開的彈層連為一體（單行框則近似居中）。
     // 用 interact 只註冊互動矩形、不佔版面：ui.put 會推進 RTL 布局的游標，
     // 讓後續控件疊進搜尋框（標題欄拖動區同款做法）。
     let chev_rect = egui::Rect::from_center_size(
-        egui::pos2(field.right() - 14.0, field.center().y),
-        egui::vec2(22.0, field.height()),
+        egui::pos2(field.right() - 14.0, field.bottom() - 13.0),
+        egui::vec2(22.0, 24.0),
     );
     let resp = ui.interact(chev_rect, ui.scope_id().with(id_salt), egui::Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -734,8 +735,8 @@ impl App {
             keys if keys.is_empty() => name,
             keys => format!("{name} ({keys})"),
         };
-        let lbl_prev = plain_label(&self.cmd_text(C::FindPrevious));
-        let lbl_next = plain_label(&self.cmd_text(C::FindNext));
+        let lbl_prev = self.t("find.prev_btn", "上一個");
+        let lbl_next = self.t("find.btn_next", "下一個");
         let lbl_prev_tip = with_keys(plain_label(&self.cmd_text(C::FindPrevious)), C::FindPrevious);
         let lbl_next_tip = with_keys(plain_label(&self.cmd_text(C::FindNext)), C::FindNext);
         let lbl_case = self.t("fif.case", "區分大小寫");
@@ -927,29 +928,10 @@ impl App {
                     if !status_shown {
                         ui.add_space(ui.text_style_height(&egui::TextStyle::Body));
                     }
-                    // 操作排：左＝齒輪（貼近展開的選項區），右＝下一個／上一個
-                    ui.horizontal(|ui| {
-                        let gear = form::icon_button(ui, egui::Button::new("⚙").frame(false), self.t("find.options", "選項"), self.t("find.options", "選項"));
-                        if gear.clicked() {
-                            self.find.options_open = !self.find.options_open;
-                        }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let next_btn = ui.add_sized([104.0, 26.0], egui::Button::new(RichText::new(lbl_next.as_str()).size(12.5)));
-                            if next_btn.clicked() {
-                                do_next = Some(false);
-                            }
-                            next_btn.on_hover_text(lbl_next_tip);
-                            let prev_btn = ui.add_sized([104.0, 26.0], egui::Button::new(RichText::new(lbl_prev.as_str()).size(12.5)));
-                            if prev_btn.clicked() {
-                                do_next = Some(true);
-                            }
-                            prev_btn.on_hover_text(lbl_prev_tip);
-                        });
-                    });
                     if self.find.replace {
-                        // 替換頁：取代框佔滿整行，操作排左 chip／右按鈕
+                        // 替換頁：取代框（與查找框同高）→ 操作排：左齒輪＋選定文字核取方塊、右下一個／替換／全部取代（無上一個）
                         ui.label(RichText::new(lbl_replace.as_str()).size(12.5).weak());
-                        let resp = ui.add(egui::TextEdit::multiline(&mut self.find.replacement).desired_width(ui.available_width()).desired_rows(2).hint_text(lbl_replace.clone()));
+                        let resp = ui.add(egui::TextEdit::multiline(&mut self.find.replacement).desired_width(ui.available_width()).desired_rows(4).hint_text(lbl_replace.clone()));
                         if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && can_replace {
                             do_replace = true;
                             resp.request_focus();
@@ -961,27 +943,107 @@ impl App {
                             HistAction::Clear => self.settings.recent_replaces.clear(),
                             HistAction::None => {}
                         }
-                        ui.horizontal(|ui| {
-                            form::toggle_chip(ui, &mut self.settings.search_in_selection, lbl_in_sel, lbl_in_sel);
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.add_enabled(can_replace, egui::Button::new(RichText::new(lbl_replace_btn).size(12.5)).min_size(egui::vec2(104.0, 26.0))).clicked() {
-                                    do_replace = true;
-                                }
-                                if ui.add_enabled(can_replace, egui::Button::new(RichText::new(lbl_replace_all).size(12.5)).min_size(egui::vec2(104.0, 26.0))).clicked() {
-                                    do_replace_all = true;
-                                }
-                            });
+                        // 操作區（UE 同構）：左欄＝選定文字核取方塊＋左下角齒輪；右欄按鈕縱排、
+                        // 顯式 max_rect 貼內容右緣（with_layout 的 RTL 子布局拿不到剩餘寬，會擠在左欄旁）
+                        let row_h = 26.0 * 3.0 + 4.0 * 2.0;
+                        let row_rect = egui::Rect::from_min_size(
+                            egui::pos2(full.left(), ui.cursor().top()),
+                            egui::vec2(full.width(), row_h),
+                        );
+                        ui.allocate_exact_size(egui::vec2(full.width(), row_h), egui::Sense::hover());
+                        let col_rect = egui::Rect::from_min_max(
+                            egui::pos2(row_rect.right() - 104.0, row_rect.top()),
+                            egui::pos2(row_rect.right(), row_rect.bottom()),
+                        );
+                        let col_left = egui::Rect::from_min_max(
+                            egui::pos2(row_rect.left(), row_rect.top()),
+                            egui::pos2(col_rect.left() - 8.0, row_rect.bottom()),
+                        );
+                        let mut left_ui = ui.new_child(
+                            egui::UiBuilder::new().id_salt("replace-actions-left").max_rect(col_left).layout(egui::Layout::top_down(egui::Align::LEFT)),
+                        );
+                        left_ui.horizontal(|ui| {
+                            ui.checkbox(&mut self.settings.search_in_selection, lbl_in_sel);
                         });
+                        left_ui.add_space(26.0);
+                        left_ui.horizontal(|ui| {
+                            let gear = form::icon_button(ui, egui::Button::new("⚙").frame(false), self.t("find.options", "選項"), self.t("find.options", "選項"));
+                            if gear.clicked() {
+                                self.find.options_open = !self.find.options_open;
+                            }
+                        });
+                        let mut col = ui.new_child(
+                            egui::UiBuilder::new().id_salt("replace-actions-col").max_rect(col_rect).layout(egui::Layout::top_down(egui::Align::Min)),
+                        );
+                        col.spacing_mut().item_spacing.y = 4.0;
+                        let next_btn = col.add_sized([104.0, 26.0], egui::Button::new(RichText::new(lbl_next).size(12.5)));
+                        if next_btn.clicked() {
+                            do_next = Some(false);
+                        }
+                        next_btn.on_hover_text(lbl_next_tip);
+                        // scope 統一 disabled 態；add_sized 走置中布局，文字居中
+                        col.scope(|ui| {
+                            if !can_replace {
+                                ui.disable();
+                            }
+                            if ui.add_sized([104.0, 26.0], egui::Button::new(RichText::new(lbl_replace_btn).size(12.5))).clicked() {
+                                do_replace = true;
+                            }
+                            if ui.add_sized([104.0, 26.0], egui::Button::new(RichText::new(lbl_replace_all).size(12.5))).clicked() {
+                                do_replace_all = true;
+                            }
+                        });
+                    } else {
+                        // 查找頁操作排（與替換頁同一套處理）：右欄＝上一個／下一個縱排貼右緣；左欄齒輪貼底
+                        let row_h = 26.0 * 2.0 + 4.0;
+                        let row_rect = egui::Rect::from_min_size(
+                            egui::pos2(full.left(), ui.cursor().top()),
+                            egui::vec2(full.width(), row_h),
+                        );
+                        ui.allocate_exact_size(egui::vec2(full.width(), row_h), egui::Sense::hover());
+                        let col_rect = egui::Rect::from_min_max(
+                            egui::pos2(row_rect.right() - 104.0, row_rect.top()),
+                            egui::pos2(row_rect.right(), row_rect.bottom()),
+                        );
+                        let col_left = egui::Rect::from_min_max(
+                            egui::pos2(row_rect.left(), row_rect.top()),
+                            egui::pos2(col_rect.left() - 8.0, row_rect.bottom()),
+                        );
+                        let mut left_ui = ui.new_child(
+                            egui::UiBuilder::new().id_salt("find-actions-left").max_rect(col_left).layout(egui::Layout::top_down(egui::Align::LEFT)),
+                        );
+                        // 左欄高度＝右欄（2×26＋4＝56）：齒輪與「上一個」底部對齊（24＋6間距＋26＝56）
+                        left_ui.add_space(26.0);
+                        left_ui.horizontal(|ui| {
+                            let gear = form::icon_button(ui, egui::Button::new("⚙").frame(false), self.t("find.options", "選項"), self.t("find.options", "選項"));
+                            if gear.clicked() {
+                                self.find.options_open = !self.find.options_open;
+                            }
+                        });
+                        let mut col = ui.new_child(
+                            egui::UiBuilder::new().id_salt("find-actions-col").max_rect(col_rect).layout(egui::Layout::top_down(egui::Align::Min)),
+                        );
+                        col.spacing_mut().item_spacing.y = 4.0;
+                        let prev_btn = col.add_sized([104.0, 26.0], egui::Button::new(RichText::new(lbl_prev).size(12.5)));
+                        if prev_btn.clicked() {
+                            do_next = Some(true);
+                        }
+                        prev_btn.on_hover_text(lbl_prev_tip);
+                        let next_btn = col.add_sized([104.0, 26.0], egui::Button::new(RichText::new(lbl_next).size(12.5)));
+                        if next_btn.clicked() {
+                            do_next = Some(false);
+                        }
+                        next_btn.on_hover_text(lbl_next_tip);
                     }
-                    // 「選項」齒輪展開的底部選項區：全部搜尋選項集中於此（UE 的齒輪參數區）
+                    // 「選項」齒輪展開的底部選項區：標準核取方塊（UE 的齒輪參數區）
                     if self.find.options_open {
                         ui.separator();
                         ui.horizontal_wrapped(|ui| {
-                            form::toggle_chip(ui, &mut self.settings.search_whole_word, &lbl_word, &lbl_word);
-                            form::toggle_chip(ui, &mut self.settings.search_match_case, &lbl_case, &lbl_case);
-                            form::toggle_chip(ui, &mut self.settings.search_regex, &lbl_regex, &lbl_regex);
-                            form::toggle_chip(ui, &mut self.find.hex, &lbl_hex, &lbl_hex);
-                            form::toggle_chip(ui, &mut self.settings.search_wrap_around, &lbl_wrap, &lbl_wrap);
+                            ui.checkbox(&mut self.settings.search_whole_word, lbl_word);
+                            ui.checkbox(&mut self.settings.search_match_case, lbl_case);
+                            ui.checkbox(&mut self.settings.search_regex, lbl_regex);
+                            ui.checkbox(&mut self.find.hex, lbl_hex);
+                            ui.checkbox(&mut self.settings.search_wrap_around, lbl_wrap);
                         });
                     }
                     // While a dialog is open, Esc belongs to the dialog.

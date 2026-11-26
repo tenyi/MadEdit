@@ -240,6 +240,8 @@ find.tab_find	Find	查找	検索	찾기	Suchen	Buscar	Rechercher	Trova	Localizar
 find.tab_replace	Replace	替换	置換	바꾸기	Ersetzen	Reemplazar	Remplacer	Sostituisci	Substituir
 find.find_what	Search text…	查找内容…	検索文字…	찾을 내용…	Suchtext…	Texto a buscar…	Texte à rechercher…	Testo da cercare…	Texto a localizar…
 find.options	Options	选项	設定	옵션	Optionen	Opciones	Options	Opzioni	Opções
+find.prev_btn	Previous	上一个	前へ	이전	Zurück	Anterior	Précédent	Precedente	Anterior
+find.next_btn	Next	下一个	次へ	다음	Weiter	Siguiente	Suivant	Successivo	Próxima
 find.history_remove	Remove this entry	移除此条记录	この履歴を削除	이 항목 삭제	Diesen Eintrag entfernen	Eliminar esta entrada	Supprimer cette entrée	Rimuovi questa voce	Remover esta entrada
 find.history_clear	Clear search history	清空搜索记录	履歴をすべて消去	검색 기록 지우기	Suchverlauf leeren	Borrar el historial	Effacer l'historique	Cancella cronologia	Limpar histórico
 find.hex_hint	Hex, e.g. 4D 61 64	十六进制，例如 4D 61 64	16進、例 4D 61 64	16진수, 예: 4D 61 64	Hex, z. B. 4D 61 64	Hexadecimal, p. ej. 4D 61 64	Hexadécimal, p. ex. 4D 61 64	Esadecimale, es. 4D 61 64	Hexadecimal, p. ex. 4D 61 64
@@ -256,7 +258,7 @@ find.close	Close (Esc)	关闭 (Esc)	閉じる (Esc)	닫기 (Esc)	Schließen (Esc
 find.replace	Replace:	替换为：	置換：	바꿀 내용:	Ersetzen:	Reemplazar:	Remplacer :	Sostituisci:	Substituir:
 find.replace_btn	Replace	替换	置換	바꾸기	Ersetzen	Reemplazar	Remplacer	Sostituisci	Substituir
 find.replace_all	Replace All	全部替换	すべて置換	모두 바꾸기	Alle ersetzen	Reemplazar todo	Tout remplacer	Sostituisci tutto	Substituir tudo
-find.in_selection	In Selection	只在选取范围内	選択範囲内のみ	선택 영역만	Nur in Auswahl	Solo en la selección	Dans la sélection	Solo nella selezione	Só na seleção
+find.in_selection	Selected text	选定文字	選択範囲内のみ	선택 영역만	Nur in Auswahl	Solo en la selección	Dans la sélection	Solo nella selezione	Só na seleção
 find.quick	Quick find	快速查找	クイック検索	빠른 검색	Schnellsuche	Búsqueda rápida	Recherche rapide	Ricerca rapida	Localização rápida
 find.goto_pos	Go to offset (bytes, 0x allowed):	转到位置（字节，可用 0x 十六进制）：	位置へ移動（バイト、0x 可）：	위치로 이동(바이트, 0x 가능):	Gehe zu Offset (Bytes, 0x erlaubt):	Ir al desplazamiento (bytes, se admite 0x):	Aller au décalage (octets, 0x accepté) :	Vai all'offset (byte, 0x ammesso):	Ir para o deslocamento (bytes, 0x permitido):
 find.goto_line	Go to line (line or line:column):	转到行（行号 或 行:栏）：	行へ移動（行 または 行:列）：	줄로 이동(줄 또는 줄:열):	Gehe zu Zeile (Zeile oder Zeile:Spalte):	Ir a la línea (línea o línea:columna):	Aller à la ligne (ligne ou ligne:colonne) :	Vai alla riga (riga o riga:colonna):	Ir para a linha (linha ou linha:coluna):
