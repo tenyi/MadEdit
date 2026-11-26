@@ -7,12 +7,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ## [Unreleased]
 
 ### Added
-- The Find bar becomes a floating, modeless "Find and Replace" window (like UltraEdit): the editor stays usable while it is open, the window drags by its compact title row (or any blank area), closes with the title-row "×" or Escape, and remembers its position across reopenings and restarts. Its search and replace fields share one window (the replacement row unfolds via "Replace…") with all the previous options, live match counts, Enter / Shift+Enter navigation and history. The search and replace history drop down from a thin chevron inside each field (Argus-style): one row per entry with a red "×" at the right end to remove it and "Clear search history" at the bottom, and picking an entry closes the list. The title bar's Quick find box gets the same history dropdown.
+- The Find bar becomes a floating, modeless "Find and Replace" window (like UltraEdit): the editor stays usable while it is open, the window drags by its compact title row (or any blank area), closes with the title-row "×" or Escape, and remembers its position across reopenings and restarts. It is split into "Find" and "Replace" tabs (Ctrl+F / Ctrl+H) with a File-View-style tab strip, and the search and replace boxes are 4-row multiline fields (fixed height, internal scrolling) so multi-line text can be searched. Enter runs Find next, Shift+Enter runs Find previous, Ctrl+Enter inserts a newline. A query spanning several lines is matched across lines, and Replace All handles cross-line matches with bookmark remapping. The search options (whole word, match case, regex, hex, wrap around) are grouped under an "Options" gear at the bottom-left. The search and replace history opens from a clock button at the top-right of each field (UltraEdit-style): one row per entry with a red "×" at the right end to remove it and "Clear search history" at the bottom, and picking an entry closes the list. The title bar's Quick find box gets the same history dropdown.
 
 ### 繁體中文
 
 #### 新增
-- 查找列改為浮動的非模態「查找和替換」視窗（仿 UltraEdit）：開啟時編輯器仍可正常操作，視窗可拖動緊湊標題列（或任意空白處）移動、以標題列右端「×」或 Esc 關閉，並記住位置（關閉後重開與重新啟動皆回到原處）。查找與取代合併在同一視窗（以「取代…」展開取代列），原有的選項、即時符合計數、Enter／Shift+Enter 導航與歷史全部保留。查找與取代欄位的歷史改為欄位內右端細線箭頭下拉（Argus 風格）：每一列右端 hover 紅色「×」移除單筆、底部「清空搜尋紀錄」，點選任一筆自動收起清單。標題欄的「快速查找」框也接入同一套歷史下拉。
+- 查找列改為浮動的非模態「查找和替換」視窗（仿 UltraEdit）：開啟時編輯器仍可正常操作，視窗可拖動緊湊標題列（或任意空白處）移動、以標題列右端「×」或 Esc 關閉，並記住位置（關閉後重開與重新啟動皆回到原處）。視窗分為「查找」「替換」兩個分頁（Ctrl+F／Ctrl+H），頁籤樣式與檔案視圖停靠欄一致；查找與替換欄位為 4 行多行輸入框（固定高度、內部捲動），可搜尋含換行的內容。純 Enter＝查找下一個、Shift+Enter＝查找上一個、Ctrl+Enter＝插入換行。跨行模式：含換行的查詢會跨行比對，「全部取代」也能處理跨行符合並位移書籤。搜尋選項（全字比對／區分大小寫／正則／十六進位／循環）收合於左下角「選項」齒輪。查找與替換欄位的歷史改為欄位右上角的時鐘鈕下拉（仿 UltraEdit）：每一列右端 hover 紅色「×」移除單筆、底部「清空搜尋紀錄」，點選任一筆自動收起清單。標題欄的「快速查找」框也接入同一套歷史下拉。
 
 ## [0.6.10] - 2026-11-25
 

@@ -46,70 +46,34 @@ pub(super) enum HistAction {
     Clear,
 }
 
-/// 歷史下拉：細線 chevron 畫在搜尋框內右端（Argus 樣式），點開與搜尋框同寬的彈層；
+/// 歷史下拉彈層：錨定觸發鈕（標籤列右端的時鐘鈕，仿 UE）向下展開；
 /// 每列右端 hover 紅色「×」移除單筆，底部「清空」。紅 × 樣式拷貝自收藏列表的移除鈕。
 pub(super) fn history_dropdown(
-    ui: &mut egui::Ui,
-    id_salt: &str,
-    field: egui::Rect,
+    trigger: &egui::Response,
     open: &mut bool,
     entries: &[String],
-    tooltip: &str,
     remove_label: &str,
     clear_label: &str,
 ) -> HistAction {
-    use egui::{Color32, Pos2, Shape, Stroke};
+    use egui::{Color32};
     let mut action = HistAction::None;
-    // chevron 疊在搜尋框內右端，吃掉這一小塊的點擊。
-    // chevron 疊在搜尋框內「右下角」，與從框下展開的彈層連為一體（單行框則近似居中）。
-    // 用 interact 只註冊互動矩形、不佔版面：ui.put 會推進 RTL 布局的游標，
-    // 讓後續控件疊進搜尋框（標題欄拖動區同款做法）。
-    let chev_rect = egui::Rect::from_center_size(
-        egui::pos2(field.right() - 14.0, field.bottom() - 13.0),
-        egui::vec2(22.0, 24.0),
-    );
-    let resp = ui.interact(chev_rect, ui.scope_id().with(id_salt), egui::Sense::click())
-        .on_hover_cursor(egui::CursorIcon::PointingHand);
-    let hovered = resp.hovered();
-    let clicked = resp.clicked();
-    // tooltip 在任何狀態（含收起時）都要註冊：clone 註冊同名 widget，後面 Popup 仍借用 resp
-    resp.clone().widget_info(|| WidgetInfo::labeled(Role::Button, true, tooltip));
-    resp.clone().on_hover_text(tooltip);
-    let weak = ui.visuals().widgets.noninteractive.text_color();
-    let strong = ui.visuals().text_color();
-    let stroke = Stroke::new(1.5, if hovered { strong } else { weak });
-    let (cx, cy) = (chev_rect.center().x, chev_rect.center().y);
-    ui.painter().add(Shape::line_segment([Pos2::new(cx - 4.0, cy - 2.0), Pos2::new(cx, cy + 2.0)], stroke));
-    ui.painter().add(Shape::line_segment([Pos2::new(cx, cy + 2.0), Pos2::new(cx + 4.0, cy - 2.0)], stroke));
-    if clicked {
-        *open = !*open;
-    }
-    if !*open {
+    if !*open || entries.is_empty() {
+        if entries.is_empty() {
+            *open = false;
+        }
         return action;
     }
-    if entries.is_empty() {
-        *open = false;
-        return action;
-    }
-    let popup = egui::Popup::from_toggle_button_response(&resp)
-        .anchor(field)
-        // Frame::new() 沒有底色會讓彈層透明：以主題的 popup 樣式為底，只收緊 margin
-        .frame(egui::Frame::popup(&ui.ctx().global_style()).inner_margin(egui::Margin::symmetric(4, 5)))
+    let popup = egui::Popup::from_toggle_button_response(trigger)
         .open_bool(open)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
-    resp.widget_info(|| WidgetInfo::labeled(Role::Button, true, tooltip));
-    resp.on_hover_text(tooltip);
     popup.show(|ui| {
-        // 外框（含 margin）與搜尋框同寬、左對齊搜尋框；列的視覺拷貝自收藏列表的 item_row
-        let inner_w = field.width() - 8.0;
-        ui.set_min_width(inner_w);
-        ui.set_max_width(inner_w);
+        ui.set_min_width(240.0);
         let body = egui::TextStyle::Body.resolve(ui.style());
         const CLOSE_W: f32 = 20.0;
         for entry in entries {
             let picked;
             let mut removed = false;
-            let (rect, response) = ui.allocate_exact_size(egui::vec2(inner_w, 22.0), egui::Sense::click());
+            let (rect, response) = ui.allocate_exact_size(egui::vec2(240.0, 22.0), egui::Sense::click());
             response.widget_info(|| WidgetInfo::labeled(Role::Button, true, entry));
             // 指標在整行範圍內即整行 hover：文字與「×」一起亮（× 的熱區疊在行內，不能只看 response.hovered）
             let row_hovered = ui.rect_contains_pointer(rect);
@@ -148,12 +112,111 @@ pub(super) fn history_dropdown(
             }
         }
         ui.separator();
-        let clear = ui.add_sized([inner_w, 20.0], egui::Button::selectable(false, RichText::new(clear_label).weak().size(body.size)));
+        let clear = ui.add_sized([240.0, 20.0], egui::Button::selectable(false, RichText::new(clear_label).weak().size(body.size)));
         if clear.clicked() {
             action = HistAction::Clear;
         }
     });
     // 選中／移除／清空任何一項都自動收起彈層
+    if !matches!(action, HistAction::None) {
+        *open = false;
+    }
+    action
+}
+
+/// 單行輸入框（標題欄快速查找）的歷史下拉：細線 chevron 疊在框內右端，彈層與框同寬。
+pub(super) fn history_chevron_dropdown(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    field: egui::Rect,
+    open: &mut bool,
+    entries: &[String],
+    tooltip: &str,
+    remove_label: &str,
+    clear_label: &str,
+) -> HistAction {
+    use egui::{Color32, Pos2, Shape, Stroke};
+    let mut action = HistAction::None;
+    let chev_rect = egui::Rect::from_center_size(
+        egui::pos2(field.right() - 14.0, field.center().y),
+        egui::vec2(22.0, field.height()),
+    );
+    let resp = ui.interact(chev_rect, ui.scope_id().with(id_salt), egui::Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    let hovered = resp.hovered();
+    let clicked = resp.clicked();
+    resp.clone().widget_info(|| WidgetInfo::labeled(Role::Button, true, tooltip));
+    resp.clone().on_hover_text(tooltip);
+    let weak = ui.visuals().widgets.noninteractive.text_color();
+    let strong = ui.visuals().text_color();
+    let stroke = Stroke::new(1.5, if hovered { strong } else { weak });
+    let (cx, cy) = (chev_rect.center().x, chev_rect.center().y);
+    ui.painter().add(Shape::line_segment([Pos2::new(cx - 4.0, cy - 2.0), Pos2::new(cx, cy + 2.0)], stroke));
+    ui.painter().add(Shape::line_segment([Pos2::new(cx, cy + 2.0), Pos2::new(cx + 4.0, cy - 2.0)], stroke));
+    if clicked {
+        *open = !*open;
+    }
+    if !*open || entries.is_empty() {
+        if entries.is_empty() {
+            *open = false;
+        }
+        return action;
+    }
+    let popup = egui::Popup::from_toggle_button_response(&resp)
+        .anchor(field)
+        .frame(egui::Frame::popup(&ui.ctx().global_style()).inner_margin(egui::Margin::symmetric(4, 5)))
+        .open_bool(open)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+    popup.show(|ui| {
+        let inner_w = field.width() - 8.0;
+        ui.set_min_width(inner_w);
+        ui.set_max_width(inner_w);
+        let body = egui::TextStyle::Body.resolve(ui.style());
+        const CLOSE_W: f32 = 20.0;
+        for entry in entries {
+            let picked;
+            let mut removed = false;
+            let (rect, response) = ui.allocate_exact_size(egui::vec2(inner_w, 22.0), egui::Sense::click());
+            response.widget_info(|| WidgetInfo::labeled(Role::Button, true, entry));
+            let row_hovered = ui.rect_contains_pointer(rect);
+            if ui.is_rect_visible(rect) {
+                if row_hovered {
+                    ui.painter().rect_filled(rect, 4.0, ui.visuals().widgets.hovered.weak_bg_fill);
+                }
+                let mut layout = egui::text::LayoutJob {
+                    wrap: egui::text::TextWrapping::truncate_at_width((rect.width() - CLOSE_W - 16.0).max(0.0)),
+                    ..Default::default()
+                };
+                layout.append(entry, 0.0, egui::TextFormat::simple(body.clone(), ui.visuals().text_color()));
+                let galley = ui.painter().layout_job(layout);
+                let gp = egui::pos2(rect.left() + 8.0, rect.center().y - galley.size().y / 2.0);
+                ui.painter().galley(gp, galley, ui.visuals().text_color());
+                if row_hovered {
+                    let x_rect = egui::Rect::from_min_size(
+                        egui::pos2(rect.right() - 4.0 - CLOSE_W, rect.top()),
+                        egui::vec2(CLOSE_W, rect.height()),
+                    );
+                    let r2 = ui.interact(x_rect, response.id.with("remove"), egui::Sense::click());
+                    r2.widget_info(|| WidgetInfo::labeled(Role::Button, true, remove_label));
+                    removed = r2.clicked();
+                    r2.clone().on_hover_text(remove_label);
+                    let tint = if r2.hovered() { Color32::from_rgb(232, 17, 35) } else { ui.visuals().weak_text_color() };
+                    ui.painter().text(x_rect.center(), egui::Align2::CENTER_CENTER, "×", egui::FontId::proportional(13.0), tint);
+                }
+            }
+            picked = response.clicked() && !removed;
+            if picked {
+                action = HistAction::Pick(entry.clone());
+            } else if removed {
+                action = HistAction::Remove(entry.clone());
+            }
+        }
+        ui.separator();
+        let clear = ui.add_sized([inner_w, 20.0], egui::Button::selectable(false, RichText::new(clear_label).weak().size(body.size)));
+        if clear.clicked() {
+            action = HistAction::Clear;
+        }
+    });
     if !matches!(action, HistAction::None) {
         *open = false;
     }
@@ -770,7 +833,7 @@ impl App {
         let lbl_regex = self.t("fif.regex", "使用正規表示式（Regex）");
         let lbl_hex = self.t("find.hex_hint", "十六進位，例如 4D 61 64");
         let lbl_wrap = self.t("find.wrap", "循環");
-        let lbl_history = self.t("find.history", "查找歷史");
+        let lbl_find_tip = self.t("find.history", "查找歷史");
         let lbl_hist_remove = self.t("find.history_remove", "移除此紀錄");
         let lbl_hist_clear = self.t("find.history_clear", "清空搜尋紀錄");
         let lbl_replace = form::bare(self.t("find.replace", "取代：")).to_string();
@@ -896,10 +959,30 @@ impl App {
                 {
                     bar_style(ui);
                     // 版面（UE 收起態同構）：整行輸入框 → 下方一排：左齒輪／右操作按鈕 → 選項區
-                    // 表頭列：「查找：」標籤
+                    // 表頭列：「查找：」標籤＋右側歷史時鐘鈕（仿 UE，框外右上）
+                    let mut hist_clicked = false;
+                    let hist_btn = std::cell::RefCell::new(None::<egui::Response>);
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(lbl_find.as_str()).size(12.5).weak());
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let b = form::icon_button(ui, egui::Button::new("🕘").frame(false), lbl_find_tip, lbl_find_tip);
+                            hist_clicked = b.clicked();
+                            hist_btn.borrow_mut().replace(b);
+                        });
                     });
+                    if hist_clicked {
+                        self.find.history_open = !self.find.history_open;
+                    }
+                    if self.find.history_open {
+                        if let Some(trigger) = hist_btn.borrow().as_ref() {
+                            match history_dropdown(trigger, &mut self.find.history_open, &self.settings.recent_finds, &lbl_hist_remove, &lbl_hist_clear) {
+                                HistAction::Pick(h) => self.find.query = h,
+                                HistAction::Remove(h) => self.settings.recent_finds.retain(|x| *x != h),
+                                HistAction::Clear => self.settings.recent_finds.clear(),
+                                HistAction::None => {}
+                            }
+                        }
+                    }
                     // 查找框：多行、撐滿整行（可搜尋含換行的內容，跨行比對引擎見 find_in_text）。
                     let field_w = ui.available_width() - 12.0;
                     let hint = if self.find.hex { lbl_hex_hint.clone() } else { String::new() };
@@ -911,7 +994,6 @@ impl App {
                         .desired_rows(4)
                         .frame(egui::Frame::NONE)
                         .margin(egui::Margin::symmetric(6, 4))
-                        .prefix(RichText::new("🔍").weak())
                         .hint_text(hint);
                     // 固定高度滾動容器：TextEdit 隨內容長高，由 ScrollArea 裁剪＋內部捲動；
                     // 邊框／箭頭錨定容器視口（不隨內容滾動而破版）
@@ -1004,13 +1086,6 @@ impl App {
                         }
                     }
                     // （純 Enter＝下一個、Shift+Enter＝上一個、Ctrl+Enter＝換行，見上方 Enter 處理）
-                    // 歷史下拉：chevron 疊在搜尋框視口右下角（錨定容器，不隨內容滾動）
-                    match history_dropdown(ui, "find-history", vp_rect, &mut self.find.history_open, &self.settings.recent_finds, &lbl_history, &lbl_hist_remove, &lbl_hist_clear) {
-                        HistAction::Pick(h) => self.find.query = h,
-                        HistAction::Remove(h) => self.settings.recent_finds.retain(|x| *x != h),
-                        HistAction::Clear => self.settings.recent_finds.clear(),
-                        HistAction::None => {}
-                    }
                     // 狀態列：固定一行的槽位（有無內容高度都不變，避免推擠布局）
                     ui.horizontal(|ui| {
                         ui.set_min_height(ui.text_style_height(&egui::TextStyle::Body) + 4.0);
@@ -1026,7 +1101,30 @@ impl App {
                     });
                     if self.find.replace {
                         // 替換頁：取代框（與查找框同高）→ 操作排：左齒輪＋選定文字核取方塊、右下一個／替換／全部取代（無上一個）
-                        ui.label(RichText::new(lbl_replace.as_str()).size(12.5).weak());
+                        let lbl_rep_hist_tip = self.t("find.replace_history_tip", "替換歷史");
+                        let mut rep_hist_clicked = false;
+                        let rep_hist_btn = std::cell::RefCell::new(None::<egui::Response>);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(lbl_replace.as_str()).size(12.5).weak());
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let b = form::icon_button(ui, egui::Button::new("🕘").frame(false), lbl_rep_hist_tip, lbl_rep_hist_tip);
+                                rep_hist_clicked = b.clicked();
+                                rep_hist_btn.borrow_mut().replace(b);
+                            });
+                        });
+                        if rep_hist_clicked {
+                            self.find.replace_history_open = !self.find.replace_history_open;
+                        }
+                        if self.find.replace_history_open {
+                            if let Some(trigger) = rep_hist_btn.borrow().as_ref() {
+                                match history_dropdown(trigger, &mut self.find.replace_history_open, &self.settings.recent_replaces, &lbl_hist_remove, &lbl_hist_clear) {
+                                    HistAction::Pick(h) => self.find.replacement = h,
+                                    HistAction::Remove(h) => self.settings.recent_replaces.retain(|x| *x != h),
+                                    HistAction::Clear => self.settings.recent_replaces.clear(),
+                                    HistAction::None => {}
+                                }
+                            }
+                        }
                         let rep_before = self.find.replacement.clone();
                         let rep_lines = self.find.replacement.lines().count().saturating_sub(1);
                         let field = egui::TextEdit::multiline(&mut self.find.replacement)
@@ -1085,13 +1183,6 @@ impl App {
                             self.find.replacement = rep_before;
                             do_replace = true;
                             resp.request_focus();
-                        }
-                        // 歷史下拉與查找框同一套（chevron 疊在取代框視口右下角）
-                        match history_dropdown(ui, "replace-history", rep_vp, &mut self.find.replace_history_open, &self.settings.recent_replaces, &lbl_history, &lbl_hist_remove, &lbl_hist_clear) {
-                            HistAction::Pick(h) => self.find.replacement = h,
-                            HistAction::Remove(h) => self.settings.recent_replaces.retain(|x| *x != h),
-                            HistAction::Clear => self.settings.recent_replaces.clear(),
-                            HistAction::None => {}
                         }
                         // 操作區（UE 同構）：左欄＝選定文字核取方塊＋左下角齒輪；右欄按鈕縱排、
                         // 顯式 max_rect 貼內容右緣（with_layout 的 RTL 子布局拿不到剩餘寬，會擠在左欄旁）

@@ -200,7 +200,7 @@ impl App {
                     let tip = self.t("find.history", "查找歷史");
                     let remove = self.t("find.history_remove", "移除此紀錄");
                     let clear = self.t("find.history_clear", "清空搜尋紀錄");
-                    match super::find::history_dropdown(ui, "quick-history", resp.rect, &mut self.find.quick_history_open, &self.settings.recent_finds, &tip, &remove, &clear) {
+                    match super::find::history_chevron_dropdown(ui, "quick-history", resp.rect, &mut self.find.quick_history_open, &self.settings.recent_finds, &tip, &remove, &clear) {
                         super::find::HistAction::Pick(h) => self.find.query = h,
                         super::find::HistAction::Remove(h) => self.settings.recent_finds.retain(|x| *x != h),
                         super::find::HistAction::Clear => self.settings.recent_finds.clear(),

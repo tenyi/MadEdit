@@ -101,6 +101,7 @@ The screenshot harness also accepts `MADEDIT_SHOT_CMDS=menuHexMode` and `MADEDIT
 - Preserve the Options draft while other commands run. Apply only edited fields with `Settings::with_edits` so live changes and recent history survive; save View preferences changed outside Options immediately through the existing persistence path.
 - Localize UI text with `App::t`/`tf` and `assets/i18n/messages.tsv`; Traditional Chinese is the source text in code, not a TSV column. Keep translation keys unique and the TSV column structure intact. Background workers report typed outcomes, translated at paint time, not preformatted user-facing strings.
 - Keep live-search regex and match counts cached by query/options/document version; caret movement must not rescan the document. Keep per-line highlights content-keyed, clear them when the bar closes, and do not enable replacement for read-only or hex documents. Cancel the previous Find in Files worker when starting another search.
+- Fixed-height multiline inputs in auto-height windows must follow the container/clip/border pattern in [docs/multiline-text-input.md](docs/multiline-text-input.md) (frameless `TextEdit` inside an explicit-height `ScrollArea`; border and decorations painted on the viewport rect). Do not decorate the TextEdit's content rect, and remember `Ui::new_child` does not advance the parent cursor.
 
 ## Current state and platform limits
 

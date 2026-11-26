@@ -267,6 +267,7 @@ find.by_bytes	By byte offset	按字节位置	バイト位置	바이트 위치	Na
 find.not_found	Not found	找不到符合的文字	見つかりません	찾을 수 없습니다	Nicht gefunden	No se encontró	Introuvable	Non trovato	Não encontrado
 find.no_results	No results	无结果	結果なし	결과 없음	Keine Treffer	Sin resultados	Aucun résultat	Nessun risultato	Sem resultados
 find.history	Search history	查找历史	検索履歴	검색 기록	Suchverlauf	Historial de búsqueda	Historique de recherche	Cronologia ricerche	Histórico de pesquisa
+find.replace_history_tip	Replace history	替换历史	置換履歴	바꾸기 기록	Ersetzungsverlauf	Historial de reemplazo	Historique de remplacement	Cronologia sostituzioni	Histórico de substituição
 find.not_found_q	Not found: {q}	找不到「{q}」	見つかりません：{q}	찾을 수 없음: {q}	Nicht gefunden: {q}	No se encontró: {q}	Introuvable : {q}	Non trovato: {q}	Não encontrado: {q}
 find.wrapped	Continued from the other end	已从另一端继续搜索	端から続けて検索しました	다른 끝에서 계속 검색했습니다	Am anderen Ende fortgesetzt	Continuado desde el otro extremo	Repris depuis l'autre extrémité	Continuato dall'altra estremità	Continuado a partir da outra extremidade
 find.bad_encoding	Current encoding cannot represent the search text	目前编码无法表示搜索文字	現在の文字コードでは検索文字列を表せません	현재 인코딩으로 검색 텍스트를 표현할 수 없습니다	Die Kodierung kann den Suchtext nicht darstellen	La codificación no puede representar el texto	L'encodage ne peut pas représenter le texte	La codifica non può rappresentare il testo	A codificação não pode representar o texto
