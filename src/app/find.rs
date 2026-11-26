@@ -835,7 +835,11 @@ impl App {
                 // 頁籤樣式復用 File View 停靠欄的 flat_tab（與其完全一致的外觀）。
                 let lbl_tab_find = self.t("find.tab_find", "查找");
                 let lbl_tab_replace = self.t("find.tab_replace", "替換");
-                let strip = egui::Rect::from_min_size(egui::pos2(full.left(), ui.cursor().top()), egui::vec2(full.width(), form::TAB_STRIP_HEIGHT));
+                // 頁籤條：底色與基線越過窗框 margin 延伸到視窗兩端（封口）；頁籤仍錨定內容區
+                let strip = egui::Rect::from_min_max(
+                    egui::pos2(full.left() - m.left as f32, ui.cursor().top()),
+                    egui::pos2(full.right() + m.right as f32, ui.cursor().top() + form::TAB_STRIP_HEIGHT),
+                );
                 ui.painter().rect_filled(strip, 0, form::tab_strip_bg(ui));
                 let tab_rect = egui::Rect::from_min_max(
                     egui::pos2(strip.left() + 8.0, strip.top() + 2.0),
@@ -869,9 +873,9 @@ impl App {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(lbl_find.as_str()).size(12.5).weak());
                     });
-                    // 查找框：多行、佔滿整行（可搜尋含換行的內容，跨行比對引擎見 find_in_text）。
-                    // 減去 TextEdit 自身的框內距與 🔍 prefix 寬度：貼滿可用寬會逐幀回饋讓窗體越變越寬
-                    let field_w = (ui.available_width() - 32.0).max(160.0);
+                    // 查找框：多行、撐滿整行（可搜尋含換行的內容，跨行比對引擎見 find_in_text）。
+                    // 標題列佔位修復後可直接用滿可用寬（總寬＝窗寬−邊距，不再逐幀回饋）
+                    let field_w = ui.available_width();
                     let hint = if self.find.hex { lbl_hex_hint.clone() } else { String::new() };
                     let hint = if hint.is_empty() { self.t("find.find_what", "查找內容…").to_string() } else { hint };
                     let field = egui::TextEdit::multiline(&mut self.find.query)
@@ -945,7 +949,7 @@ impl App {
                     if self.find.replace {
                         // 替換頁：取代框佔滿整行，操作排左 chip／右按鈕
                         ui.label(RichText::new(lbl_replace.as_str()).size(12.5).weak());
-                        let resp = ui.add(egui::TextEdit::multiline(&mut self.find.replacement).desired_width((ui.available_width() - 32.0).max(160.0)).desired_rows(2).hint_text(lbl_replace.clone()));
+                        let resp = ui.add(egui::TextEdit::multiline(&mut self.find.replacement).desired_width(ui.available_width()).desired_rows(2).hint_text(lbl_replace.clone()));
                         if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && can_replace {
                             do_replace = true;
                             resp.request_focus();
