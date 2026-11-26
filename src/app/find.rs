@@ -28,6 +28,8 @@ pub struct FindBar {
     pub replace_history_open: bool,
     /// 標題欄快速搜尋框的歷史下拉是否展開
     pub quick_history_open: bool,
+    /// 「選項」齒輪展開的底部選項區
+    pub options_open: bool,
     /// 記憶位置是否已在本輪彈出時應用過（只應用一次，否則會和拖動互相搶位置）
     pub pos_applied: bool,
     pub(crate) live: LiveSearch,
@@ -271,6 +273,105 @@ fn count_matches_per_line(lines: &[String], re: &Regex) -> Vec<usize> {
     lines.iter().map(|line| re.find_iter(line).filter(|m| m.start() != m.end()).count()).collect()
 }
 
+/// 模式可能跨行：查詢含實際換行，或正則寫出 \n 逸出（此時逐行比對必為零結果）
+fn pattern_may_span_lines(query: &str) -> bool {
+    query.contains('\n') || query.contains(r"\n")
+}
+
+/// 每行起始的位元組位移（以 \n 連接整份文字後），供位移↔位置換算
+fn line_start_offsets(lines: &[String]) -> Vec<usize> {
+    let mut starts = Vec::with_capacity(lines.len());
+    let mut acc = 0usize;
+    for line in lines {
+        starts.push(acc);
+        acc += line.len() + 1;
+    }
+    starts
+}
+
+/// 跨行搜尋：以 \n 連接整份文字一次比對，模式可含換行（逐行比對零結果時的後備路徑）。
+pub fn find_in_text(ed: &EditorState, re: &Regex, from: TextPosition, backward: bool, wrap: bool) -> Option<(TextPosition, TextPosition)> {
+    let text = ed.lines.join("\n");
+    let starts = line_start_offsets(&ed.lines);
+    let pos_to_byte = |p: TextPosition| -> usize {
+        let li = p.line.min(ed.lines.len() - 1);
+        let col = p.col.min(ed.lines[li].chars().count());
+        starts[li] + char_to_byte(&ed.lines[li], col)
+    };
+    let byte_to_pos = |b: usize| -> TextPosition {
+        let b = b.min(text.len());
+        let li = starts.partition_point(|&s| s <= b).saturating_sub(1);
+        TextPosition::new(li, text[starts[li]..b].chars().count())
+    };
+    let from_b = pos_to_byte(from);
+    let all: Vec<(usize, usize)> = re.find_iter(&text).filter(|m| m.start() != m.end()).map(|m| (m.start(), m.end())).collect();
+    let span = if !backward {
+        all.iter().find(|(s, _)| *s >= from_b).copied().or_else(|| wrap.then(|| all.first().copied()).flatten())
+    } else {
+        all.iter().rev().find(|(_, e)| *e <= from_b).copied().or_else(|| wrap.then(|| all.last().copied()).flatten())
+    };
+    span.map(|(s, e)| (byte_to_pos(s), byte_to_pos(e)))
+}
+
+/// 跨行比對的逐行計數：每個符合記到其起始行（總數即符合總數）
+fn count_matches_in_text(lines: &[String], re: &Regex) -> Vec<usize> {
+    let text = lines.join("\n");
+    let starts = line_start_offsets(lines);
+    let mut counts = vec![0usize; lines.len()];
+    for m in re.find_iter(&text).filter(|m| m.start() != m.end()) {
+        let li = starts.partition_point(|&s| s <= m.start()).saturating_sub(1);
+        counts[li] += 1;
+    }
+    counts
+}
+
+/// 跨行全部取代：整份文字一次取代後重建行列表；書籤依每個取代點的淨行數位移。
+fn replace_all_multiline(ed: &mut EditorState, re: &Regex, rep: &str, use_regex: bool) -> usize {
+    let text = ed.lines.join("\n");
+    let starts = line_start_offsets(&ed.lines);
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0usize;
+    let mut count = 0usize;
+    // 每個取代點：(起始行, 淨行數變化)
+    let mut deltas: Vec<(usize, i64)> = Vec::new();
+    for cap in re.captures_iter(&text) {
+        let m = cap.get(0).unwrap();
+        if m.start() == m.end() {
+            continue;
+        }
+        let seg = if use_regex {
+            let mut dst = String::new();
+            cap.expand(rep, &mut dst);
+            dst
+        } else {
+            rep.to_string()
+        };
+        let old_lines = 1 + text[m.start()..m.end()].matches('\n').count();
+        let new_lines = 1 + seg.matches('\n').count();
+        let at_line = starts.partition_point(|&s| s <= m.start()).saturating_sub(1);
+        deltas.push((at_line, new_lines as i64 - old_lines as i64));
+        out.push_str(&text[last..m.start()]);
+        out.push_str(&seg);
+        last = m.end();
+        count += 1;
+    }
+    out.push_str(&text[last..]);
+    let new_lines: Vec<String> = out.split('\n').map(str::to_string).collect();
+    // 書籤位移：位在某取代點之後的書籤累加該點的淨行數；越界的捨棄
+    ed.bookmarks = ed
+        .bookmarks
+        .iter()
+        .filter_map(|&b| {
+            let shift: i64 = deltas.iter().filter(|(at, _)| *at < b).map(|(_, d)| d).sum();
+            let nb = b as i64 + shift;
+            (nb >= 0 && (nb as usize) < new_lines.len()).then_some(nb as usize)
+        })
+        .collect();
+    ed.lines = new_lines;
+    ed.clamp_caret();
+    count
+}
+
 /// Which match (1-based) the selection covers exactly, if any. `counts` holds one entry per
 /// line, so only the selection's own line is scanned; the lines before it contribute their
 /// cached counts.
@@ -395,11 +496,17 @@ impl App {
                 return false;
             }
         };
+        let multiline = pattern_may_span_lines(&self.find.query);
         let doc = self.doc_mut();
         let sel = doc.editor.selection;
         let range = None;
         let from = if backward { sel.start() } else { sel.end() };
-        let found = find_in_lines(&doc.editor, &re, from, backward, wrap, range);
+        // 逐行比對為主；模式含換行（逐行必零結果）時落到整文跨行搜尋
+        let found = match find_in_lines(&doc.editor, &re, from, backward, wrap, range) {
+            Some(m) => Some(m),
+            None if multiline => find_in_text(&doc.editor, &re, from, backward, wrap),
+            None => None,
+        };
         match found {
             Some((s, e)) => {
                 let from_pos = sel.head;
@@ -486,7 +593,14 @@ impl App {
                     Ok(re) => {
                         live.counts = count_matches_per_line(&self.doc().editor.lines, &re);
                         live.total = live.counts.iter().sum();
-                        live.regex = Some(re);
+                        // 跨行模式：逐行比對必為零結果，改以整文比對、符合記到起始行
+                        if live.total == 0 && pattern_may_span_lines(&self.find.query) {
+                            live.counts = count_matches_in_text(&self.doc().editor.lines, &re);
+                            live.total = live.counts.iter().sum();
+                        }
+                        if live.total > 0 {
+                            live.regex = Some(re);
+                        }
                     }
                     Err(e) => live.error = Some(e),
                 }
@@ -557,9 +671,14 @@ impl App {
             });
         }
         let in_sel = self.settings.search_in_selection;
+        let multiline = pattern_may_span_lines(&self.find.query) || rep.contains('\n');
         let doc = self.doc_mut();
         let sel = doc.editor.selection;
-        let count = if in_sel && !sel.is_empty() && !sel.is_block() {
+        let count = if multiline && !in_sel {
+            // 跨行取代：整份文字一次取代，書籤依淨行數位移
+            let hint = doc.whole_hint();
+            doc.edit(EditKind::Other, hint, |ed| replace_all_multiline(ed, &re, &rep, use_regex))
+        } else if in_sel && !sel.is_empty() && !sel.is_block() {
             // 只取代選取範圍：對選取文字整段處理，以 insert_text 維護書籤
             let text = doc.editor.selected_text();
             let mut n = 0;
@@ -615,14 +734,15 @@ impl App {
             keys if keys.is_empty() => name,
             keys => format!("{name} ({keys})"),
         };
-        let lbl_prev = with_keys(plain_label(&self.cmd_text(C::FindPrevious)), C::FindPrevious);
-        let lbl_next = with_keys(plain_label(&self.cmd_text(C::FindNext)), C::FindNext);
+        let lbl_prev = plain_label(&self.cmd_text(C::FindPrevious));
+        let lbl_next = plain_label(&self.cmd_text(C::FindNext));
+        let lbl_prev_tip = with_keys(plain_label(&self.cmd_text(C::FindPrevious)), C::FindPrevious);
+        let lbl_next_tip = with_keys(plain_label(&self.cmd_text(C::FindNext)), C::FindNext);
         let lbl_case = self.t("fif.case", "區分大小寫");
         let lbl_word = self.t("fif.whole_word", "全字比對");
         let lbl_regex = self.t("fif.regex", "使用正規表示式（Regex）");
         let lbl_hex = self.t("find.hex_hint", "十六進位，例如 4D 61 64");
         let lbl_wrap = self.t("find.wrap", "循環");
-        let lbl_toggle = self.t("find.replace_toggle", "取代…");
         let lbl_history = self.t("find.history", "查找歷史");
         let lbl_hist_remove = self.t("find.history_remove", "移除此紀錄");
         let lbl_hist_clear = self.t("find.history_clear", "清空搜尋紀錄");
@@ -664,19 +784,42 @@ impl App {
             self.find.pos_applied = true;
         }
         let inner = win.show(&ctx, |ui| {
-                // 緊湊標題列：小字粗體標題 + 右端 hover 紅色「×」（拷貝收藏列表的移除樣式）。
-                // 介面字型鏈只有單一字重，RichText::strong 對中文無效，改以雙重繪製加粗。
+                // 標題列底色條：越過窗框 margin 延伸到視窗兩端、上緣隨窗體圓角，底部一條分隔線
+                let full = ui.max_rect();
+                let m = ui.style().spacing.window_margin;
+                let rad = ui.visuals().window_corner_radius;
+                let strip = egui::Rect::from_min_max(
+                    egui::pos2(full.left() - m.left as f32, full.top() - m.top as f32),
+                    egui::pos2(full.right() + m.right as f32, full.top() - m.top as f32 + 30.0),
+                );
+                let strip_p = ui.painter_at(strip);
+                strip_p.rect_filled(strip, egui::CornerRadius { nw: rad.nw, ne: rad.ne, sw: 0, se: 0 }, form::tab_strip_bg(ui));
+                strip_p.hline(strip.left()..=strip.right(), strip.bottom() - 0.5, ui.visuals().widgets.noninteractive.bg_stroke);
+                // 統一間距節奏
+                ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+                // 緊湊標題列：在條內垂直置中。小字粗體標題 + 右端 hover 紅色「×」
+                // （拷貝收藏列表的移除樣式）。介面字型鏈只有單一字重，
+                // RichText::strong 對中文無效，改以雙重繪製加粗。
                 let lbl_close = self.t("find.close", "關閉 (Esc)");
-                ui.horizontal(|ui| {
+                {
+                    let title_row = egui::Rect::from_min_max(strip.min, strip.max);
+                    // 先佔位推進父級游標（new_child 不推進，會被頁籤蓋住），再用 child 繪製。
+                    // 佔位用「內容寬」：用擴展後的全窗寬佔位會把內容最小寬度撐到窗寬，逐幀回饋變寬
+                    ui.allocate_exact_size(egui::vec2(full.width(), 30.0), egui::Sense::hover());
+                    let mut row = ui.new_child(
+                        egui::UiBuilder::new().id_salt("find-title-row").max_rect(title_row).layout(egui::Layout::left_to_right(egui::Align::Center)),
+                    );
                     let font = egui::FontId::proportional(12.5);
-                    let color = ui.visuals().text_color();
-                    let galley = ui.painter().layout_no_wrap(title_str.clone(), font, color);
-                    let (trect, _) = ui.allocate_exact_size(galley.size() + egui::vec2(1.0, 0.0), egui::Sense::hover());
-                    let tp = trect.left_top();
-                    ui.painter().galley(tp, galley.clone(), color);
-                    ui.painter().galley(tp + egui::vec2(0.7, 0.0), galley, color);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let (rect, resp) = ui.allocate_exact_size(egui::vec2(18.0, 16.0), egui::Sense::click());
+                    row.add_space(m.left as f32);
+                    let color = row.visuals().text_color();
+                    let galley = row.painter().layout_no_wrap(title_str.clone(), font, color);
+                    let (trect, _) = row.allocate_exact_size(galley.size() + egui::vec2(1.0, 0.0), egui::Sense::hover());
+                    let tp = egui::pos2(trect.left(), trect.center().y - galley.size().y / 2.0);
+                    row.painter().galley(tp, galley.clone(), color);
+                    row.painter().galley(tp + egui::vec2(0.7, 0.0), galley, color);
+                    row.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add_space(m.right as f32);
+                        let (rect, resp) = ui.allocate_exact_size(egui::vec2(24.0, 22.0), egui::Sense::click());
                         resp.widget_info(|| WidgetInfo::labeled(Role::Button, true, &lbl_close));
                         let weak = ui.visuals().widgets.noninteractive.text_color();
                         let tint = if resp.hovered() { egui::Color32::from_rgb(232, 17, 35) } else { weak };
@@ -687,19 +830,56 @@ impl App {
                             close = true;
                         }
                     });
-                });
-                ui.separator();
-                bar_style(ui);
-                let mut field_x = 0.0;
-                ui.horizontal_wrapped(|ui| {
-                    let icon = if self.find.replace { "▾" } else { "▸" };
-                    if form::icon_button(ui, egui::Button::new(icon).frame(false), lbl_toggle, lbl_toggle).clicked() {
-                        self.find.replace = !self.find.replace;
+                }
+                // 查找／替換兩個分頁（取代原本「取代…」摺疊鈕）：Ctrl+F 開查找頁、Ctrl+H 開替換頁。
+                // 頁籤樣式復用 File View 停靠欄的 flat_tab（與其完全一致的外觀）。
+                let lbl_tab_find = self.t("find.tab_find", "查找");
+                let lbl_tab_replace = self.t("find.tab_replace", "替換");
+                let strip = egui::Rect::from_min_size(egui::pos2(full.left(), ui.cursor().top()), egui::vec2(full.width(), form::TAB_STRIP_HEIGHT));
+                ui.painter().rect_filled(strip, 0, form::tab_strip_bg(ui));
+                let tab_rect = egui::Rect::from_min_max(
+                    egui::pos2(strip.left() + 8.0, strip.top() + 2.0),
+                    egui::pos2(strip.right() - 8.0, strip.bottom()),
+                );
+                let mut tab_ui = ui.new_child(
+                    egui::UiBuilder::new().id_salt("find-window-tabs").max_rect(tab_rect).layout(egui::Layout::left_to_right(egui::Align::Center)),
+                );
+                tab_ui.spacing_mut().item_spacing.x = 0.0;
+                let mut active_rect = None;
+                let tabs = [
+                    (!self.find.replace, &*lbl_tab_find, false, "find-tab-find"),
+                    (self.find.replace, &*lbl_tab_replace, true, "find-tab-replace"),
+                ];
+                for (selected, label, to_replace, salt) in tabs {
+                    let item = form::flat_tab(&mut tab_ui, salt, label, selected, ui.visuals().panel_fill, None);
+                    if item.body.clicked() && self.find.replace != to_replace {
+                        self.find.replace = to_replace;
+                        self.find.info = None;
                     }
-                    let hint = if self.find.hex { lbl_hex_hint.clone() } else { lbl_find.clone() };
-                    let field = egui::TextEdit::singleline(&mut self.find.query).desired_width(260.0).prefix(RichText::new("🔍").weak()).hint_text(hint);
+                    if selected {
+                        active_rect = Some(item.rect);
+                    }
+                }
+                form::tab_strip_baseline(ui, strip, active_rect);
+                ui.add_space(form::TAB_STRIP_HEIGHT + 2.0);
+                {
+                    bar_style(ui);
+                    // 版面（UE 收起態同構）：整行輸入框 → 下方一排：左齒輪／右操作按鈕 → 選項區
+                    // 表頭列：「查找：」標籤
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(lbl_find.as_str()).size(12.5).weak());
+                    });
+                    // 查找框：多行、佔滿整行（可搜尋含換行的內容，跨行比對引擎見 find_in_text）。
+                    // 減去 TextEdit 自身的框內距與 🔍 prefix 寬度：貼滿可用寬會逐幀回饋讓窗體越變越寬
+                    let field_w = (ui.available_width() - 32.0).max(160.0);
+                    let hint = if self.find.hex { lbl_hex_hint.clone() } else { String::new() };
+                    let hint = if hint.is_empty() { self.t("find.find_what", "查找內容…").to_string() } else { hint };
+                    let field = egui::TextEdit::multiline(&mut self.find.query)
+                        .desired_width(field_w)
+                        .desired_rows(4)
+                        .prefix(RichText::new("🔍").weak())
+                        .hint_text(hint);
                     let resp = ui.add(field);
-                    field_x = resp.rect.left() - ui.min_rect().left();
                     if failed {
                         ui.painter().rect_stroke(resp.rect, 6.0, egui::Stroke::new(1.0, ui.visuals().error_fg_color), egui::StrokeKind::Inside);
                     }
@@ -715,68 +895,95 @@ impl App {
                             state.store(ui.ctx(), resp.id);
                         }
                     }
-                    if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                        do_next = Some(ui.input(|i| i.modifiers.shift));
+                    if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && !ui.input(|i| i.modifiers.shift_only()) {
+                        do_next = Some(false);
                         resp.request_focus();
                     }
-                    // 歷史下拉：chevron 疊在搜尋框內右端
+                    // 歷史下拉：chevron 疊在搜尋框內右下角，與從框下展開的彈層連為一體
                     match history_dropdown(ui, "find-history", resp.rect, &mut self.find.history_open, &self.settings.recent_finds, &lbl_history, &lbl_hist_remove, &lbl_hist_clear) {
                         HistAction::Pick(h) => self.find.query = h,
                         HistAction::Remove(h) => self.settings.recent_finds.retain(|x| *x != h),
                         HistAction::Clear => self.settings.recent_finds.clear(),
                         HistAction::None => {}
                     }
-                    form::toggle_chip(ui, &mut self.settings.search_match_case, "Aa", lbl_case);
-                    form::toggle_chip(ui, &mut self.settings.search_whole_word, "ab", lbl_word);
-                    form::toggle_chip(ui, &mut self.settings.search_regex, ".*", lbl_regex);
-                    form::toggle_chip(ui, &mut self.find.hex, "0x", lbl_hex);
-                    form::toggle_chip(ui, &mut self.settings.search_wrap_around, "⟲", lbl_wrap);
+                    // 狀態列：即時計數／錯誤／操作結果
+                    let mut status_shown = false;
                     if let Some((text, bad)) = &status {
-                        let text = RichText::new(text.as_str());
+                        let text = RichText::new(text.as_str()).size(12.5);
                         let label = ui.label(if *bad { text.color(ui.visuals().error_fg_color) } else { text.weak() });
                         if let Some(detail) = &error_detail {
                             label.on_hover_text(detail.as_str());
                         }
+                        status_shown = true;
                     }
-                    if form::icon_button(ui, egui::Button::new("↑"), &lbl_prev, &lbl_prev).clicked() {
-                        do_next = Some(true);
-                    }
-                    if form::icon_button(ui, egui::Button::new("↓"), &lbl_next, &lbl_next).clicked() {
-                        do_next = Some(false);
-                    }
-                    // The live counter already says when nothing matches.
                     if let Some(info) = self.find.info.as_deref().filter(|i| !i.is_empty() && (hex_doc || *i != lbl_not_found)) {
-                        ui.label(RichText::new(info).weak());
+                        ui.label(RichText::new(info).weak().size(12.5));
+                        status_shown = true;
                     }
-                });
-                if self.find.replace {
-                    ui.horizontal_wrapped(|ui| {
-                        // Lined up under the find field.
-                        ui.add_space((field_x - ui.spacing().item_spacing.x).max(0.0));
-                        let resp = ui.add(egui::TextEdit::singleline(&mut self.find.replacement).desired_width(260.0).hint_text(lbl_replace.clone()));
+                    if !status_shown {
+                        ui.add_space(ui.text_style_height(&egui::TextStyle::Body));
+                    }
+                    // 操作排：左＝齒輪（貼近展開的選項區），右＝下一個／上一個
+                    ui.horizontal(|ui| {
+                        let gear = form::icon_button(ui, egui::Button::new("⚙").frame(false), self.t("find.options", "選項"), self.t("find.options", "選項"));
+                        if gear.clicked() {
+                            self.find.options_open = !self.find.options_open;
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let next_btn = ui.add_sized([104.0, 26.0], egui::Button::new(RichText::new(lbl_next.as_str()).size(12.5)));
+                            if next_btn.clicked() {
+                                do_next = Some(false);
+                            }
+                            next_btn.on_hover_text(lbl_next_tip);
+                            let prev_btn = ui.add_sized([104.0, 26.0], egui::Button::new(RichText::new(lbl_prev.as_str()).size(12.5)));
+                            if prev_btn.clicked() {
+                                do_next = Some(true);
+                            }
+                            prev_btn.on_hover_text(lbl_prev_tip);
+                        });
+                    });
+                    if self.find.replace {
+                        // 替換頁：取代框佔滿整行，操作排左 chip／右按鈕
+                        ui.label(RichText::new(lbl_replace.as_str()).size(12.5).weak());
+                        let resp = ui.add(egui::TextEdit::multiline(&mut self.find.replacement).desired_width((ui.available_width() - 32.0).max(160.0)).desired_rows(2).hint_text(lbl_replace.clone()));
                         if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && can_replace {
                             do_replace = true;
                             resp.request_focus();
                         }
-                    // 歷史下拉與查找行同一套（chevron 疊在取代框內右端）
-                    match history_dropdown(ui, "replace-history", resp.rect, &mut self.find.replace_history_open, &self.settings.recent_replaces, &lbl_history, &lbl_hist_remove, &lbl_hist_clear) {
-                        HistAction::Pick(h) => self.find.replacement = h,
-                        HistAction::Remove(h) => self.settings.recent_replaces.retain(|x| *x != h),
-                        HistAction::Clear => self.settings.recent_replaces.clear(),
-                        HistAction::None => {}
+                        // 歷史下拉與查找框同一套（chevron 疊在取代框內右下角）
+                        match history_dropdown(ui, "replace-history", resp.rect, &mut self.find.replace_history_open, &self.settings.recent_replaces, &lbl_history, &lbl_hist_remove, &lbl_hist_clear) {
+                            HistAction::Pick(h) => self.find.replacement = h,
+                            HistAction::Remove(h) => self.settings.recent_replaces.retain(|x| *x != h),
+                            HistAction::Clear => self.settings.recent_replaces.clear(),
+                            HistAction::None => {}
+                        }
+                        ui.horizontal(|ui| {
+                            form::toggle_chip(ui, &mut self.settings.search_in_selection, lbl_in_sel, lbl_in_sel);
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.add_enabled(can_replace, egui::Button::new(RichText::new(lbl_replace_btn).size(12.5)).min_size(egui::vec2(104.0, 26.0))).clicked() {
+                                    do_replace = true;
+                                }
+                                if ui.add_enabled(can_replace, egui::Button::new(RichText::new(lbl_replace_all).size(12.5)).min_size(egui::vec2(104.0, 26.0))).clicked() {
+                                    do_replace_all = true;
+                                }
+                            });
+                        });
                     }
-                        if ui.add_enabled(can_replace, egui::Button::new(lbl_replace_btn)).clicked() {
-                            do_replace = true;
-                        }
-                        if ui.add_enabled(can_replace, egui::Button::new(lbl_replace_all)).clicked() {
-                            do_replace_all = true;
-                        }
-                        form::toggle_chip(ui, &mut self.settings.search_in_selection, lbl_in_sel, lbl_in_sel);
-                    });
-                }
-                // While a dialog is open, Esc belongs to the dialog.
-                if self.dialog.is_none() && ui.input(|i| i.key_pressed(Key::Escape)) {
-                    close = true;
+                    // 「選項」齒輪展開的底部選項區：全部搜尋選項集中於此（UE 的齒輪參數區）
+                    if self.find.options_open {
+                        ui.separator();
+                        ui.horizontal_wrapped(|ui| {
+                            form::toggle_chip(ui, &mut self.settings.search_whole_word, &lbl_word, &lbl_word);
+                            form::toggle_chip(ui, &mut self.settings.search_match_case, &lbl_case, &lbl_case);
+                            form::toggle_chip(ui, &mut self.settings.search_regex, &lbl_regex, &lbl_regex);
+                            form::toggle_chip(ui, &mut self.find.hex, &lbl_hex, &lbl_hex);
+                            form::toggle_chip(ui, &mut self.settings.search_wrap_around, &lbl_wrap, &lbl_wrap);
+                        });
+                    }
+                    // While a dialog is open, Esc belongs to the dialog.
+                    if self.dialog.is_none() && ui.input(|i| i.key_pressed(Key::Escape)) {
+                        close = true;
+                    }
                 }
             });
         // 拖動結束或關閉時記住位置並寫入設定（拖動中每幀存檔太頻繁）
@@ -999,5 +1206,34 @@ mod tests {
         assert_eq!(n, 1);
         assert_eq!(ed.lines, vec!["x", "y", "b", "a", "c"]);
         assert_eq!(ed.bookmarks.iter().copied().collect::<Vec<_>>(), vec![3, 4]);
+    }
+
+    #[test]
+    fn test_multiline_search_and_replace() {
+        let ed = EditorState::from_text("foo bar\nbar foo\nend");
+        // 跨行模式：`bar\nbar` 只能整文比對找到
+        let re = Regex::new("bar\nbar").unwrap();
+        let m = find_in_text(&ed, &re, TextPosition::new(0, 0), false, true).unwrap();
+        assert_eq!(m.0, TextPosition::new(0, 4));
+        assert_eq!(m.1, TextPosition::new(1, 3));
+        // 起始行向後：找不到時循環回首個
+        let m = find_in_text(&ed, &re, TextPosition::new(1, 0), false, true).unwrap();
+        assert_eq!(m.0, TextPosition::new(0, 4));
+        // 計數記到起始行
+        let counts = count_matches_in_text(&ed.lines, &re);
+        assert_eq!(counts, vec![1, 0, 0]);
+    }
+
+    #[test]
+    fn test_replace_all_multiline_and_bookmarks() {
+        let mut ed = EditorState::from_text("a\nXX\nXX\nb\nXX");
+        ed.bookmarks.insert(1);
+        ed.bookmarks.insert(4);
+        let re = Regex::new("XX\nXX").unwrap();
+        // 兩行合併為一行：後方書籤上移一行，前面的書籤不動；剩餘單獨 XX 不符合
+        let n = replace_all_multiline(&mut ed, &re, "M", true);
+        assert_eq!(n, 1);
+        assert_eq!(ed.lines, vec!["a", "M", "b", "XX"]);
+        assert_eq!(ed.bookmarks.iter().copied().collect::<Vec<_>>(), vec![1, 3]);
     }
 }

@@ -236,6 +236,10 @@ st.recording	● Recording	● 录制宏	● 記録中	● 기록 중	● Aufnah
 st.unsaved	Unsaved	尚未保存	未保存	저장되지 않음	Nicht gespeichert	Sin guardar	Non enregistré	Non salvato	Não salvo
 find.find	Find:	查找：	検索：	찾기:	Suchen:	Buscar:	Rechercher :	Trova:	Localizar:
 find.window_title	Find and Replace	查找和替换	検索と置換	찾기 및 바꾸기	Suchen und Ersetzen	Buscar y reemplazar	Rechercher et remplacer	Trova e sostituisci	Localizar e substituir
+find.tab_find	Find	查找	検索	찾기	Suchen	Buscar	Rechercher	Trova	Localizar
+find.tab_replace	Replace	替换	置換	바꾸기	Ersetzen	Reemplazar	Remplacer	Sostituisci	Substituir
+find.find_what	Search text…	查找内容…	検索文字…	찾을 내용…	Suchtext…	Texto a buscar…	Texte à rechercher…	Testo da cercare…	Texto a localizar…
+find.options	Options	选项	設定	옵션	Optionen	Opciones	Options	Opzioni	Opções
 find.history_remove	Remove this entry	移除此条记录	この履歴を削除	이 항목 삭제	Diesen Eintrag entfernen	Eliminar esta entrada	Supprimer cette entrée	Rimuovi questa voce	Remover esta entrada
 find.history_clear	Clear search history	清空搜索记录	履歴をすべて消去	검색 기록 지우기	Suchverlauf leeren	Borrar el historial	Effacer l'historique	Cancella cronologia	Limpar histórico
 find.hex_hint	Hex, e.g. 4D 61 64	十六进制，例如 4D 61 64	16進、例 4D 61 64	16진수, 예: 4D 61 64	Hex, z. B. 4D 61 64	Hexadecimal, p. ej. 4D 61 64	Hexadécimal, p. ex. 4D 61 64	Esadecimale, es. 4D 61 64	Hexadecimal, p. ex. 4D 61 64

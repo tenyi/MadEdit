@@ -381,6 +381,9 @@ fn test_find_bar_counts_and_highlights_matches_live() {
     type_text(&mut h, "one");
     assert!(h.query_by_label("共 3 個符合").is_some());
     assert!(h.state_mut().tab_mut().view.find_regex.is_some());
+    // The search options live in the gear's expandable section: open it, then click.
+    h.state_mut().find.options_open = true;
+    h.run_steps(2);
     // The option chips are named checkboxes.
     h.get_by(|n| n.role() == Role::CheckBox && n.label().as_deref() == Some("區分大小寫")).click();
     h.run_steps(2);
