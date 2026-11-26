@@ -9,10 +9,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Added
 - Tools > Compare Files and Tools > Compare Files as Binary compare two files side by side in their own window; each side is chosen with the file manager or from the files already open in tabs. Text files are compared line by line (an open text file uses the editor's content, unsaved edits included) with changed, deleted and inserted lines colored, the changed words inside a changed line highlighted, and lines moved to another place marked in a separate color. As in OxideMerge, each side is shown without blank filler lines and the matching differences are joined by links between the panes, an overview beside the panes shows every difference (click or drag it to scroll), and each side's encoding, newline style and position are shown under it; hover a moved line to see where it went and click it to jump there. Binary files, or the binary option, are compared as hex rows lined up as in OxideMerge: moved blocks (relocated runs of 16 or more bytes, and runs shifted by inserted or deleted bytes, found by a banded byte alignment) are shown side by side, with blank cells facing inserted or deleted bytes, each side showing its own offsets, and an overview of the differences. Both panes scroll together (wheel, arrow keys, Page Up/Down, a horizontal scroll bar), Alt+Down / Alt+Up (or F8 / Shift+F8, or the toolbar arrows) step through the differences, and Alt+Right / Alt+Left copy the current text difference to the right / left file. A merge is one undoable edit in that file's tab (opened if needed) and is not saved until you save the file. The compare window's keys are listed in Help > Keyboard Shortcuts. Text comparisons can ignore blank lines, case, whitespace (spaces and tabs), and line ending differences (CRLF / LF / CR; ignored by default), set in the Compare dialog or the window and remembered; when line endings count, lines still pair up by their text and a changed ending is shown at the end of the line. Files up to 256 MiB can be compared.
 
+### Fixed
+- On Windows, File > Recent Files (and the recent-files list and File View) no longer show paths with a leading `\\?\`; lists saved by earlier versions are cleaned when the settings load.
+
 ### 繁體中文
 
 #### 新增
 - 「工具 > 比較檔案」與「工具 > 以二進位比較檔案」可在獨立視窗中並排比較兩個檔案，左右兩側可用檔案管理員選擇，或從已開啟的分頁檔案中選擇。文字檔逐行比較（已開啟的文字檔以編輯器中的內容比較，含未儲存的修改），修改、刪除、新增的行以不同顏色標示，修改行中變動的字詞會加強標示，移到別處的行另以一種顏色標示。比照 OxideMerge，兩側不插入空白填充行，對應的差異以兩窗格間的連結相連，窗格旁的總覽列顯示所有差異（按一下或拖曳即可捲動），各側下方顯示編碼、換行格式與目前位置；滑鼠停在移動的行上會顯示移到哪一行，按一下即可跳過去。二進位檔或勾選二進位比較時比照 OxideMerge 以對齊的十六進位列比較：移動區塊（搬到他處的 16 位元組以上區塊，以及因插入或刪除位元組而位移、由帶狀位元組對齊找到的區塊）並排對齊，插入或刪除的位元組對面以空白格表示，兩側各自顯示自己的位移，並有差異總覽列。兩側同步捲動（滾輪、方向鍵、Page Up/Down 與水平捲軸），Alt+↓／Alt+↑（或 F8／Shift+F8、工具列的箭頭）可逐一前往各處差異，Alt+→／Alt+← 可將目前的文字差異複製到右側／左側檔案。合併是在該檔案分頁（必要時自動開啟）中的一次可復原編輯，要儲存該檔案後才會寫入。比較視窗的按鍵列在「說明 > 鍵盤快捷鍵」中。文字比較可忽略空白行、大小寫、空白字元（空格與 Tab）與換行符號差異（CRLF／LF／CR，預設忽略），可在比較對話框或比較視窗中設定並會記住；比較換行符號時各行仍依文字對齊，換行符號不同會標示在行尾。可比較最大 256 MiB 的檔案。
+
+#### 修正
+- Windows 上「檔案 > 最近使用的檔案」（以及最近檔案清單與檔案檢視）不再顯示開頭的 `\\?\`；舊版儲存的清單會在載入設定時清理。
 
 ## [0.6.10] - 2026-11-25
 
