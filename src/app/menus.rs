@@ -232,7 +232,7 @@ impl App {
                 ui.label(self.t("menu.none", "（無）"));
             }
             for (i, p) in recent.iter().enumerate() {
-                if ui.button(format!("{} {}", i + 1, p.display())).clicked() {
+                if ui.button(format!("{} {}", i + 1, crate::core::display_path(p))).clicked() {
                     self.open_path(p);
                     ui.close();
                 }
@@ -635,6 +635,9 @@ impl App {
         self.item(ui, C::Options);
         ui.separator();
         self.item(ui, C::RunScript);
+        ui.separator();
+        self.item(ui, C::CompareFiles);
+        self.item(ui, C::CompareBinary);
         ui.separator();
         self.item(ui, C::Highlighting);
         self.item(ui, C::FileAssociation);

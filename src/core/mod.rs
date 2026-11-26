@@ -1,4 +1,5 @@
 pub mod chinese;
+pub mod compare;
 mod chinese_phrases;
 mod chinese_tables;
 pub mod dprint;

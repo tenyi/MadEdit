@@ -52,7 +52,7 @@ macro_rules! commands {
                         | C::ToggleToolbar | C::ToggleMenubar | C::ToggleStatusbar | C::ToggleFileView | C::ToggleTheme
                         | C::ToggleScriptOutput
                         | C::ShowFindInFilesResults | C::CollapseAllResults
-                        | C::Options | C::Highlighting | C::FileAssociation | C::SourceFormatter | C::PurgeHistories
+                        | C::Options | C::CompareFiles | C::CompareBinary | C::Highlighting | C::FileAssociation | C::SourceFormatter | C::PurgeHistories
                         | C::WindowList | C::KeyboardShortcuts | C::About
                 )
             }
@@ -214,6 +214,8 @@ commands! {
     // ── 工具 ──
     Options => "menuOptions", "選項(&O)...", "";
     RunScript => "menuRunScript", "運行腳本(&R)", "F5";
+    CompareFiles => "menuCompareFiles", "比較檔案(&M)...", "";
+    CompareBinary => "menuCompareBinary", "以二進位比較檔案(&Y)...", "";
     Highlighting => "menuHighlighting", "語法突顯設定(&S)...", "";
     FileAssociation => "menuFileAssociation", "檔案類型關聯(&F)...", "";
     SourceFormatter => "menuSourceFormatter", "原始碼格式化設定(&S)...", "";

@@ -158,6 +158,8 @@ pub enum Dialog {
     PurgeHistories,
     ConvertEncoding { encoding: String, bom: bool },
     WordCount(WordCount, bool),
+    /// Tools > Compare Files: the two paths, and whether to compare bytes.
+    Compare { left: String, right: String, binary: bool },
     WindowList,
     /// 收藏面板：新增群組、重新命名群組或檔案項目
     FavoriteName { target: FavTarget, value: String, invalid: bool },
@@ -229,6 +231,35 @@ const COMMAND_SECTIONS: &[(C, &str, &str)] = &[
     (C::ToggleWindow, "menu.window", "視窗(W)"),
     (C::KeyboardShortcuts, "menu.help", "說明(H)"),
 ];
+
+/// The compare window's keys (Tools > Compare Files), listed in Help > Keyboard Shortcuts.
+/// `undo` is how the undo key is written on this platform (Ctrl+Z, ⌘Z).
+fn compare_window_keys(lang: super::i18n::Lang, undo: &str) -> Vec<(String, Vec<egui::KeyboardShortcut>)> {
+    use egui::{Key, KeyboardShortcut as K, Modifiers as M};
+    let t = |key: &str, zh: &'static str| super::i18n::fill(super::i18n::translate(lang, key, zh), None, Some(undo));
+    vec![
+        (t("cmp.next", "下一個差異"), vec![K::new(M::ALT, Key::ArrowDown), K::new(M::NONE, Key::F8)]),
+        (t("cmp.prev", "上一個差異"), vec![K::new(M::ALT, Key::ArrowUp), K::new(M::SHIFT, Key::F8)]),
+        (t("keys.cmp_merge_right", "合併到右側（未開啟的檔案會在分頁中開啟，變更未儲存，可用 {q} 復原）"), vec![K::new(M::ALT, Key::ArrowRight)]),
+        (t("keys.cmp_merge_left", "合併到左側（未開啟的檔案會在分頁中開啟，變更未儲存，可用 {q} 復原）"), vec![K::new(M::ALT, Key::ArrowLeft)]),
+        (t("keys.cmp_scroll", "捲動"), vec![K::new(M::NONE, Key::ArrowUp), K::new(M::NONE, Key::ArrowDown), K::new(M::NONE, Key::PageUp), K::new(M::NONE, Key::PageDown)]),
+        (t("keys.cmp_hscroll", "水平捲動"), vec![K::new(M::NONE, Key::ArrowLeft), K::new(M::NONE, Key::ArrowRight), K::new(M::NONE, Key::Home), K::new(M::NONE, Key::End)]),
+        (t("keys.cmp_ends", "到開頭／結尾"), vec![K::new(M::COMMAND, Key::Home), K::new(M::COMMAND, Key::End)]),
+        (t("btn.close", "關閉"), vec![K::new(M::NONE, Key::Escape)]),
+    ]
+}
+
+/// The labels of the text compare options: ignore blank lines, case, whitespace, newline
+/// styles.
+pub(super) fn compare_option_labels(lang: super::i18n::Lang) -> [String; 4] {
+    let t = |key: &str, zh: &'static str| super::i18n::translate(lang, key, zh).to_string();
+    [
+        t("cmp.ignore_blank", "忽略空白行"),
+        t("cmp.ignore_case", "忽略大小寫"),
+        t("cmp.ignore_ws", "忽略空白字元差異（空格／Tab）"),
+        t("cmp.ignore_eol", "忽略換行符號差異（CRLF／LF／CR）"),
+    ]
+}
 
 /// Index into `COMMAND_SECTIONS` of the menu each command in `commands::ALL` belongs to,
 /// in the same order, found in one pass over the table.
@@ -872,6 +903,89 @@ impl App {
                     close = true;
                 }
             }
+            Dialog::Compare { left, right, binary } => {
+                let l_left = self.t("cmp.left", "左側檔案：");
+                let l_right = self.t("cmp.right", "右側檔案：");
+                let l_browse = self.t("cmp.browse", "選擇檔案");
+                let l_tabs = self.t("cmp.from_tabs", "從已開啟的檔案選擇");
+                let l_no_tabs = self.t("cmp.no_tabs", "沒有已開啟的檔案");
+                // Saved files open in tabs, in tab order, each once.
+                let mut open_files: Vec<String> = Vec::new();
+                for p in self.tabs.iter().filter_map(|t| t.doc.path.as_deref()) {
+                    let p = crate::core::display_path(p);
+                    if !open_files.contains(&p) {
+                        open_files.push(p);
+                    }
+                }
+                let l_binary = self.t("cmp.as_binary", "以二進位（十六進位）比較");
+                let l_hint = self.t("cmp.hint", "已開啟的文字檔以編輯器中的內容（含未儲存的修改）比較；二進位檔或勾選二進位比較時逐位元組比較。移到別處的行或區塊會以另一種顏色標示。");
+                let l_compare = self.t("cmp.compare", "比較");
+                let l_cancel = self.t("btn.cancel", "取消");
+                let l_text = self.t("cmp.text_options", "文字比較");
+                let [l_blank, l_case, l_ws, l_eol] = compare_option_labels(self.ui_lang());
+                let mut text = self.compare_text_options();
+                let text_before = text;
+                let width = dialog_width(ctx, 560.0);
+                let field = (width * 0.62).floor();
+                let mut start = false;
+                dialog_window(ctx, self.t("dlg.compare", "比較檔案")).open(&mut open).resizable(false).show(ctx, |ui| {
+                    begin_dialog(ui, width);
+                    dialog_body(ui, opened, |ui| {
+                        form::section(ui, "", |s| {
+                            for (label, path) in [(l_left, &mut *left), (l_right, &mut *right)] {
+                                s.row(label, |ui| {
+                                    let name = format!("{l_browse} {}", form::bare(label));
+                                    if form::icon_button(ui, egui::Button::new("…"), l_browse, &name).clicked()
+                                        && let Some(p) = rfd::FileDialog::new().set_title(l_browse).pick_file()
+                                    {
+                                        *path = crate::core::display_path(&p);
+                                    }
+                                    // Or one of the files already open in tabs.
+                                    let tabs_name = format!("{l_tabs} {}", form::bare(label));
+                                    let tip = if open_files.is_empty() { l_no_tabs } else { l_tabs };
+                                    let tabs = ui.add_enabled_ui(!open_files.is_empty(), |ui| form::icon_button(ui, egui::Button::new("▾"), tip, &tabs_name)).inner;
+                                    egui::Popup::menu(&tabs).show(|ui| {
+                                        for file in &open_files {
+                                            let (name, folder) = super::compare::name_and_folder(file);
+                                            let text = egui::RichText::new(format!("{name}    {folder}"));
+                                            if ui.add(egui::Button::new(text).selected(path == file).truncate()).on_hover_text(file.as_str()).clicked() {
+                                                *path = file.clone();
+                                                ui.close();
+                                            }
+                                        }
+                                    });
+                                    ui.add(egui::TextEdit::singleline(path).desired_width(field - ui.min_rect().width() - ui.spacing().item_spacing.x));
+                                });
+                            }
+                            s.toggle(l_binary, binary);
+                        });
+                        // What a text comparison ignores (not used for binary comparisons).
+                        ui.add_enabled_ui(!*binary, |ui| {
+                            form::section(ui, l_text, |s| {
+                                s.toggle(&l_blank, &mut text.ignore_blank_lines);
+                                s.toggle(&l_case, &mut text.ignore_case);
+                                s.toggle(&l_ws, &mut text.ignore_whitespace);
+                                s.toggle(&l_eol, &mut text.ignore_eol);
+                            });
+                        });
+                        hint(ui, l_hint);
+                    });
+                    let ready = !left.trim().is_empty() && !right.trim().is_empty();
+                    footer(ui, |ui| {
+                        start = ui.add_enabled_ui(ready, |ui| primary_button(ui, l_compare)).inner.clicked() || (ready && enter_pressed(ui, ignore_keys));
+                        if ui.button(l_cancel).clicked() {
+                            close = true;
+                        }
+                    });
+                });
+                if text != text_before {
+                    self.set_compare_text_options(text);
+                }
+                if start {
+                    let (l, r, b) = (left.clone(), right.clone(), *binary);
+                    close = self.start_compare(&l, &r, b);
+                }
+            }
             Dialog::WordCount(wc, sel) => {
                 let scope = if *sel { self.t("wc.selection", "（選取範圍）") } else { self.t("wc.document", "（整份文件）") };
                 let scope = scope.trim_matches(['（', '）', '(', ')', ' ']);
@@ -1042,6 +1156,19 @@ impl App {
                         sections[s].1.push((name, keys.join("\n")));
                     }
                 }
+                // The compare window's own keys: fixed, not rebindable, so not in the command table.
+                let compare_title = plain_label(self.t("keys.compare", "比較視窗"));
+                let mut compare_rows = Vec::new();
+                let undo = ctx.format_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z));
+                for (name, keys) in compare_window_keys(self.ui_lang(), &undo) {
+                    let shown: Vec<String> = keys.iter().map(|sc| ctx.format_shortcut(sc)).collect();
+                    let names = egui::ModifierNames::NAMES;
+                    let hit = f.is_empty() || compare_title.to_lowercase().contains(&f) || name.to_lowercase().contains(&f) || keys.iter().zip(&shown).any(|(sc, s)| [s.clone(), sc.format(&names, true), sc.format(&names, false)].iter().any(|k| k.to_lowercase().contains(&f)));
+                    if hit {
+                        compare_rows.push((name, shown.join("\n")));
+                    }
+                }
+                sections.push((compare_title.as_str(), compare_rows));
                 sections.retain(|(_, rows)| !rows.is_empty());
                 // Height in lines: a command with several shortcuts takes one line per key, and
                 // a menu title about two.

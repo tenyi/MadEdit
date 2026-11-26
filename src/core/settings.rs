@@ -304,6 +304,14 @@ pub struct Settings {    pub auto_check_updates: bool,
     pub col_hint_position: usize,
     pub show_ruler: bool,
     pub show_eol: bool,
+    /// Tools > Compare Files: changes of blank lines only are not differences
+    pub compare_ignore_blank_lines: bool,
+    /// Tools > Compare Files: upper and lower case compare equal
+    pub compare_ignore_case: bool,
+    /// Tools > Compare Files: spaces and tabs are not compared
+    pub compare_ignore_whitespace: bool,
+    /// Tools > Compare Files: line terminator styles (CRLF, LF, CR) compare equal
+    pub compare_ignore_eol: bool,
     pub show_tab: bool,
     pub show_space: bool,
     pub mark_active_line: bool,
@@ -427,6 +435,10 @@ impl Default for Settings {
             col_hint_position: 80,
             show_ruler: true,
             show_eol: false,
+            compare_ignore_blank_lines: false,
+            compare_ignore_case: false,
+            compare_ignore_whitespace: false,
+            compare_ignore_eol: true,
             show_tab: false,
             show_space: false,
             mark_active_line: true,
@@ -510,6 +522,29 @@ impl Default for Settings {
 /// 歷史清單上限
 const MAX_RECENT: usize = 20;
 
+/// `path` without a `\\?\` verbatim prefix, unless that would name a different file: Windows
+/// normalizes plain paths, dropping a trailing dot or space from a name and reading reserved
+/// names (CON, NUL, COM1, …, with any extension) as devices. Such paths keep the prefix, which
+/// is only hidden where they are shown (`display_path`).
+fn plain_if_same(path: PathBuf) -> PathBuf {
+    let plain = super::favorites::clean_path(path.clone());
+    if plain == path {
+        return path;
+    }
+    let safe = plain.components().all(|c| match c {
+        std::path::Component::Normal(name) => {
+            let name = name.to_string_lossy();
+            let stem = name.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+            let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+                || ((stem.starts_with("COM") || stem.starts_with("LPT")) && stem.len() == 4 && stem.as_bytes()[3].is_ascii_digit() && stem.as_bytes()[3] != b'0')
+                || ((stem.starts_with("COM") || stem.starts_with("LPT")) && ["¹", "²", "³"].iter().any(|d| stem[3..] == **d));
+            !reserved && !name.ends_with('.') && !name.ends_with(' ')
+        }
+        _ => true,
+    });
+    if safe { plain } else { path }
+}
+
 /// 設定檔讀不到時的資料。介面再用目前語言組成完整句子
 pub struct SettingsLoadError {
     /// 備份成功時為備份路徑，失敗時為備份錯誤
@@ -573,6 +608,7 @@ impl Settings {
         match serde_json::from_str::<Self>(&text) {
             Ok(mut s) => {
                 s.migrate_encodings(&text);
+                s.clean_recent_files();
                 (s, None)
             }
             Err(e) => (Self::default(), Some(Self::corrupt_message(path, &e.to_string()))),
@@ -629,8 +665,23 @@ impl Settings {
         list.truncate(MAX_RECENT);
     }
 
+    /// Recent files are kept without Windows' `\\?\` verbatim prefix (which canonical paths
+    /// carry) where the plain path names the same file, so the menu shows them as typed and
+    /// one file is listed once.
     pub fn add_recent_file(&mut self, path: PathBuf) {
-        Self::push_history(&mut self.recent_files, path);
+        Self::push_history(&mut self.recent_files, plain_if_same(path));
+    }
+
+    /// Lists saved by earlier versions may hold `\\?\` paths: drop the prefix where it is
+    /// safe, and the duplicates that leaves, keeping the most recent place of each file.
+    fn clean_recent_files(&mut self) {
+        let mut out: Vec<PathBuf> = Vec::with_capacity(self.recent_files.len());
+        for p in self.recent_files.drain(..).map(plain_if_same) {
+            if !out.contains(&p) {
+                out.push(p);
+            }
+        }
+        self.recent_files = out;
     }
 
     /// 清除所有歷史紀錄
@@ -843,5 +894,32 @@ mod tests {
         assert!(partial.ui_font_family.is_empty(), "missing ui_font_family means automatic");
         assert!(!partial.output_log_to_file, "missing log toggle defaults to off");
         assert!(!partial.show_script_output, "missing Script Output state defaults to hidden");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn recent_files_drop_the_verbatim_prefix() {
+        let mut s = Settings::default();
+        s.add_recent_file(PathBuf::from(r"\\?\C:\work\a.txt"));
+        s.add_recent_file(PathBuf::from(r"\\?\UNC\server\share\b.txt"));
+        s.add_recent_file(PathBuf::from(r"C:\work\a.txt"));
+        assert_eq!(s.recent_files, vec![PathBuf::from(r"C:\work\a.txt"), PathBuf::from(r"\\server\share\b.txt")]);
+        // A list saved by an earlier version is cleaned when loaded.
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        let json = serde_json::json!({ "recent_files": [r"\\?\C:\x.txt", r"C:\x.txt", r"\\?\C:\y.txt"] });
+        std::fs::write(&file, json.to_string()).unwrap();
+        let (loaded, err) = Settings::load_from(&file);
+        assert!(err.is_none());
+        assert_eq!(loaded.recent_files, vec![PathBuf::from(r"C:\x.txt"), PathBuf::from(r"C:\y.txt")]);
+        // Names only reachable verbatim keep the prefix: a trailing dot or space, a device name.
+        for odd in [r"\\?\C:\data\report.", r"\\?\C:\data\note ", r"\\?\C:\data\con.txt", r"\\?\C:\nul\a.txt", r"\\?\C:\data\COM1"] {
+            assert_eq!(plain_if_same(PathBuf::from(odd)), PathBuf::from(odd), "{odd}");
+        }
+        for fine in [r"\\?\C:\data\console.txt", r"\\?\C:\data\com10.txt", r"\\?\C:\data\.git\x", r"\\?\C:\data\a.b.txt"] {
+            assert_eq!(plain_if_same(PathBuf::from(fine)), PathBuf::from(&fine[4..]), "{fine}");
+        }
+        // The menu still shows such a path without the prefix.
+        assert_eq!(super::super::display_path(std::path::Path::new(r"\\?\C:\data\report.")), r"C:\data\report.");
     }
 }
