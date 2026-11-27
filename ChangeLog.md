@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+- MSBuild and .NET XML project/resource files (`.csproj`, `.vbproj`, `.fsproj`, `.vcxproj`, `.props`, `.targets`, `.slnx`, `.nuspec`, `.xaml`, `.axaml`, `.resx`) now automatically open with XML syntax highlighting.
+
+### 繁體中文
+
+#### 新增
+- MSBuild 與 .NET XML 專案／資源檔（`.csproj`、`.vbproj`、`.fsproj`、`.vcxproj`、`.props`、`.targets`、`.slnx`、`.nuspec`、`.xaml`、`.axaml`、`.resx`）現在會自動套用 XML 語法高亮。
+
 ## [0.6.10] - 2026-11-25
 
 ### Added

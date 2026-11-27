@@ -367,6 +367,9 @@ fn detect_syntax_in(ps: &SyntaxSet, path: &Path, first_line: &str) -> String {
         "zsh" | "bash" => Some("Bourne Again Shell (bash)"),
         "kt" | "kts" => Some("Java"),
         "swift" => Some("Rust"),
+        // MSBuild and .NET XML project/resource formats not mapped in syntect's default XML definition
+        "csproj" | "vbproj" | "fsproj" | "vcxproj" | "props" | "targets" | "slnx" | "nuspec"
+        | "xaml" | "axaml" | "resx" => Some("XML"),
         _ => None,
     };
     if let Some(name) = mapped.filter(|n| ps.find_syntax_by_name(n).is_some()) {
@@ -1179,6 +1182,75 @@ contexts:
         assert_eq!(detect_syntax(Path::new("a.py"), ""), "Python");
         assert_eq!(detect_syntax(Path::new("script"), "#!/bin/bash"), "Bourne Again Shell (bash)");
         assert_eq!(detect_syntax(Path::new("notes.unknownext"), "hello"), PLAIN_TEXT);
+    }
+
+    #[test]
+    fn test_csproj_and_msbuild_xml_extensions_highlight_as_xml() {
+        let ps = load_syntaxes(None);
+        for file in [
+            "App.csproj",
+            "App.CSPROJ",
+            "Directory.Build.props",
+            "Directory.Build.targets",
+            "Lib.fsproj",
+            "Legacy.vbproj",
+            "Native.vcxproj",
+            "App.slnx",
+            "Pkg.nuspec",
+            "MainWindow.xaml",
+            "MainWindow.axaml",
+            "Strings.resx",
+        ] {
+            // SDK-style project files start with <Project ...> rather than <?xml ...?>
+            assert_eq!(
+                detect_syntax_in(&ps, Path::new(file), "<Project Sdk=\"Microsoft.NET.Sdk\">"),
+                "XML",
+                "{file}"
+            );
+        }
+
+        let lines = vec![
+            "<Project Sdk=\"Microsoft.NET.Sdk\">".to_string(),
+            "  <!-- build config -->".to_string(),
+            "  <PropertyGroup>".to_string(),
+            "    <TargetFramework>net9.0</TargetFramework>".to_string(),
+            "  </PropertyGroup>".to_string(),
+            "</Project>".to_string(),
+        ];
+        let mut cache = SyntaxCache::default();
+        let spans = cache.highlight_full(&lines, 0, lines.len(), "XML", default_theme_name(false), false);
+        let fg = cache.default_fg();
+
+        // Tag/attribute/string, comment, and element text lines must be highlighted beyond plain fg
+        assert!(
+            spans[0].iter().any(|s| s.color_rgb != fg && s.text.contains("Project")),
+            "XML tag name must be highlighted"
+        );
+        assert!(
+            spans[0].iter().any(|s| s.color_rgb != fg && s.text.contains("Microsoft.NET.Sdk")),
+            "XML attribute value must be highlighted"
+        );
+        assert!(
+            spans[1].iter().any(|s| s.color_rgb != fg && s.text.contains("build config")),
+            "XML comment must be highlighted"
+        );
+        assert!(
+            spans[3].iter().any(|s| s.color_rgb != fg && s.text.contains("TargetFramework")),
+            "nested XML element tag must be highlighted"
+        );
+        assert_eq!(comment_tokens("XML"), (None, Some(("<!--", "-->"))));
+
+        // Custom user syntax in syntaxes/ must still take precedence over the XML fallback
+        let dir = crate::test_support::TempDir::new("custom-csproj-syntax");
+        let syntaxes = dir.path().join("syntaxes");
+        std::fs::create_dir_all(&syntaxes).unwrap();
+        std::fs::write(
+            syntaxes.join("custom-csproj.sublime-syntax"),
+            "%YAML 1.2\n---\nname: Custom Csproj\nfile_extensions: [csproj]\nscope: source.custom.csproj\ncontexts:\n  main:\n    - match: '.*'\n      scope: text.plain\n",
+        )
+        .unwrap();
+        let custom_ps = load_syntaxes(Some(dir.path()));
+        assert_eq!(detect_syntax_in(&custom_ps, Path::new("App.csproj"), ""), "Custom Csproj");
     }
 
     #[test]
