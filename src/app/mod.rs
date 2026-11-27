@@ -383,8 +383,10 @@ impl App {
         self.tabs.iter().position(|t| t.doc.id == id)
     }
 
+    /// Shows `msg` in the status bar. The bar is one row high: line breaks become spaces, so
+    /// a message built from multi-line text (a pasted search query) cannot grow it into a block.
     pub fn set_status(&mut self, msg: impl Into<String>) {
-        self.status = Some((msg.into(), 0.0));
+        self.status = Some((msg.into().replace("\r\n", " ").replace(['\r', '\n'], " "), 0.0));
     }
 
     /// 設定檔損毀提示。譯文裡的 `\n` 是跳脫的換行
@@ -1295,7 +1297,7 @@ impl App {
                 ui.label(egui::RichText::new(self.t("st.no_document", "沒有開啟的檔案")).weak());
                 if let Some((msg, _)) = &self.status {
                     ui.separator();
-                    ui.label(msg);
+                    ui.add(egui::Label::new(msg.as_str()).truncate().sense(egui::Sense::hover())).on_hover_text(msg.as_str());
                 }
             });
             return;
@@ -1394,7 +1396,7 @@ impl App {
             }
             if let Some((msg, _)) = &status {
                 ui.separator();
-                ui.label(msg);
+                ui.add(egui::Label::new(msg.as_str()).truncate().sense(egui::Sense::hover())).on_hover_text(msg.as_str());
             }
         });
     }

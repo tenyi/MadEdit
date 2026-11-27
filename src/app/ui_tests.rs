@@ -478,6 +478,106 @@ fn test_find_bar_counts_and_highlights_matches_live() {
     assert!(h.state_mut().tab_mut().view.find_regex.is_none());
 }
 
+/// Open the Replace tab of the find window over `doc`, searching `query` to be replaced by `rep`.
+fn replace_tab(h: &mut Harness<'static, App>, doc: &str, query: &str, rep: &str) {
+    let s = h.state_mut();
+    (s.settings.search_match_case, s.settings.search_whole_word, s.settings.search_regex) = (false, false, false);
+    s.doc_mut().editor.set_text(doc);
+    s.doc_mut().version += 1;
+    s.find.query = query.into();
+    s.find.replacement = rep.into();
+    s.find.replace = true;
+    s.find.visible = true;
+    h.run_steps(3);
+}
+
+/// Click into the `n`-th multiline box of the find window (0 = search, 1 = replace).
+fn focus_field(h: &mut Harness<'static, App>, n: usize) {
+    use egui::accesskit::Role;
+    h.query_all_by(|n| n.role() == Role::MultilineTextInput).nth(n).unwrap().click();
+    h.run_steps(1);
+}
+
+/// Enter in the replace box replaces the match under the caret and then advances, exactly as
+/// the Replace button does. Both boxes used to answer the same Enter press, and Find Next ran
+/// first, so the match under the caret was skipped and the following one was replaced.
+#[test]
+fn test_find_window_enter_in_replace_box_replaces_the_current_match() {
+    let mut h = harness();
+    replace_tab(&mut h, "aa bb aa bb", "aa", "X");
+    h.state_mut().pending.push(C::FindNext);
+    h.run_steps(2);
+    assert_eq!(h.state_mut().doc().editor.selected_text(), "aa");
+    focus_field(&mut h, 1);
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    assert_eq!(text(&mut h), "X bb aa bb");
+    assert_eq!(h.state_mut().doc().editor.selected_text(), "aa", "the next match is selected afterwards");
+}
+
+/// Enter in the search box only finds the next match, also on the Replace tab.
+#[test]
+fn test_find_window_enter_in_search_box_never_replaces() {
+    let mut h = harness();
+    replace_tab(&mut h, "aa bb aa bb", "aa", "X");
+    h.state_mut().pending.push(C::FindNext);
+    h.run_steps(2);
+    focus_field(&mut h, 0);
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    assert_eq!(text(&mut h), "aa bb aa bb");
+    assert_eq!(h.state_mut().doc().editor.selection.start(), crate::core::editor::TextPosition::new(0, 6));
+}
+
+/// "Selected text" narrows Replace All to a stream selection. Without one, or with a column
+/// selection (not supported), nothing is replaced: it used to fall through to the whole document.
+#[test]
+fn test_replace_all_in_selection_requires_a_selection() {
+    use crate::core::editor::{Selection, TextPosition};
+    use egui::accesskit::Role;
+    let mut h = harness();
+    replace_tab(&mut h, "aa aa\naa aa", "aa", "X");
+    h.state_mut().settings.search_in_selection = true;
+    h.run_steps(2);
+    let replace_all_state = |h: &mut Harness<'static, App>, disabled: bool| {
+        h.query_all_by(|n| n.role() == Role::Button && n.label().as_deref() == Some("全部取代") && n.is_disabled() == disabled).count() == 1
+    };
+    assert!(replace_all_state(&mut h, true), "Replace All is disabled without a selection");
+    h.state_mut().replace_all();
+    assert_eq!(text(&mut h), "aa aa\naa aa", "no selection: nothing is replaced");
+    // Column selection: unsupported, and still not the whole document.
+    h.state_mut().doc_mut().editor.selection = Selection::block(TextPosition::new(0, 0), TextPosition::new(1, 2), 0, 2);
+    h.run_steps(2);
+    assert!(replace_all_state(&mut h, true), "Replace All is disabled for a column selection");
+    h.state_mut().replace_all();
+    assert_eq!(text(&mut h), "aa aa\naa aa", "column selection: nothing is replaced");
+    // A stream selection limits the replacement to its own text.
+    h.state_mut().doc_mut().editor.select_range(TextPosition::new(0, 0), TextPosition::new(0, 5));
+    h.run_steps(2);
+    assert!(replace_all_state(&mut h, false));
+    h.state_mut().replace_all();
+    assert_eq!(text(&mut h), "X X\naa aa");
+}
+
+/// Escape closes the history dropdown first; the window itself closes on the next press.
+#[test]
+fn test_find_window_escape_closes_the_history_dropdown_first() {
+    let mut h = harness();
+    h.state_mut().settings.recent_finds = vec!["alpha".into()];
+    h.state_mut().pending.push(C::Find);
+    h.run_steps(3);
+    h.state_mut().find.history_open = true;
+    h.run_steps(2);
+    assert!(h.state_mut().find.history_open);
+    h.key_press(Key::Escape);
+    h.run_steps(2);
+    assert!(!h.state_mut().find.history_open, "the dropdown closes");
+    assert!(h.state_mut().find.visible, "the window stays open while a dropdown is showing");
+    h.key_press(Key::Escape);
+    h.run_steps(2);
+    assert!(!h.state_mut().find.visible);
+}
+
 #[test]
 fn test_toggle_theme_command_switches_light_and_dark_like_the_icon() {
     use crate::core::settings::ThemeChoice;
@@ -2465,6 +2565,181 @@ fn test_find_bar_navigation_does_not_restart_the_full_text_count() {
     h.run_steps(2);
     assert_ne!(h.state_mut().find.live.counts_key, key, "an edit must recompute the counts");
     assert!(h.query_by_label("共 4 個符合").is_some());
+}
+
+/// A pattern that can match a line break is matched on the joined document: Find Next selects
+/// across lines, a selection that spans lines still has a rank, and an edit rebuilds the index.
+#[test]
+fn test_find_window_cross_line_query_navigates_and_ranks() {
+    use crate::core::editor::TextPosition;
+    let mut h = harness();
+    {
+        let s = h.state_mut();
+        (s.settings.search_match_case, s.settings.search_whole_word, s.settings.search_regex) = (false, false, true);
+        s.doc_mut().editor.set_text("foo bar\nbar foo\nfoo bar\nbar end");
+        s.doc_mut().version += 1;
+        s.find.query = "bar\\nbar".into();
+        s.pending.push(C::Find);
+    }
+    h.run_steps(3);
+    assert!(h.query_by_label("共 2 個符合").is_some());
+    let selected = |h: &mut Harness<'static, App>| {
+        let sel = h.state_mut().doc().editor.selection;
+        (sel.start(), sel.end())
+    };
+    h.state_mut().pending.push(C::FindNext);
+    h.run_steps(3);
+    assert_eq!(selected(&mut h), (TextPosition::new(0, 4), TextPosition::new(1, 3)));
+    assert!(h.query_by_label("1 / 2").is_some(), "a match across lines still has a rank");
+    h.state_mut().pending.push(C::FindNext);
+    h.run_steps(3);
+    assert_eq!(selected(&mut h), (TextPosition::new(2, 4), TextPosition::new(3, 3)));
+    assert!(h.query_by_label("2 / 2").is_some());
+    h.state_mut().pending.push(C::FindNext);
+    h.run_steps(3);
+    assert!(h.query_by_label("1 / 2").is_some(), "wraps to the first");
+    // Previous with wrap: from the first match's start back to the last one.
+    h.state_mut().pending.push(C::FindPrevious);
+    h.run_steps(3);
+    assert!(h.query_by_label("2 / 2").is_some());
+    // The joined copy follows the document version: an edit recomputes the index.
+    h.state_mut().doc_mut().editor.set_text("foo bar\nbar foo\nfoo baz\nbar end");
+    h.state_mut().doc_mut().version += 1;
+    h.run_steps(2);
+    assert!(h.query_by_label("共 1 個符合").is_some());
+    // Searched literally, the two characters `\n` never leave the line engine.
+    {
+        let s = h.state_mut();
+        s.settings.search_regex = false;
+        s.doc_mut().editor.set_text("a\\nb\nplain");
+        s.doc_mut().version += 1;
+        s.find.query = "\\n".into();
+    }
+    h.run_steps(2);
+    assert!(h.query_by_label("共 1 個符合").is_some());
+}
+
+/// The core reports a search failure as a typed error; the window shows it in the interface
+/// language, where it used to show the core's Traditional Chinese text in every language.
+#[test]
+fn test_search_errors_follow_the_interface_language() {
+    use crate::core::settings::UiLanguage;
+    let mut h = harness();
+    h.state_mut().settings.ui_language = UiLanguage::En;
+    h.state_mut().settings.search_regex = true;
+    h.state_mut().pending.push(C::Find);
+    h.run_steps(3);
+    h.state_mut().find.query = "(".into();
+    h.run_steps(2);
+    assert!(h.query_by_label("Invalid regular expression").is_some());
+    h.state_mut().find.hex = true;
+    h.state_mut().find.query = "ABC".into();
+    h.run_steps(2);
+    assert!(h.query_by_label("The hex pattern must have an even number of digits").is_some());
+}
+
+/// Ctrl+Enter inserts a line break through the text box itself, so egui moves the caret after
+/// it and scrolls the box to keep the caret in view. Inserting the break by hand after the box
+/// was drawn left the view where it was, with the caret out of sight.
+#[test]
+fn test_find_window_ctrl_enter_keeps_the_caret_in_view() {
+    use egui::accesskit::Role;
+    let mut h = harness();
+    h.state_mut().pending.push(C::Find);
+    h.run_steps(3);
+    // Ten lines in a four-line box; the caret goes to the very end, which scrolls the box.
+    h.state_mut().find.query = "a\nb\nc\nd\ne\nf\ng\nh\ni\nj".into();
+    h.run_steps(2);
+    focus_field(&mut h, 0);
+    h.key_press_modifiers(Modifiers::CTRL, Key::End);
+    h.run_steps(3);
+    // The text node reports the unclipped content, which moves up as the box scrolls down.
+    let content_top = |h: &mut Harness<'static, App>| h.query_all_by(|n| n.role() == Role::MultilineTextInput).next().map(|n| n.rect().top()).unwrap();
+    let at_end = content_top(&mut h);
+    h.key_press_modifiers(Modifiers::CTRL, Key::Enter);
+    h.run_steps(3);
+    assert_eq!(h.state_mut().find.query, "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n");
+    let after = content_top(&mut h);
+    assert!(after < at_end, "the box must follow the caret onto the new line: content top {at_end} -> {after}");
+}
+
+/// The status bar keeps one row and the window's width, whatever the message. One built from
+/// a multi-line search query shows the query on a single line, and a long message is cut with
+/// an ellipsis instead of growing the bar (the whole text is its tooltip).
+#[test]
+fn test_status_bar_keeps_one_row_and_the_window_width() {
+    use egui::accesskit::Role;
+    let mut h = harness();
+    type_text(&mut h, "plain text");
+    h.state_mut().pending.push(C::Find);
+    h.run_steps(3);
+    {
+        // The box requests focus itself: clicking it would aim at the centre of its unclipped
+        // content, which for sixteen lines lies below the visible rows.
+        let s = h.state_mut();
+        s.find.query = "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\nm\nn\no\np".into();
+        s.find.focus = true;
+    }
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    let status = h.state_mut().status.clone().expect("not found is reported in the status bar").0;
+    assert!(!status.contains(['\n', '\r']), "the status message must be one line: {status:?}");
+    assert!(status.contains('\\'), "line breaks are written as \\n: {status:?}");
+    let bar = h.query_all_by(|n| n.role() == Role::Label && n.value().is_some_and(|v| v.starts_with("找不到「a"))).next().expect("the status label");
+    assert!(bar.rect().height() < 24.0, "a query of sixteen lines must not heighten the bar: {:?}", bar.rect());
+    let long = format!("找不到{}", "x".repeat(500));
+    h.state_mut().set_status(long.clone());
+    h.run_steps(2);
+    let bar = h.query_all_by(|n| n.role() == Role::Label && n.value().is_some_and(|v| v == long)).next().expect("the status label");
+    let (r, screen) = (bar.rect(), h.ctx.content_rect());
+    assert!(r.height() < 24.0, "the status message must stay on one row: {r:?}");
+    assert!(r.left() >= screen.left() && r.right() <= screen.right() + 0.5, "the status message must stay inside the window: {r:?} vs {screen:?}");
+}
+
+/// The find box paints a caret as tall as its row and no taller. The edit's own caret is the
+/// row plus 1.5 points above and below, two points wide, which at this text size reads as a
+/// heavy bar. Needs a GPU adapter: `cargo test --locked caret_is_as_tall -- --ignored`.
+#[test]
+#[ignore = "needs a wgpu adapter"]
+fn test_find_box_caret_is_as_tall_as_its_row() {
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::Queryable;
+    let mut h = egui_kittest::Harness::builder()
+        .allow_missing_glyphs()
+        .with_pixels_per_point(1.0)
+        .with_size([460.0, 420.0])
+        .wgpu()
+        .build_eframe(|cc| App::with_settings(cc, Vec::new(), None, quiet_settings(), None));
+    h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
+    let caret = h.ctx.global_style().visuals.text_cursor.stroke.color;
+    h.state_mut().pending.push(C::Find);
+    h.run_steps(4);
+    // A steady caret, so that a blink cannot hide it from the pixels (set after the app's own style).
+    h.ctx.all_styles_mut(|s| s.visuals.text_cursor.blink = false);
+    h.state_mut().find.query = "a".into();
+    h.state_mut().find.focus = true;
+    h.run_steps(4);
+    // The node reports the text rectangle: four rows of the box, the first starting at its top.
+    let field = h.query_all_by(|n| n.role() == Role::MultilineTextInput).next().expect("the search box").rect();
+    let row_h = field.height() / 4.0;
+    let img = h.render().expect("draw");
+    // The box's background, sampled well away from the text and the caret. A pixel "lit" is
+    // more than half-way from that background to the caret's colour; the thin antialiased
+    // caret never reaches the full colour, so an exact match would miss it.
+    let bg = *img.get_pixel(field.right() as u32 - 2, field.top() as u32 + 2);
+    let dist = |a: &image::Rgba<u8>, b: &image::Rgba<u8>| (0..3).map(|i| (a.0[i] as f32 - b.0[i] as f32).powi(2)).sum::<f32>().sqrt();
+    let half = 0.5 * dist(&bg, &image::Rgba(caret.to_array()));
+    // (The focused border, 4 points above and below, is left out of the scan.)
+    let scan = field.top() as i32 - 2..field.bottom() as i32 + 2;
+    let lit = |x: i32, y: i32| dist(img.get_pixel(x as u32, y as u32), &bg) > half;
+    // The caret's column: the one with the most lit rows (more than any letter stem).
+    let column = (field.left() as i32..field.right() as i32).max_by_key(|x| scan.clone().filter(|y| lit(*x, *y)).count()).expect("a caret on screen");
+    let solid = scan.filter(|y| lit(column, *y)).collect::<Vec<i32>>();
+    let (count, last) = (solid.len() as f32, *solid.last().expect("a caret on screen"));
+    assert!(count >= row_h - 2.5, "a caret must be on screen: without it the widest letter stem would be measured instead ({count} rows {solid:?})");
+    assert!(count <= row_h + 1.5, "the caret must be no taller than its row {row_h}: {count} rows {solid:?}");
+    assert!(last as f32 <= field.top() + row_h, "the caret must not reach below its row: last row {last}, row ends {}", field.top() + row_h);
 }
 
 /// 文件視圖的「列表」頁籤列出收藏根節點、群組與檔案；加入目前檔案時自動建立預設群組，

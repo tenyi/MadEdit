@@ -190,7 +190,14 @@ impl App {
                 }
                 1 => self.theme_toggle(ui),
                 _ => {
-                    let resp = ui.add(egui::TextEdit::singleline(&mut self.find.query).desired_width(140.0).hint_text(quick));
+                    // The query is shared with the find window's multiline box. A single-line
+                    // field cannot show line breaks: it displays them as `\n`, and only an
+                    // edit made here changes the query.
+                    let mut quick_query = super::find::shown_one_line(&self.find.query);
+                    let resp = ui.add(egui::TextEdit::singleline(&mut quick_query).desired_width(140.0).hint_text(quick));
+                    if resp.changed() {
+                        self.find.query = quick_query;
+                    }
                     if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         let back = ui.input(|i| i.modifiers.shift);
                         self.find_next(back);

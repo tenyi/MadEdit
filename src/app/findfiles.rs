@@ -167,7 +167,7 @@ impl App {
         let re = match crate::core::search::build_regex(&query, &self.search_options()) {
             Ok(r) => r,
             Err(e) => {
-                self.message(self.t("fif.bad_query", "搜尋條件錯誤"), e);
+                self.message(self.t("fif.bad_query", "搜尋條件錯誤"), self.search_error_line(&e));
                 return;
             }
         };
@@ -203,7 +203,7 @@ impl App {
                 } else {
                     let hint = t.doc.whole_hint();
                     let all = 0..t.doc.editor.lines.len();
-                    let n = t.doc.edit(EditKind::Other, hint, |ed| super::find::replace_all_lines(ed, &re, rep, use_regex, all));
+                    let n = t.doc.edit(EditKind::Other, hint, |ed| crate::core::search::replace_all_lines(ed, &re, rep, use_regex, all));
                     if n > 0 {
                         replaced_total += n;
                         self.fif.notes.push(Note::Replaced { path: p, count: n });
@@ -273,17 +273,7 @@ impl App {
                             let _ = tx.send(Msg::Note(Note::Skipped { path: f.clone(), reason: Skip::Undecodable }));
                             continue;
                         }
-                        let mut count = 0;
-                        let new_text = re.replace_all(&d.text, |caps: &regex::Captures| {
-                            count += 1;
-                            if use_regex {
-                                let mut s = String::new();
-                                caps.expand(rep, &mut s);
-                                s
-                            } else {
-                                rep.clone()
-                            }
-                        });
+                        let (new_text, count) = crate::core::search::replace_in_text(&d.text, &re, rep, use_regex);
                         if count == 0 {
                             continue;
                         }

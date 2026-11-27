@@ -9,10 +9,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Added
 - The Find bar becomes a floating, modeless "Find and Replace" window (like UltraEdit): the editor stays usable while it is open, the window drags by its compact title row (or any blank area), closes with the title-row "×" or Escape, and remembers its position across reopenings and restarts. It is split into "Find" and "Replace" tabs (Ctrl+F / Ctrl+H) with a File-View-style tab strip, and the search and replace boxes are 4-row multiline fields (fixed height, internal scrolling) so multi-line text can be searched. Enter runs Find next, Shift+Enter runs Find previous, Ctrl+Enter inserts a newline. A query spanning several lines is matched across lines, and Replace All handles cross-line matches with bookmark remapping. The search options (whole word, match case, regex, hex, wrap around) are grouped under an "Options" gear at the bottom-left. The search and replace history opens from a clock button at the top-right of each field (UltraEdit-style): one row per entry with a red "×" at the right end to remove it and "Clear search history" at the bottom, and picking an entry closes the list. The title bar's Quick find box gets the same history dropdown.
 
+### Fixed
+- Replace All with "Selected text" checked no longer falls back to the whole document when nothing, or a column selection, is selected: the button is disabled and explains why.
+- Search failures (an invalid regular expression, a malformed hex pattern) are shown in the interface language instead of always in Traditional Chinese.
+- The status bar keeps one row and the window's width whatever the message: a long message is cut with an ellipsis and shows its full text as a tooltip. A failed search no longer pastes the whole query into it, which used to cover the bottom of the window.
+
 ### 繁體中文
 
 #### 新增
 - 查找列改為浮動的非模態「查找和替換」視窗（仿 UltraEdit）：開啟時編輯器仍可正常操作，視窗可拖動緊湊標題列（或任意空白處）移動、以標題列右端「×」或 Esc 關閉，並記住位置（關閉後重開與重新啟動皆回到原處）。視窗分為「查找」「替換」兩個分頁（Ctrl+F／Ctrl+H），頁籤樣式與檔案視圖停靠欄一致；查找與替換欄位為 4 行多行輸入框（固定高度、內部捲動），可搜尋含換行的內容。純 Enter＝查找下一個、Shift+Enter＝查找上一個、Ctrl+Enter＝插入換行。跨行模式：含換行的查詢會跨行比對，「全部取代」也能處理跨行符合並位移書籤。搜尋選項（全字比對／區分大小寫／正則／十六進位／循環）收合於左下角「選項」齒輪。查找與替換欄位的歷史改為欄位右上角的時鐘鈕下拉（仿 UltraEdit）：每一列右端 hover 紅色「×」移除單筆、底部「清空搜尋紀錄」，點選任一筆自動收起清單。標題欄的「快速查找」框也接入同一套歷史下拉。
+
+#### 修正
+- 勾選「只在選取範圍內」而沒有選取範圍（或為欄位選取）時，「全部取代」不再回落到整份文件：按鈕停用並說明原因。
+- 搜尋失敗的訊息（無效的正規表達式、十六進位格式錯誤）依介面語言顯示，不再固定為繁體中文。
+- 狀態列的訊息固定為一行且不出視窗寬度：過長的訊息以「…」截斷，完整文字見懸停提示。查找失敗時不再把整條查詢貼進狀態列而蓋住視窗底部。
 
 ## [0.6.10] - 2026-11-25
 
