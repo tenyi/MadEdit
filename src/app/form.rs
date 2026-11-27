@@ -140,6 +140,160 @@ pub fn search_field(ui: &mut Ui, text: &mut String, hint: &str) -> Response {
     ui.add(edit)
 }
 
+/// A multiline text box of [`scrolling_text_edit`] and the rectangle it occupies.
+pub struct ScrollEdit {
+    /// The box as drawn, border included.
+    pub rect: egui::Rect,
+    pub response: Response,
+}
+
+/// A multiline text box of `rows` lines for an auto-sized window. The edit grows with its
+/// text, which would resize the window as the user types, so it sits in a clipped viewport
+/// that scrolls internally and keeps its height. Draw the outline with [`field_border`]:
+/// decorating the edit itself breaks as soon as the content scrolls
+/// (see `docs/multiline-text-input.md`).
+///
+/// `return_key` is the combination that inserts a line break, handled by the edit itself so
+/// that it moves the caret after the break and scrolls to keep the caret in view. `None`
+/// lets no key break the line.
+///
+/// The box paints its own caret: as tall as the text row and thin, where the edit's is a row
+/// plus a margin tall and two points wide (see [`paint_caret`]).
+pub fn scrolling_text_edit(ui: &mut Ui, id_salt: &'static str, id: egui::Id, text: &mut String, hint: &str, rows: usize, return_key: Option<egui::KeyboardShortcut>) -> ScrollEdit {
+    let pad = egui::vec2(6.0, 4.0);
+    const EXTRA_HEIGHT: f32 = 16.0;
+    let height = ui.text_style_height(&TextStyle::Body) * rows as f32 + 2.0 * pad.y + EXTRA_HEIGHT;
+    let rect = egui::Rect::from_min_size(egui::pos2(ui.max_rect().left(), ui.cursor().top()), egui::vec2(ui.max_rect().width(), height));
+    // The edit draws neither a background nor a frame of its own.
+    ui.painter().rect_filled(rect, 6.0, ui.visuals().extreme_bg_color);
+    // Reserve the row: a child UI does not advance the parent cursor, so whatever follows would stack on top.
+    ui.allocate_exact_size(rect.size(), Sense::hover());
+    let inner = rect.shrink2(pad);
+    let mut viewport = ui.new_child(
+        egui::UiBuilder::new().id_salt(format!("{id_salt}-viewport")).max_rect(inner).layout(Layout::top_down(Align::LEFT)),
+    );
+    let caret_color = ui.visuals().text_cursor.stroke.color;
+    let out = egui::ScrollArea::vertical()
+        .id_salt(format!("{id_salt}-scroll"))
+        .auto_shrink([false, false])
+        .min_scrolled_height(inner.height())
+        .max_height(inner.height())
+        .show(&mut viewport, |ui| {
+            let edit = egui::TextEdit::multiline(text)
+                .id(id)
+                .return_key(return_key)
+                .desired_width(f32::INFINITY)
+                .desired_rows(rows)
+                .frame(egui::Frame::NONE)
+                .margin(egui::Margin::symmetric(6, 4))
+                .hint_text(hint.to_owned());
+            let composing = ime_composing(ui, id);
+            let out = ui
+                .scope(|ui| {
+                    // egui 的游標比整行還高上下各 1.5 點、兩點寬，在這個字號下像根粗棒：平時把它
+                    // 藏起來，改畫一根與行等高、較細的（見 `paint_caret`）。
+                    if !composing {
+                        ui.visuals_mut().text_cursor.stroke.color = Color32::TRANSPARENT;
+                    }
+                    edit.show(ui)
+                })
+                .inner;
+            if !composing {
+                paint_caret(ui, id, &out, caret_color);
+            }
+            out
+        })
+        .inner;
+    ScrollEdit { rect, response: out.response.response }
+}
+
+/// Width of the caret that [`scrolling_text_edit`] paints.
+const CARET_WIDTH: f32 = 1.5;
+
+/// Whether the text box `id` is in an IME composition, kept from the `Ime` events of the
+/// focused box, on the same conditions as the edit itself starts and ends one. egui keeps
+/// that state to itself. While composing, the box keeps egui's own caret, which marks the
+/// composition's active position.
+fn ime_composing(ui: &Ui, id: egui::Id) -> bool {
+    let key = id.with("ime-composition");
+    if ui.ctx().memory(|m| m.owns_ime_events(id)) {
+        let change = ui.input(|i| composition_change(&i.events));
+        if let Some(composing) = change {
+            ui.ctx().data_mut(|d| d.insert_temp(key, composing));
+        }
+    }
+    ui.ctx().data(|d| d.get_temp::<bool>(key)).unwrap_or(false)
+}
+
+/// What a frame's `Ime` events do to a composition, read as the edit itself reads them: a
+/// non-empty preedit starts one, an emptied preedit or a commit ends it. `None` when nothing
+/// changed; with several events, the last one wins.
+fn composition_change(events: &[egui::Event]) -> Option<bool> {
+    events.iter().rev().find_map(|e| match e {
+        egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => Some(!text.is_empty()),
+        // The edit ignores a committed line break, so it ends no composition here either.
+        egui::Event::Ime(egui::ImeEvent::Commit(text)) if text != "\n" && text != "\r" => Some(false),
+        _ => None,
+    })
+}
+
+/// When the caret of a text box last moved, for its blink.
+#[derive(Clone, Copy)]
+struct CaretSince {
+    range: Option<egui::text::CCursorRange>,
+    since: f64,
+}
+
+/// Paints the caret of `out` in place of the edit's own: as tall as the text row and no
+/// taller, thin, blinking with the style's rhythm. Skipped while the box has no focus or the
+/// viewport is unfocused, exactly like the edit's.
+fn paint_caret(ui: &Ui, id: egui::Id, out: &egui::widgets::text_edit::TextEditOutput, color: Color32) {
+    if !out.response.has_focus() || !ui.input(|i| i.focused) {
+        return;
+    }
+    let Some(range) = out.cursor_range else { return };
+    let now = ui.input(|i| i.time);
+    let key = id.with("caret");
+    let mut since = now;
+    if let Some(prev) = ui.ctx().data(|d| d.get_temp::<CaretSince>(key))
+        && prev.range == Some(range)
+        && !out.response.changed()
+        && !out.response.gained_focus()
+    {
+        since = prev.since;
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(key, CaretSince { range: Some(range), since }));
+    let cursor = &ui.visuals().text_cursor;
+    if cursor.blink {
+        let cycle = (cursor.on_duration + cursor.off_duration) as f64;
+        if ((now - since) % cycle) as f32 >= cursor.on_duration {
+            return;
+        }
+    }
+    // The edit paints its text at `galley_pos`, with the galley's own left edge taken off.
+    let row = out.galley.pos_from_cursor(range.primary);
+    let x = out.galley_pos.x + row.center().x - out.galley.rect.left();
+    let top = egui::pos2(x, out.galley_pos.y + row.top());
+    ui.painter().line_segment([top, egui::pos2(x, top.y + row.height())], egui::Stroke::new(CARET_WIDTH, color));
+}
+
+/// The outline of a text box drawn by [`scrolling_text_edit`], on its viewport: red while
+/// `invalid`, the active stroke while it has focus, the hovered one under the pointer, plain
+/// otherwise.
+pub fn field_border(ui: &Ui, field: &ScrollEdit, invalid: bool) {
+    let visuals = ui.visuals();
+    let border = if invalid {
+        egui::Stroke::new(1.0, visuals.error_fg_color)
+    } else if field.response.has_focus() {
+        visuals.widgets.active.bg_stroke
+    } else if ui.rect_contains_pointer(field.rect) {
+        visuals.widgets.hovered.bg_stroke
+    } else {
+        visuals.widgets.noninteractive.bg_stroke
+    };
+    ui.painter().rect_stroke(field.rect, 6.0, border, egui::StrokeKind::Inside);
+}
+
 /// A shortcut such as "Ctrl+S" drawn as a key cap.
 pub fn keycap(ui: &mut Ui, keys: &str) -> Response {
     let visuals = ui.visuals();
@@ -551,5 +705,19 @@ mod tests {
         assert_eq!(bare("Default encoding: "), "Default encoding");
         assert_eq!(bare("行距（%）："), "行距（%）");
         assert_eq!(bare("Tab"), "Tab");
+    }
+
+    #[test]
+    fn test_ime_events_start_and_end_a_composition_like_the_edit() {
+        use super::composition_change;
+        use egui::{Event, ImeEvent};
+        let preedit = |text: &str| Event::Ime(ImeEvent::Preedit { text: text.into(), active_range_chars: None });
+        assert_eq!(composition_change(&[]), None);
+        assert_eq!(composition_change(&[preedit("ni")]), Some(true));
+        assert_eq!(composition_change(&[preedit("")]), Some(false), "an emptied preedit dismisses the IME");
+        assert_eq!(composition_change(&[Event::Ime(ImeEvent::Commit("你".into()))]), Some(false));
+        assert_eq!(composition_change(&[Event::Ime(ImeEvent::Commit("\n".into()))]), None, "a committed line break is ignored");
+        assert_eq!(composition_change(&[Event::Text("x".into())]), None);
+        assert_eq!(composition_change(&[preedit("ni"), Event::Ime(ImeEvent::Commit("你".into()))]), Some(false), "the last event wins");
     }
 }

@@ -10,10 +10,22 @@ use super::favorites::FavTarget;
 use super::{App, Confirm};
 use crate::core::favorites::{FavoriteGroup, FavoriteItem};
 
+/// 與版面無關的預設開啟面板（預覽／文件視圖／運行輸出）在測試一律先關閉：
+/// 大多數測試只要編輯區本身，需要面板的測試各自顯式開啟。
+fn quiet_settings() -> crate::core::settings::Settings {
+    crate::core::settings::Settings {
+        auto_preview: false,
+        show_file_view: false,
+        show_script_output: false,
+        ..Default::default()
+    }
+}
+
 fn harness() -> Harness<'static, App> {
     // 強制 1.0 縮放：kittest 的真實視窗可能落在不同縮放比例的顯示器上，
     // 版面斷言（座標、可視範圍）必須與顯示器 DPI 無關，和視覺迴歸測試一致。
-    let mut h = Harness::builder().allow_missing_glyphs().with_pixels_per_point(1.0).with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, Vec::new(), None));
+    let quiet = quiet_settings();
+    let mut h = Harness::builder().allow_missing_glyphs().with_pixels_per_point(1.0).with_size([1000.0, 700.0]).build_eframe(move |cc| App::with_settings(cc, Vec::new(), None, quiet, None));
     // 測試機的系統語言不一定是繁體中文，按鈕文字固定用原文
     h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
     h.run_steps(3);
@@ -25,8 +37,91 @@ fn type_text(h: &mut Harness<'static, App>, s: &str) {
     h.run_steps(2);
 }
 
+#[test]
+fn tmp_diag_find_field_overflow() {
+    use egui::accesskit::Role;
+    let mut h = harness();
+    h.state_mut().pending.push(C::Find);
+    h.run_steps(3);
+    h.state_mut().find.query = "dxf\n\n\n\n\n\n\n".into();
+    h.run_steps(3);
+    for (i, n) in h.query_all_by(|n| n.role() == Role::MultilineTextInput).enumerate() {
+        let r = n.rect();
+        println!("multiline{i}: y=[{:.0},{:.0}] h={:.0}", r.top(), r.bottom(), r.height());
+    }
+    let st = h.query_by_label("無結果");
+    if let Some(n) = st {
+        let r = n.rect();
+        println!("無結果: y=[{:.0},{:.0}]", r.top(), r.bottom());
+    }
+    for label in ["上一個", "下一個"] {
+        let n = h.query_all_by(|n| n.role() == Role::Button && n.label().as_deref() == Some(label)).next();
+        if let Some(n) = n {
+            let r = n.rect();
+            println!("{label}: y=[{:.0},{:.0}]", r.top(), r.bottom());
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn tmp_diag_find_field_shot() {
+    let mut h = egui_kittest::Harness::builder()
+        .allow_missing_glyphs()
+        .with_size([460.0, 420.0])
+        .wgpu()
+        .build_eframe(|cc| App::with_settings(cc, Vec::new(), None, quiet_settings(), None));
+    h.state_mut().pending.push(C::Find);
+    h.run_steps(3);
+    h.state_mut().find.query = "dxf\n\n\n\n\n\n\n".into();
+    h.run_steps(3);
+    // 聚焦輸入框（模擬使用者正在輸入的白色邊框狀態）
+    h.state_mut().find.focus = true;
+    h.run_steps(5);
+    let img = h.render().expect("繪製失敗");
+    img.save("target/find-multiline.png").expect("無法儲存截圖");
+}
+
+#[test]
+#[ignore]
+fn tmp_diag_find_field_shot_ppp150() {
+    let mut h = egui_kittest::Harness::builder()
+        .allow_missing_glyphs()
+        .with_pixels_per_point(1.5)
+        .with_size([690.0, 630.0])
+        .wgpu()
+        .build_eframe(|cc| App::with_settings(cc, Vec::new(), None, quiet_settings(), None));
+    h.state_mut().pending.push(C::Find);
+    h.run_steps(3);
+    h.state_mut().find.query = "dxf\n\n\n\n\n\n\n".into();
+    h.state_mut().find.focus = true;
+    h.run_steps(5);
+    let img = h.render().expect("繪製失敗");
+    img.save("target/find-multiline-150.png").expect("無法儲存截圖");
+}
+
 fn text(h: &mut Harness<'static, App>) -> String {
     h.state_mut().doc().editor.lines.join("\n")
+}
+
+/// 標題欄快速查找框的歷史下拉：chevron 用 interact 疊在框內右端，不得推進 RTL 布局的
+/// 游標（曾讓縮放按鈕疊進搜尋框），彈層也在標題欄下方而不蓋住同行控件。
+#[test]
+fn test_quick_search_dropdown_does_not_overlap_the_title_bar() {
+    let mut h = harness();
+    h.state_mut().settings.recent_finds = vec!["alpha".into(), "beta".into()];
+    h.run_steps(2);
+    let field = |h: &Harness<'static, App>| h.query_all_by(|n| n.role() == egui::accesskit::Role::TextInput).next().map(|n| n.rect()).unwrap();
+    let button = |h: &mut Harness<'static, App>, label: &str| h.query_all_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some(label)).next().map(|n| n.rect());
+    let field_rect = field(&h);
+    let zoom = button(&mut h, "縮小字型").unwrap();
+    assert!(!field_rect.intersects(zoom), "搜尋框與縮小按鈕重疊：{field_rect:?} vs {zoom:?}");
+    // 展開彈層：選單項在標題欄下方，且仍不與標題欄上的按鈕重疊
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("查找歷史")).click();
+    h.run_steps(3);
+    let item = button(&mut h, "alpha").unwrap();
+    assert!(item.top() >= zoom.bottom(), "彈層蓋住標題欄按鈕：{item:?} vs {zoom:?}");
+    assert!(!item.intersects(field_rect), "彈層蓋住搜尋框：{item:?} vs {field_rect:?}");
 }
 
 #[test]
@@ -349,6 +444,9 @@ fn test_find_bar_counts_and_highlights_matches_live() {
     type_text(&mut h, "one");
     assert!(h.query_by_label("共 3 個符合").is_some());
     assert!(h.state_mut().tab_mut().view.find_regex.is_some());
+    // The search options live in the gear's expandable section: open it, then click.
+    h.state_mut().find.options_open = true;
+    h.run_steps(2);
     // The option chips are named checkboxes.
     h.get_by(|n| n.role() == Role::CheckBox && n.label().as_deref() == Some("區分大小寫")).click();
     h.run_steps(2);
@@ -378,6 +476,106 @@ fn test_find_bar_counts_and_highlights_matches_live() {
     h.run_steps(2);
     assert!(!h.state_mut().find.visible);
     assert!(h.state_mut().tab_mut().view.find_regex.is_none());
+}
+
+/// Open the Replace tab of the find window over `doc`, searching `query` to be replaced by `rep`.
+fn replace_tab(h: &mut Harness<'static, App>, doc: &str, query: &str, rep: &str) {
+    let s = h.state_mut();
+    (s.settings.search_match_case, s.settings.search_whole_word, s.settings.search_regex) = (false, false, false);
+    s.doc_mut().editor.set_text(doc);
+    s.doc_mut().version += 1;
+    s.find.query = query.into();
+    s.find.replacement = rep.into();
+    s.find.replace = true;
+    s.find.visible = true;
+    h.run_steps(3);
+}
+
+/// Click into the `n`-th multiline box of the find window (0 = search, 1 = replace).
+fn focus_field(h: &mut Harness<'static, App>, n: usize) {
+    use egui::accesskit::Role;
+    h.query_all_by(|n| n.role() == Role::MultilineTextInput).nth(n).unwrap().click();
+    h.run_steps(1);
+}
+
+/// Enter in the replace box replaces the match under the caret and then advances, exactly as
+/// the Replace button does. Both boxes used to answer the same Enter press, and Find Next ran
+/// first, so the match under the caret was skipped and the following one was replaced.
+#[test]
+fn test_find_window_enter_in_replace_box_replaces_the_current_match() {
+    let mut h = harness();
+    replace_tab(&mut h, "aa bb aa bb", "aa", "X");
+    h.state_mut().pending.push(C::FindNext);
+    h.run_steps(2);
+    assert_eq!(h.state_mut().doc().editor.selected_text(), "aa");
+    focus_field(&mut h, 1);
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    assert_eq!(text(&mut h), "X bb aa bb");
+    assert_eq!(h.state_mut().doc().editor.selected_text(), "aa", "the next match is selected afterwards");
+}
+
+/// Enter in the search box only finds the next match, also on the Replace tab.
+#[test]
+fn test_find_window_enter_in_search_box_never_replaces() {
+    let mut h = harness();
+    replace_tab(&mut h, "aa bb aa bb", "aa", "X");
+    h.state_mut().pending.push(C::FindNext);
+    h.run_steps(2);
+    focus_field(&mut h, 0);
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    assert_eq!(text(&mut h), "aa bb aa bb");
+    assert_eq!(h.state_mut().doc().editor.selection.start(), crate::core::editor::TextPosition::new(0, 6));
+}
+
+/// "Selected text" narrows Replace All to a stream selection. Without one, or with a column
+/// selection (not supported), nothing is replaced: it used to fall through to the whole document.
+#[test]
+fn test_replace_all_in_selection_requires_a_selection() {
+    use crate::core::editor::{Selection, TextPosition};
+    use egui::accesskit::Role;
+    let mut h = harness();
+    replace_tab(&mut h, "aa aa\naa aa", "aa", "X");
+    h.state_mut().settings.search_in_selection = true;
+    h.run_steps(2);
+    let replace_all_state = |h: &mut Harness<'static, App>, disabled: bool| {
+        h.query_all_by(|n| n.role() == Role::Button && n.label().as_deref() == Some("全部取代") && n.is_disabled() == disabled).count() == 1
+    };
+    assert!(replace_all_state(&mut h, true), "Replace All is disabled without a selection");
+    h.state_mut().replace_all();
+    assert_eq!(text(&mut h), "aa aa\naa aa", "no selection: nothing is replaced");
+    // Column selection: unsupported, and still not the whole document.
+    h.state_mut().doc_mut().editor.selection = Selection::block(TextPosition::new(0, 0), TextPosition::new(1, 2), 0, 2);
+    h.run_steps(2);
+    assert!(replace_all_state(&mut h, true), "Replace All is disabled for a column selection");
+    h.state_mut().replace_all();
+    assert_eq!(text(&mut h), "aa aa\naa aa", "column selection: nothing is replaced");
+    // A stream selection limits the replacement to its own text.
+    h.state_mut().doc_mut().editor.select_range(TextPosition::new(0, 0), TextPosition::new(0, 5));
+    h.run_steps(2);
+    assert!(replace_all_state(&mut h, false));
+    h.state_mut().replace_all();
+    assert_eq!(text(&mut h), "X X\naa aa");
+}
+
+/// Escape closes the history dropdown first; the window itself closes on the next press.
+#[test]
+fn test_find_window_escape_closes_the_history_dropdown_first() {
+    let mut h = harness();
+    h.state_mut().settings.recent_finds = vec!["alpha".into()];
+    h.state_mut().pending.push(C::Find);
+    h.run_steps(3);
+    h.state_mut().find.history_open = true;
+    h.run_steps(2);
+    assert!(h.state_mut().find.history_open);
+    h.key_press(Key::Escape);
+    h.run_steps(2);
+    assert!(!h.state_mut().find.history_open, "the dropdown closes");
+    assert!(h.state_mut().find.visible, "the window stays open while a dropdown is showing");
+    h.key_press(Key::Escape);
+    h.run_steps(2);
+    assert!(!h.state_mut().find.visible);
 }
 
 #[test]
@@ -981,7 +1179,7 @@ fn test_close_save_with_second_confirm_still_closes() {
     // 關閉時選「儲存」而存檔需要再確認（檔案已被外部修改）：確認覆寫後仍要完成關閉
     let p = std::env::temp_dir().join(format!("madedit_ui_close_{}.txt", std::process::id()));
     std::fs::write(&p, "old").unwrap();
-    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, vec![p.clone()], None));
+    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::with_settings(cc, vec![p.clone()], None, quiet_settings(), None));
     h.run_steps(3);
     type_text(&mut h, "x");
     std::fs::write(&p, "changed outside").unwrap();
@@ -1004,7 +1202,7 @@ fn test_open_missing_file_asks_to_create_new_file() {
     // 選擇建立後分頁綁定原路徑，存檔會真的把檔案寫出來
     let p = std::env::temp_dir().join(format!("madedit_ui_create_{}.txt", std::process::id()));
     let _ = std::fs::remove_file(&p);
-    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, vec![p.clone()], None));
+    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::with_settings(cc, vec![p.clone()], None, quiet_settings(), None));
     h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
     h.run_steps(3);
     assert!(matches!(h.state_mut().confirm, Some(Confirm::CreateNew { .. })), "檔案不存在時應詢問是否建立");
@@ -1023,7 +1221,7 @@ fn test_open_missing_file_cancel_creates_nothing() {
     // 取消建立時不得新增分頁，也不得在磁碟上留下檔案
     let p = std::env::temp_dir().join(format!("madedit_ui_create_cancel_{}.txt", std::process::id()));
     let _ = std::fs::remove_file(&p);
-    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, vec![p.clone()], None));
+    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::with_settings(cc, vec![p.clone()], None, quiet_settings(), None));
     h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
     h.run_steps(3);
     let before = h.state_mut().tabs.len();
@@ -1216,7 +1414,7 @@ fn test_markdown_preview_follows_editor_scroll() {
     let p = dir.join("long.md");
     let body: String = (0..150).map(|i| format!("## 標題 {i}\n\n段落 {i}\n\n")).collect();
     std::fs::write(&p, body).unwrap();
-    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, vec![p.clone()], None));
+    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::with_settings(cc, vec![p.clone()], None, quiet_settings(), None));
     h.run_steps(3);
     h.state_mut().pending.push(super::C::PreviewMarkdown);
     h.run_steps(2);
@@ -1345,7 +1543,7 @@ fn test_markdown_preview_docks_at_half_size() {
     // 內含寬圖表，確認內容不會把面板撐大
     let table = format!("\n| {} |\n| {} |\n| {} |\n", ["欄位"; 12].join(" | "), ["---"; 12].join(" | "), ["LongUnbrokenCellValue"; 12].join(" | "));
     std::fs::write(&p, format!("# 標題\n\n```mermaid\nflowchart LR\n  A[很長很長的節點一] --> B[很長很長的節點二] --> C[很長很長的節點三] --> D[很長很長的節點四]\n```\n{table}")).unwrap();
-    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, vec![p.clone()], None));
+    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::with_settings(cc, vec![p.clone()], None, quiet_settings(), None));
     h.run_steps(3);
     h.state_mut().pending.push(super::C::PreviewMarkdown);
     h.run_steps(3);
@@ -1444,7 +1642,7 @@ fn test_markdown_preview_follows_active_tab() {
     let (a, b) = (dir.join("a.md"), dir.join("b.md"));
     std::fs::write(&a, "# A\n").unwrap();
     std::fs::write(&b, "# B\n").unwrap();
-    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, vec![a, b], None));
+    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::with_settings(cc, vec![a, b], None, quiet_settings(), None));
     h.run_steps(3);
     h.state_mut().activate(0);
     h.state_mut().pending.push(C::PreviewAuto);
@@ -1607,7 +1805,8 @@ fn test_every_dialog_keeps_its_buttons_inside_its_window() {
 
 fn dialogs_keep_their_buttons_inside(size: egui::Vec2) {
     use eframe::egui::accesskit::Role;
-    let mut h = Harness::builder().allow_missing_glyphs().with_pixels_per_point(1.0).with_size(size).build_eframe(|cc| App::new(cc, Vec::new(), None));
+    let quiet = quiet_settings();
+    let mut h = Harness::builder().allow_missing_glyphs().with_pixels_per_point(1.0).with_size(size).build_eframe(move |cc| App::with_settings(cc, Vec::new(), None, quiet, None));
     h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
     h.run_steps(3);
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
@@ -2258,7 +2457,7 @@ fn test_find_in_files_clear_survives_the_same_frame_drawing() {
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("clear.txt");
     std::fs::write(&file, "needle one\nplain\nneedle two\n").unwrap();
-    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::new(cc, vec![file.clone()], None));
+    let mut h = Harness::builder().allow_missing_glyphs().with_size([1000.0, 700.0]).build_eframe(|cc| App::with_settings(cc, vec![file.clone()], None, quiet_settings(), None));
     h.state_mut().settings.find_in_files.opened_files_only = true;
     h.run_steps(3);
     h.state_mut().start_find_in_files("needle".into(), None);
@@ -2368,6 +2567,181 @@ fn test_find_bar_navigation_does_not_restart_the_full_text_count() {
     assert!(h.query_by_label("共 4 個符合").is_some());
 }
 
+/// A pattern that can match a line break is matched on the joined document: Find Next selects
+/// across lines, a selection that spans lines still has a rank, and an edit rebuilds the index.
+#[test]
+fn test_find_window_cross_line_query_navigates_and_ranks() {
+    use crate::core::editor::TextPosition;
+    let mut h = harness();
+    {
+        let s = h.state_mut();
+        (s.settings.search_match_case, s.settings.search_whole_word, s.settings.search_regex) = (false, false, true);
+        s.doc_mut().editor.set_text("foo bar\nbar foo\nfoo bar\nbar end");
+        s.doc_mut().version += 1;
+        s.find.query = "bar\\nbar".into();
+        s.pending.push(C::Find);
+    }
+    h.run_steps(3);
+    assert!(h.query_by_label("共 2 個符合").is_some());
+    let selected = |h: &mut Harness<'static, App>| {
+        let sel = h.state_mut().doc().editor.selection;
+        (sel.start(), sel.end())
+    };
+    h.state_mut().pending.push(C::FindNext);
+    h.run_steps(3);
+    assert_eq!(selected(&mut h), (TextPosition::new(0, 4), TextPosition::new(1, 3)));
+    assert!(h.query_by_label("1 / 2").is_some(), "a match across lines still has a rank");
+    h.state_mut().pending.push(C::FindNext);
+    h.run_steps(3);
+    assert_eq!(selected(&mut h), (TextPosition::new(2, 4), TextPosition::new(3, 3)));
+    assert!(h.query_by_label("2 / 2").is_some());
+    h.state_mut().pending.push(C::FindNext);
+    h.run_steps(3);
+    assert!(h.query_by_label("1 / 2").is_some(), "wraps to the first");
+    // Previous with wrap: from the first match's start back to the last one.
+    h.state_mut().pending.push(C::FindPrevious);
+    h.run_steps(3);
+    assert!(h.query_by_label("2 / 2").is_some());
+    // The joined copy follows the document version: an edit recomputes the index.
+    h.state_mut().doc_mut().editor.set_text("foo bar\nbar foo\nfoo baz\nbar end");
+    h.state_mut().doc_mut().version += 1;
+    h.run_steps(2);
+    assert!(h.query_by_label("共 1 個符合").is_some());
+    // Searched literally, the two characters `\n` never leave the line engine.
+    {
+        let s = h.state_mut();
+        s.settings.search_regex = false;
+        s.doc_mut().editor.set_text("a\\nb\nplain");
+        s.doc_mut().version += 1;
+        s.find.query = "\\n".into();
+    }
+    h.run_steps(2);
+    assert!(h.query_by_label("共 1 個符合").is_some());
+}
+
+/// The core reports a search failure as a typed error; the window shows it in the interface
+/// language, where it used to show the core's Traditional Chinese text in every language.
+#[test]
+fn test_search_errors_follow_the_interface_language() {
+    use crate::core::settings::UiLanguage;
+    let mut h = harness();
+    h.state_mut().settings.ui_language = UiLanguage::En;
+    h.state_mut().settings.search_regex = true;
+    h.state_mut().pending.push(C::Find);
+    h.run_steps(3);
+    h.state_mut().find.query = "(".into();
+    h.run_steps(2);
+    assert!(h.query_by_label("Invalid regular expression").is_some());
+    h.state_mut().find.hex = true;
+    h.state_mut().find.query = "ABC".into();
+    h.run_steps(2);
+    assert!(h.query_by_label("The hex pattern must have an even number of digits").is_some());
+}
+
+/// Ctrl+Enter inserts a line break through the text box itself, so egui moves the caret after
+/// it and scrolls the box to keep the caret in view. Inserting the break by hand after the box
+/// was drawn left the view where it was, with the caret out of sight.
+#[test]
+fn test_find_window_ctrl_enter_keeps_the_caret_in_view() {
+    use egui::accesskit::Role;
+    let mut h = harness();
+    h.state_mut().pending.push(C::Find);
+    h.run_steps(3);
+    // Ten lines in a four-line box; the caret goes to the very end, which scrolls the box.
+    h.state_mut().find.query = "a\nb\nc\nd\ne\nf\ng\nh\ni\nj".into();
+    h.run_steps(2);
+    focus_field(&mut h, 0);
+    h.key_press_modifiers(Modifiers::CTRL, Key::End);
+    h.run_steps(3);
+    // The text node reports the unclipped content, which moves up as the box scrolls down.
+    let content_top = |h: &mut Harness<'static, App>| h.query_all_by(|n| n.role() == Role::MultilineTextInput).next().map(|n| n.rect().top()).unwrap();
+    let at_end = content_top(&mut h);
+    h.key_press_modifiers(Modifiers::CTRL, Key::Enter);
+    h.run_steps(3);
+    assert_eq!(h.state_mut().find.query, "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n");
+    let after = content_top(&mut h);
+    assert!(after < at_end, "the box must follow the caret onto the new line: content top {at_end} -> {after}");
+}
+
+/// The status bar keeps one row and the window's width, whatever the message. One built from
+/// a multi-line search query shows the query on a single line, and a long message is cut with
+/// an ellipsis instead of growing the bar (the whole text is its tooltip).
+#[test]
+fn test_status_bar_keeps_one_row_and_the_window_width() {
+    use egui::accesskit::Role;
+    let mut h = harness();
+    type_text(&mut h, "plain text");
+    h.state_mut().pending.push(C::Find);
+    h.run_steps(3);
+    {
+        // The box requests focus itself: clicking it would aim at the centre of its unclipped
+        // content, which for sixteen lines lies below the visible rows.
+        let s = h.state_mut();
+        s.find.query = "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\nm\nn\no\np".into();
+        s.find.focus = true;
+    }
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    let status = h.state_mut().status.clone().expect("not found is reported in the status bar").0;
+    assert!(!status.contains(['\n', '\r']), "the status message must be one line: {status:?}");
+    assert!(status.contains('\\'), "line breaks are written as \\n: {status:?}");
+    let bar = h.query_all_by(|n| n.role() == Role::Label && n.value().is_some_and(|v| v.starts_with("找不到「a"))).next().expect("the status label");
+    assert!(bar.rect().height() < 24.0, "a query of sixteen lines must not heighten the bar: {:?}", bar.rect());
+    let long = format!("找不到{}", "x".repeat(500));
+    h.state_mut().set_status(long.clone());
+    h.run_steps(2);
+    let bar = h.query_all_by(|n| n.role() == Role::Label && n.value().is_some_and(|v| v == long)).next().expect("the status label");
+    let (r, screen) = (bar.rect(), h.ctx.content_rect());
+    assert!(r.height() < 24.0, "the status message must stay on one row: {r:?}");
+    assert!(r.left() >= screen.left() && r.right() <= screen.right() + 0.5, "the status message must stay inside the window: {r:?} vs {screen:?}");
+}
+
+/// The find box paints a caret as tall as its row and no taller. The edit's own caret is the
+/// row plus 1.5 points above and below, two points wide, which at this text size reads as a
+/// heavy bar. Needs a GPU adapter: `cargo test --locked caret_is_as_tall -- --ignored`.
+#[test]
+#[ignore = "needs a wgpu adapter"]
+fn test_find_box_caret_is_as_tall_as_its_row() {
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::Queryable;
+    let mut h = egui_kittest::Harness::builder()
+        .allow_missing_glyphs()
+        .with_pixels_per_point(1.0)
+        .with_size([460.0, 420.0])
+        .wgpu()
+        .build_eframe(|cc| App::with_settings(cc, Vec::new(), None, quiet_settings(), None));
+    h.state_mut().settings.ui_language = crate::core::settings::UiLanguage::ZhTw;
+    let caret = h.ctx.global_style().visuals.text_cursor.stroke.color;
+    h.state_mut().pending.push(C::Find);
+    h.run_steps(4);
+    // A steady caret, so that a blink cannot hide it from the pixels (set after the app's own style).
+    h.ctx.all_styles_mut(|s| s.visuals.text_cursor.blink = false);
+    h.state_mut().find.query = "a".into();
+    h.state_mut().find.focus = true;
+    h.run_steps(4);
+    // The node reports the text rectangle: four rows of the box, the first starting at its top.
+    let field = h.query_all_by(|n| n.role() == Role::MultilineTextInput).next().expect("the search box").rect();
+    let row_h = field.height() / 4.0;
+    let img = h.render().expect("draw");
+    // The box's background, sampled well away from the text and the caret. A pixel "lit" is
+    // more than half-way from that background to the caret's colour; the thin antialiased
+    // caret never reaches the full colour, so an exact match would miss it.
+    let bg = *img.get_pixel(field.right() as u32 - 2, field.top() as u32 + 2);
+    let dist = |a: &image::Rgba<u8>, b: &image::Rgba<u8>| (0..3).map(|i| (a.0[i] as f32 - b.0[i] as f32).powi(2)).sum::<f32>().sqrt();
+    let half = 0.5 * dist(&bg, &image::Rgba(caret.to_array()));
+    // (The focused border, 4 points above and below, is left out of the scan.)
+    let scan = field.top() as i32 - 2..field.bottom() as i32 + 2;
+    let lit = |x: i32, y: i32| dist(img.get_pixel(x as u32, y as u32), &bg) > half;
+    // The caret's column: the one with the most lit rows (more than any letter stem).
+    let column = (field.left() as i32..field.right() as i32).max_by_key(|x| scan.clone().filter(|y| lit(*x, *y)).count()).expect("a caret on screen");
+    let solid = scan.filter(|y| lit(column, *y)).collect::<Vec<i32>>();
+    let (count, last) = (solid.len() as f32, *solid.last().expect("a caret on screen"));
+    assert!(count >= row_h - 2.5, "a caret must be on screen: without it the widest letter stem would be measured instead ({count} rows {solid:?})");
+    assert!(count <= row_h + 1.5, "the caret must be no taller than its row {row_h}: {count} rows {solid:?}");
+    assert!(last as f32 <= field.top() + row_h, "the caret must not reach below its row: last row {last}, row ends {}", field.top() + row_h);
+}
+
 /// 文件視圖的「列表」頁籤列出收藏根節點、群組與檔案；加入目前檔案時自動建立預設群組，
 /// 且同一檔案不重複。
 #[test]
@@ -2394,8 +2768,8 @@ fn test_file_view_lists_groups_and_adds_the_active_file() {
     // 分頁標題和樹狀項目同名，先給項目一個不同的顯示名稱再查詢，才不會同時命中兩個節點。
     h.state_mut().apply_favorite_name(FavTarget::Item(0, 0), "報價單");
     h.run_steps(3);
-    assert!(h.query_by_label("列表").is_some(), "the file view should show its List tab");
-    assert!(h.query_by_label("收藏").is_some(), "the List tab should show the Favorites root node");
+    assert!(h.query_by_label("歷史檔案").is_some(), "the file view should show its List tab");
+    assert!(h.query_by_label("快速開啟").is_some(), "the List tab should show the Favorites root node");
     assert!(h.query_by_label("常用").is_some(), "the group should be listed under the root node");
     assert!(h.query_by_label("報價單").is_some(), "the item should be listed under its group");
 
@@ -2479,7 +2853,7 @@ fn test_file_view_root_context_menu_adds_all_open_files() {
     h.state_mut().open_path(&first);
     h.state_mut().open_path(&second);
     h.run_steps(3);
-    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("收藏")).click_secondary();
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("快速開啟")).click_secondary();
     h.run_steps(3);
     h.get_by(|n| n.label().is_some_and(|l| l.contains("新增所有開啟的檔案"))).click();
     h.run_steps(3);
@@ -2489,6 +2863,139 @@ fn test_file_view_root_context_menu_adds_all_open_files() {
         assert_eq!(favorites[0].name, "常用");
         assert_eq!(favorites[0].items.len(), 2, "both open files should be added");
     }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 以合成事件驅動面板拖動：按下來源行 → 移動到目標行下半 → 放開。
+fn drag_row(h: &mut Harness<'static, App>, source: &str, target: &str) {
+    let src = h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some(source)).rect();
+    let dst = h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some(target)).rect();
+    h.event(Event::PointerButton { pos: src.center(), button: egui::PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+    h.run_steps(2);
+    // 目標行下半沿：插入點 = 目標行索引 + 1（跨過中線才換位）
+    h.event(Event::PointerMoved(dst.center() + egui::vec2(0.0, 6.0)));
+    h.run_steps(2);
+    h.event(Event::PointerButton { pos: dst.center() + egui::vec2(0.0, 6.0), button: egui::PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+    h.run_steps(3);
+}
+
+/// 拖動排序：群組行可重排（松手才落位，死區不動）。
+#[test]
+fn test_file_view_drag_reorders_groups() {
+    let mut h = harness();
+    {
+        let s = &mut h.state_mut().settings;
+        s.show_file_view = true;
+        s.favorites.push(crate::core::favorites::FavoriteGroup::new("甲組"));
+        s.favorites.push(crate::core::favorites::FavoriteGroup::new("乙組"));
+    }
+    h.run_steps(3);
+    let names = |h: &Harness<'static, App>| -> Vec<String> { h.state().settings.favorites.iter().map(|g| g.name.clone()).collect() };
+    assert_eq!(names(&h), vec!["甲組", "乙組"]);
+    drag_row(&mut h, "甲組", "乙組");
+    assert_eq!(names(&h), vec!["乙組", "甲組"], "拖動後群組順序應改變");
+    // 死區：把乙組拖回自己腳底（同位置）不會再動
+    drag_row(&mut h, "乙組", "乙組");
+    assert_eq!(names(&h), vec!["乙組", "甲組"], "死區落點不得改變順序");
+}
+
+/// 拖動跨組：檔案移到其他群組末尾時自訂顯示名跟著走；目標已含同一檔案時拒絕。
+#[test]
+fn test_file_view_drag_moves_item_between_groups_and_refuses_duplicates() {
+    let dir = std::env::temp_dir().join(format!("madedit-fav-drag-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let a = dir.join("a.txt");
+    let b = dir.join("b.txt");
+    std::fs::write(&a, "a").unwrap();
+    std::fs::write(&b, "b").unwrap();
+
+    let mut h = harness();
+    {
+        let s = &mut h.state_mut().settings;
+        s.show_file_view = true;
+        let mut g1 = crate::core::favorites::FavoriteGroup::new("甲組");
+        g1.add(a.clone());
+        g1.add(b.clone());
+        g1.items[1].rename("乙檔案");
+        s.favorites.push(g1);
+        s.favorites.push(crate::core::favorites::FavoriteGroup::new("乙組"));
+    }
+    h.run_steps(3);
+    // b.txt（顯示名「乙檔案」）拖到空群組「乙組」標題行 → 追加到末尾，自訂名保留
+    drag_row(&mut h, "乙檔案", "乙組");
+    {
+        let fav = &h.state().settings.favorites;
+        assert_eq!(fav[0].items.len(), 1, "來源群組應少一項");
+        assert_eq!(fav[1].items.len(), 1);
+        assert_eq!(fav[1].items[0].file_name(), "b.txt");
+        assert_eq!(fav[1].items[0].name.as_deref(), Some("乙檔案"), "自訂顯示名應跟著項目走");
+    }
+    // 重複拒絕：把 a.txt 拖到已含 a.txt 的群組 → 不動
+    let mut g = crate::core::favorites::FavoriteGroup::new("丙組");
+    g.add(a.clone());
+    g.items[0].rename("丙副本"); // 同一路徑只換顯示名，讓來源行「a.txt」的查詢唯一
+    h.state_mut().settings.favorites.push(g);
+    h.run_steps(2);
+    // a.txt 顯示為檔名
+    drag_row(&mut h, "a.txt", "丙組");
+    {
+        let fav = &h.state().settings.favorites;
+        assert_eq!(fav[0].items.len(), 1, "拒絕時來源群組不得變動");
+        assert_eq!(fav[2].items.len(), 1, "拒絕時目標群組不得變動");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 「最近存取」行拖入群組：落地後加入群組並從最近清單移除（照搬 MTT 語義）。
+#[test]
+fn test_file_view_drag_recent_row_into_group() {
+    let dir = std::env::temp_dir().join(format!("madedit-recent-drag-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let r = dir.join("recent.txt");
+    std::fs::write(&r, "r").unwrap();
+
+    let mut h = harness();
+    {
+        let s = &mut h.state_mut().settings;
+        s.show_file_view = true;
+        s.favorites_recent_expanded = true;
+        s.favorites.push(crate::core::favorites::FavoriteGroup::new("甲組"));
+        s.recent_files.push(r.clone());
+    }
+    h.run_steps(3);
+    drag_row(&mut h, "recent.txt", "甲組");
+    {
+        let st = &h.state().settings;
+        assert!(st.recent_files.is_empty(), "落地後應從最近清單移除");
+        assert_eq!(st.favorites[0].items.len(), 1);
+        assert_eq!(st.favorites[0].items[0].path, r, "檔案應以完整路徑加入群組");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 切換編輯器分頁即視為「存取」：最近存取清單把啟用中的檔案移到最前面。
+#[test]
+fn test_switching_tabs_moves_the_active_file_to_recent_access_top() {
+    let dir = std::env::temp_dir().join(format!("madedit-recent-activate-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let first = dir.join("one.txt");
+    let second = dir.join("two.txt");
+    std::fs::write(&first, "one").unwrap();
+    std::fs::write(&second, "two").unwrap();
+
+    let mut h = harness();
+    h.state_mut().open_path(&first);
+    h.state_mut().open_path(&second);
+    h.run_steps(3);
+    let recent = |h: &Harness<'static, App>| -> Vec<String> { h.state().settings.recent_files.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect() };
+    assert_eq!(recent(&h), vec!["two.txt", "one.txt"], "前置：後開的 two.txt 在最前面");
+    // 點編輯器分頁標題切回 one.txt
+    h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some("one.txt")).click();
+    h.run_steps(3);
+    assert_eq!(recent(&h), vec!["one.txt", "two.txt"], "切換分頁後最近存取應即時刷新");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -4124,7 +4631,7 @@ fn test_output_panel_log_to_file_toggle() {
         h.run_steps(3);
     };
     let log_item = |checked: bool| {
-        let label = if checked { "✔ 輸出到檔案（result.log）" } else { "　 輸出到檔案（result.log）" };
+        let label = if checked { "✔ 輸出到檔案（腳本同名.result）" } else { "　 輸出到檔案（腳本同名.result）" };
         move |n: &egui_kittest::kittest::AccessKitNode<'_>| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some(label)
     };
     // 未勾選 → 點一下開啟

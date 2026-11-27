@@ -371,7 +371,7 @@ impl App {
                 };
                 let icon_slot = if matches!(icon, favorites::RowIcon::None) { 0.0 } else { 20.0 };
                 let natural = indent + 6.0 + 12.0 + 4.0 + icon_slot + text_width(ui, &name) + 14.0;
-                let resp = favorites::group_row(ui, &name, 0, expanded, selected, indent, &icon, Some(natural));
+                let resp = favorites::group_row(ui, &name, 0, expanded, selected, indent, &icon, Some(natural), false);
                 if resp.clicked() {
                     *action = Action::Select(path.clone());
                 }
@@ -402,7 +402,7 @@ impl App {
                                     None => favorites::RowIcon::File,
                                 };
                                 let leaf_natural = leaf_indent + 6.0 + 20.0 + text_width(ui, &e.name) + 14.0;
-                                let (fresp, _) = favorites::item_row(ui, &e.name, leaf_indent, false, false, "", &icon, Some(leaf_natural));
+                                let (fresp, _) = favorites::item_row(ui, &e.name, leaf_indent, false, false, "", &icon, Some(leaf_natural), false);
                                 if fresp.clicked() {
                                     *action = Action::Open(leaf_path);
                                 }

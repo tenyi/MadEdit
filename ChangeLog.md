@@ -6,10 +6,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+- The Find bar becomes a floating, modeless "Find and Replace" window (like UltraEdit): the editor stays usable while it is open, the window drags by its compact title row (or any blank area), closes with the title-row "×" or Escape, and remembers its position across reopenings and restarts. It is split into "Find" and "Replace" tabs (Ctrl+F / Ctrl+H) with a File-View-style tab strip, and the search and replace boxes are 4-row multiline fields (fixed height, internal scrolling) so multi-line text can be searched. Enter runs Find next, Shift+Enter runs Find previous, Ctrl+Enter inserts a newline. A query spanning several lines is matched across lines, and Replace All handles cross-line matches with bookmark remapping. The search options (whole word, match case, regex, hex, wrap around) are grouped under an "Options" gear at the bottom-left. The search and replace history opens from a clock button at the top-right of each field (UltraEdit-style): one row per entry with a red "×" at the right end to remove it and "Clear search history" at the bottom, and picking an entry closes the list. The title bar's Quick find box gets the same history dropdown.
+
+### Fixed
+- Replace All with "Selected text" checked no longer falls back to the whole document when nothing, or a column selection, is selected: the button is disabled and explains why.
+- Search failures (an invalid regular expression, a malformed hex pattern) are shown in the interface language instead of always in Traditional Chinese.
+- The status bar keeps one row and the window's width whatever the message: a long message is cut with an ellipsis and shows its full text as a tooltip. A failed search no longer pastes the whole query into it, which used to cover the bottom of the window.
+
+### 繁體中文
+
+#### 新增
+- 查找列改為浮動的非模態「查找和替換」視窗（仿 UltraEdit）：開啟時編輯器仍可正常操作，視窗可拖動緊湊標題列（或任意空白處）移動、以標題列右端「×」或 Esc 關閉，並記住位置（關閉後重開與重新啟動皆回到原處）。視窗分為「查找」「替換」兩個分頁（Ctrl+F／Ctrl+H），頁籤樣式與檔案視圖停靠欄一致；查找與替換欄位為 4 行多行輸入框（固定高度、內部捲動），可搜尋含換行的內容。純 Enter＝查找下一個、Shift+Enter＝查找上一個、Ctrl+Enter＝插入換行。跨行模式：含換行的查詢會跨行比對，「全部取代」也能處理跨行符合並位移書籤。搜尋選項（全字比對／區分大小寫／正則／十六進位／循環）收合於左下角「選項」齒輪。查找與替換欄位的歷史改為欄位右上角的時鐘鈕下拉（仿 UltraEdit）：每一列右端 hover 紅色「×」移除單筆、底部「清空搜尋紀錄」，點選任一筆自動收起清單。標題欄的「快速查找」框也接入同一套歷史下拉。
+
+#### 修正
+- 勾選「只在選取範圍內」而沒有選取範圍（或為欄位選取）時，「全部取代」不再回落到整份文件：按鈕停用並說明原因。
+- 搜尋失敗的訊息（無效的正規表達式、十六進位格式錯誤）依介面語言顯示，不再固定為繁體中文。
+- 狀態列的訊息固定為一行且不出視窗寬度：過長的訊息以「…」截斷，完整文字見懸停提示。查找失敗時不再把整條查詢貼進狀態列而蓋住視窗底部。
+
 ## [0.6.10] - 2026-11-25
 
 ### Added
-- A dockable File View panel (View > File View): its tabbed left panel has a Favorites tree for grouping files. Right-click the Favorites root to add a group, a folder's files, individual files, the active file or all open files, and to switch between names and full paths; right-click a group to rename or delete it, and double-click it to open every file in the group. Missing files are skipped with a status message. Its Open tab lists every editor tab, including preview tabs, for switching files when the tab bar is crowded. Recently opened files are listed below, and favorites persist in `settings.json` without touching the files on disk.
+- A dockable File View panel (View > File View): its tabbed left panel has a Quick Open tree for grouping files. Right-click the Quick Open root to add a group, a folder's files, individual files, the active file or all open files, and to switch between names and full paths; right-click a group to rename or delete it, and double-click it to open every file in the group. Missing files are skipped with a status message. Its Open tab lists every editor tab, including preview tabs, for switching files when the tab bar is crowded. Recently accessed files are listed below, and favorites persist in `settings.json` without touching the files on disk.
 - PowerShell scripts (`.ps1`, `.psm1`, `.psd1`) open with bundled syntax highlighting: comments, strings, variables, cmdlets, keywords and here-strings are colored without any external files or network access.
 - Squirrel scripts (`.nut`, <https://squirrel-lang.org/>) open with bundled syntax highlighting: classes, functions, keywords, numbers, strings and `//`, `/* */` comments are colored offline.
 - The bundled Squirrel definition also covers the user's ADO database, Win32 and MFC keyword extensions (`ADOSQLCommand`, `ADODataset`, `AttachToDB`, `MB_OK`, `CString`, …); types, functions and constants use distinct colors in the light and dark themes.
@@ -33,13 +51,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - The File View panel's Open tab shows a "×" at the right end of a row while it is hovered or selected; clicking it closes that tab (a Markdown preview row closes the preview). Double-clicking a row closes it the same way as double-clicking the editor tab's title. Unsaved changes are still confirmed first.
 - The left File View dock can be dragged up to 800 px wide (was 420), and the Explorer tree and content list scroll horizontally when a deep path or a long file name does not fit. The list header stays fixed while the list scrolls vertically, drag a column border to resize that column (the widths are remembered), and a column header click sorts by that column (four-way choice, second click reverses, ▲/▼ marks the active column). While split view is checked the tree stays a plain folder list (the contents are shown in the list below); unchecking it makes the selected folder render its subfolders and files inline again.
 - The File View panel gains an "Explorer" tab: a lazily loaded drive/folder tree (a folder is read only when first expanded) with a filter box that applies only after clicking ">" (or pressing Enter). The filter matches the selected folder's file names only (`*` / `?` wildcards, `;`-separated): matching files appear as leaf rows under the selected folder, unselected folders stay a pure folder tree, and single-clicking a file opens it. A split-view toggle shows the selected folder's contents below the tree — a Name / Modified / Type / Size list (columns adapt to the panel width) with a draggable splitter; double-clicking a folder in the list enters it. Rows show the real Windows shell icons (folders, files by type, drives), a ".." row at the top returns to the parent folder, and clicking a column header sorts by that column (four-way choice, second click reverses, ▲/▼ marks the active column). The list header stays fixed while the list scrolls.
+- The editor uses the bundled **Fixedsys Excelsior 3.01** font (FSEX300) at size 16 by default: the font is embedded in the executable, so the classic Fixedsys look works with no font installation on any platform. CJK and other scripts still fall back to the platform fonts; choosing another font in View > Font overrides the default as before.
+- The Script Output panel's "Output to file" log now follows the script: F5 writes `<script folder>/<script file name>.result` (for example `a.nut` → `a.nut.result`, `a.py` → `a.py.result`, `run.ztrtoml` → `run.ztrtoml.result`), so every script keeps its own log right next to it — sorting by name puts each log beside its script, and same-named scripts in different languages never overwrite each other. Unsaved selection runs (no script file) still fall back to `result.log` next to MadEdit.exe, and an explicit log path overrides the rule.
 
 ### Changed
+- View > Preview, View > File View and View > Script Output are now checked by default: the best-experience workspace (auto preview dispatch, the File View dock and the Script Output panel) is shown from the first launch. Unchecking any of them hides it as before and is remembered.
 - The four preview entries (Markdown / HTML / SVG / image) are merged into a single checked toggle "Preview" (View menu, and the tab & editor "Preview as" context menus): while checked, opening a file dispatches automatically by extension — `.md`/`.markdown` to the Markdown preview, `.html`/`.htm` to the HTML preview, `.svg` to the graphic preview, `.bmp`/`.jpg`/`.jpeg`/`.png`/`.gif`/`.webp` to the image preview; other types show a status message. Unchecking closes every active preview. The old per-type settings keys are ignored (the new `auto_preview` key replaces them).
 - Editor tabs can be dragged to reorder them with a live preview (like MTT-File-Manager): while dragging, the source tab lifts out with a shadow and follows the pointer while the neighbors animate aside to open a slot; the move commits only on release. Clicking / double-clicking / the close button behave as before.
 - The Squirrel interpreter is now expected as `nut.exe` (previously `ZSSQConsole.exe`) next to MadEdit.exe or on PATH, and `.nut` files show "nut" as their script type in the status bar (syntax highlighting stays the Squirrel definition).
 - Tools > Run Script (F5) recognizes `*.ztrtoml` files (config files of the ztr compression tool): instead of script interpretation it runs `ztr --ztrtoml <file name>` with the working directory set to the file's own folder, so the tool compresses that folder with this configuration. It prefers `ztr.exe` sitting next to MadEdit.exe (bundled release), falling back to PATH; unsaved changes are saved first, as with other F5 runs. The status bar shows the script type as "ztr" (highlighting uses the YAML syntax).
-- In the File View panel's List tab, hovering a favorites entry or a recent-file entry shows a red "×" at the end of the row: clicking it removes only that entry from the favorites/recent list (the file on disk is untouched).
+- The File View panel's File History tab supports drag-and-drop ordering: drag group rows to reorder them, drag a file row within its group or across groups (drop on a group header to append at the end; a custom display name follows the file), and drag a Recent Access row into any group, which adds the file there and removes it from the recent list (it also disappears from the "reopen" menu). The recent list refreshes live: opening a file or switching editor tabs moves the active file to the top. A blue insertion line previews the drop point and placement happens only on release; if the target group already contains the same file, the line turns into a red dashed line with a "not allowed" cursor and the drop is ignored.
+- In the File View panel's File History tab, hovering a favorites entry or a recent-file entry shows a red "×" at the end of the row: clicking it removes only that entry from the favorites/recent list (the file on disk is untouched).
 - Duplicate Line (Edit menu) also accepts `Ctrl+D` (it keeps `Ctrl+Shift+D`), and Cut (`Ctrl+X`) behaves like Visual Studio in text mode: with no selection it cuts the whole current line; with a selection it cuts as before. Hex mode and read-only documents are unaffected.
 - Windows: the menu bar now lives in a custom-drawn title bar together with the app icon and the window buttons (minimize / maximize / close), like VS Code. The bar is 1.5× the menu height, is draggable, and double-clicking toggles maximize; edge resizing and Aero Snap still work. The zoom controls, theme toggle and quick search stay on the bar's right side. Other platforms keep the native title bar and menu bar. Because the window buttons are ordinary EGUI widgets, Windows 11 does not show the Snap Layouts flyout when hovering the maximize button.
 - Editor tabs and the File View panel's tab now use a flat, content-connected style with rounded top corners only (like Windows 11 Explorer), instead of detached rounded buttons, so the selected tab merges with the pane below it.
@@ -60,7 +82,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### 繁體中文
 
 #### 新增
-- 可停靠的「文件視圖」面板（檢視 > 文件視圖）：左側分頁面板中的「收藏」樹可將檔案分組。在「收藏」上按右鍵可新增群組、資料夾中的檔案、個別檔案、使用中的檔案或所有開啟的檔案，並切換顯示檔名／完整路徑；在群組上按右鍵可重新命名或刪除，連按兩下則開啟群組中的所有檔案，已不存在的檔案會略過並顯示訊息。「開啟」頁籤列出所有編輯器分頁（含預覽分頁），分頁列放不下時可切換檔案。下方另列最近開啟的檔案；收藏存於 `settings.json`，不會更動磁碟上的檔案。
+- 可停靠的「文件視圖」面板（檢視 > 文件視圖）：左側分頁面板中的「快速開啟」樹可將檔案分組。在「快速開啟」上按右鍵可新增群組、資料夾中的檔案、個別檔案、使用中的檔案或所有開啟的檔案，並切換顯示檔名／完整路徑；在群組上按右鍵可重新命名或刪除，連按兩下則開啟群組中的所有檔案，已不存在的檔案會略過並顯示訊息。「開啟」頁籤列出所有編輯器分頁（含預覽分頁），分頁列放不下時可切換檔案。下方另列最近存取的檔案；收藏存於 `settings.json`，不會更動磁碟上的檔案。
 - PowerShell 腳本（`.ps1`、`.psm1`、`.psd1`）內建語法高亮：註解、字串、變數、Cmdlet、關鍵字與 here-string 都會著色，不需要外部檔案或網路。
 - Squirrel 腳本（`.nut`，<https://squirrel-lang.org/>）內建語法高亮：類別、函式、關鍵字、數字、字串與 `//`、`/* */` 註解都會著色，可離線使用。
 - 內建 Squirrel 定義也涵蓋 ADO 資料庫、Win32 與 MFC 擴充關鍵字（`ADOSQLCommand`、`ADODataset`、`AttachToDB`、`MB_OK`、`CString` 等）；型別、函式與常數在淺色與深色主題各有不同顏色。
@@ -84,13 +106,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - 檔案檢視面板的「開啟」頁籤在列被滑鼠懸停或選中時於列尾顯示「×」，點擊即關閉該分頁（Markdown 預覽列則關閉預覽）；雙擊列與雙擊編輯器分頁標題同效，同樣關閉。未存檔修改仍會先確認。
 - 左側檔案檢視停靠欄可拖曳加寬至 800 px（原上限 420），資源管理器的目錄樹與內容列表在深層路徑或長檔名超出範圍時提供**橫向捲軸**；列表標題固定不隨垂直捲動，可用滑鼠拖曳欄位邊界調整欄寬（欄寬會記住），點擊列頭依該欄排序（四選一，再點切換升降冪，以 ▲/▼ 標示）。勾選分欄時樹保持純資料夾清單（內容由下方列表呈現）；取消勾選後選中資料夾會重新把子資料夾與檔案內聯到樹上。
 - 檔案檢視面板新增「資源管理器」頁籤：懶載入的磁碟／資料夾樹（資料夾首次展開時才讀取），附篩選框——按「>」或 Enter 後才生效，只匹配**選中資料夾**的檔名（`*`／`?` 萬用字元，可用 `;` 分隔多個）：匹配的檔案以葉節點顯示在選中資料夾下，未選中的節點維持純資料夾樹；單擊檔案葉節點即開啟該檔案。勾選分欄開關後，樹下方以「名稱／修改日期／類型／大小」列表顯示所選資料夾內容（欄位隨面板寬度自適應），並可用拖拽分隔條調整上下高度；雙擊列表中的資料夾即進入。列前置**真實 Windows 系統圖示**（資料夾、依副檔名的檔案、磁碟機）；列表首項「..」單擊回上層；點擊列頭依該欄排序（四選一，再點切換升降冪，作用中的欄位以 ▲/▼ 標示）；列表標題行固定，不隨列表捲動。
+- 編輯區預設使用內建的 **Fixedsys Excelsior 3.01** 字型（FSEX300），大小 16：字型直接嵌入執行檔，任何平台都無需安裝即可重現經典 Fixedsys 觀感。中日韓等字元仍走平台後備字型；在「檢視 > 字型」選擇其他字型即可覆蓋預設。
+- 「執行輸出」面板的「輸出到檔案」記錄檔改為跟著腳本走：F5 寫入「腳本所在目錄／腳本檔名.result」（例如 `a.nut` → `a.nut.result`、`a.py` → `a.py.result`、`run.ztrtoml` → `run.ztrtoml.result`），每個腳本的日誌各自放在旁邊——按檔名排序時日誌緊挨著腳本、綁定關係一目了然；同目錄下同名不同語言的腳本（`a.nut`／`a.py`／`a.ps1`）也互不覆蓋。未存檔的選取片段運行（無腳本檔案）仍退回 MadEdit.exe 同目錄的 `result.log`，使用者自訂的記錄檔路徑優先於此規則。
 
 #### 變更
+- 「檢視 > 預覽」「檢視 > 文件視圖」「檢視 > 運行輸出」改為**預設勾選**：第一次啟動即是體驗最好的工作區（自動預覽分發、文件視圖停靠欄與運行輸出面板）。取消勾選照舊隱藏對應面板並記住狀態。
 - 四個預覽項目（Markdown／HTML／SVG／圖片）合併為單一勾選開關「預覽」（檢視選單，以及分頁與編輯區的「預覽為」右鍵選單同步）：勾選時打開檔案依副檔名自動分發——`.md`/`.markdown` 進 Markdown 預覽、`.html`/`.htm` 進 HTML 預覽、`.svg` 進圖形預覽、`.bmp`/`.jpg`/`.jpeg`/`.png`/`.gif`/`.webp` 進圖片預覽，其他類型顯示狀態訊息；取消勾選會關閉所有作用中的預覽。舊的分項設定鍵不再使用（改由新的 `auto_preview` 鍵取代）。
 - 編輯器分頁標題支援拖動排序，並帶即時預覽（比照 MTT-File-Manager）：拖動時來源分頁浮起（帶陰影）跟隨指針，鄰居以動畫滑開一個空位；鬆手才提交搬移。單擊、雙擊與關閉按鈕行為不變。
 - Squirrel 直譯器改為使用 `nut.exe`（原 `ZSSQConsole.exe`），放在 `MadEdit.exe` 同目錄或 PATH；`.nut` 檔在狀態欄的腳本類型顯示為「nut」（語法高亮仍是 Squirrel 定義）。
 - 「工具 > 執行腳本」（F5）支援 `*.ztrtoml` 檔案（ztr 壓縮工具的配置檔）：不再當腳本解譯，而是以該檔所在目錄為工作目錄執行 `ztr --ztrtoml <檔名>`，直接按此配置壓縮該目錄。優先使用 MadEdit.exe 同目錄的 `ztr.exe`（可捆綁發佈），找不到才依賴 PATH；與其他 F5 運行一樣，未存檔修改會先存檔。狀態欄的腳本類型顯示為「ztr」（高亮沿用 YAML 樣式）。
-- 「文件視圖」面板的「列表」頁中，滑鼠懸停在收藏條目或最近開啟條目上時，列尾會出現紅色「×」：點擊只把該條目從收藏／最近清單移除（不會刪除磁碟上的檔案）。
+- 「文件視圖」面板的「歷史檔案」頁支援拖動排序：拖動群組行可重排群組；拖動檔案行可在群組內排序或跨群組移動（落在群組標題行追加到末尾，自訂顯示名跟著檔案走）；拖動「最近存取」的一行到任意群組，落地後該檔案加入群組並從最近清單移除（也會從「重新打開」選單消失）。最近清單即時刷新：開啟檔案或切換編輯器分頁時，啟用中的檔案會移到最前面。藍色插入線即時預覽落點，鬆手才落位；目標群組已含同一檔案時插入線變紅色虛線、游標顯示禁止，鬆手無效。
+- 「文件視圖」面板的「歷史檔案」頁中，滑鼠懸停在收藏條目或最近開啟條目上時，列尾會出現紅色「×」：點擊只把該條目從收藏／最近清單移除（不會刪除磁碟上的檔案）。
 - 「複製整行」（編輯選單）新增 `Ctrl+D` 快捷鍵（原有 `Ctrl+Shift+D` 保留）；文字模式下「剪下」（`Ctrl+X`）比照 Visual Studio：沒有選取時剪下目前整行，有選取時行為不變。十六進位模式與唯讀文件不受影響。
 - Windows：選單列移進自繪標題欄，與應用程式圖示、視窗按鈕（最小化／最大化／關閉）同一列（類似 VS Code）。標題欄高度為選單高度的 1.5 倍，可拖動、雙擊可最大化／還原，邊緣縮放與 Aero Snap 貼邊正常。字型縮放、主題切換與快速搜尋保留在同一列右側。其他平台維持原生標題列與選單列。視窗按鈕是一般 EGUI 控件，因此 Windows 11 懸停最大化按鈕時不會顯示 Snap Layouts 浮層。
 - 編輯器分頁與「文件視圖」面板的分頁改為上緣圓角、下緣與內容相連的扁平樣式（類似 Windows 11 檔案總管），不再是有分離感的圓角按鈕；選取的分頁會與下方內容連成一體。

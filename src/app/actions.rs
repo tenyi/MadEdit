@@ -235,6 +235,11 @@ impl App {
         if !ctx.is_loader_installed(super::mdpreview::LocalSvgLoader::ID) {
             super::mdpreview::LocalSvgLoader::install(ctx, self.fonts.diagram_font());
         }
+        // 保留的技術實現（未啟用）：遠端 SVG 載入器已註釋保留於 mdpreview.rs 檔尾——
+        // Markdown 預覽保持完全離線（不發 HTTP 請求），技術實現不刪除；啟用步驟見該處說明。
+        // if !ctx.is_loader_installed(super::mdpreview::RemoteSvgLoader::ID) {
+        //     super::mdpreview::RemoteSvgLoader::install(ctx, self.fonts.diagram_font());
+        // }
     }
 
     /// 開啟／聚焦目前 .md 文件的 Markdown 預覽（含 Mermaid 圖表與本機圖片）

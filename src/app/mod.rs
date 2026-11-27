@@ -208,6 +208,10 @@ pub struct App {
     shell_icons: shell_icons::IconCache,
     /// 收藏樹根節點是否展開（只在本次執行期間記住）
     fav_root_open: bool,
+    /// 歷史檔案面板的拖動狀態（松手才落位；跨幀必須放在會話級）
+    favorites_drag: Option<favorites::FavDrag>,
+    /// 上次登記「最近存取」的（文件 id、是否預覽分頁）；啟用分頁變化才刷新最近清單
+    recent_noted: Option<(u64, bool)>,
     /// 開啟中的預覽列印視窗
     preview: Option<preview::PrintPreview>,
 }
@@ -290,6 +294,8 @@ impl App {
             explorer: explorer::Explorer::default(),
             shell_icons: shell_icons::IconCache::default(),
             fav_root_open: true,
+            favorites_drag: None,
+            recent_noted: None,
             preview: None,
         };
         app.load_icons(&cc.egui_ctx);
@@ -383,8 +389,10 @@ impl App {
         self.tabs.iter().position(|t| t.doc.id == id)
     }
 
+    /// Shows `msg` in the status bar. The bar is one row high: line breaks become spaces, so
+    /// a message built from multi-line text (a pasted search query) cannot grow it into a block.
     pub fn set_status(&mut self, msg: impl Into<String>) {
-        self.status = Some((msg.into(), 0.0));
+        self.status = Some((msg.into().replace("\r\n", " ").replace(['\r', '\n'], " "), 0.0));
     }
 
     /// 設定檔損毀提示。譯文裡的 `\n` 是跳脫的換行
@@ -1295,7 +1303,7 @@ impl App {
                 ui.label(egui::RichText::new(self.t("st.no_document", "沒有開啟的檔案")).weak());
                 if let Some((msg, _)) = &self.status {
                     ui.separator();
-                    ui.label(msg);
+                    ui.add(egui::Label::new(msg.as_str()).truncate().sense(egui::Sense::hover())).on_hover_text(msg.as_str());
                 }
             });
             return;
@@ -1394,7 +1402,7 @@ impl App {
             }
             if let Some((msg, _)) = &status {
                 ui.separator();
-                ui.label(msg);
+                ui.add(egui::Label::new(msg.as_str()).truncate().sense(egui::Sense::hover())).on_hover_text(msg.as_str());
             }
         });
     }
@@ -1592,6 +1600,18 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+
+        // 啟用分頁變化即視為「存取」該檔案：最近存取清單隨開啟／切換即時刷新
+        // （與文件視圖面板的「最近存取」一致；未存檔與預覽分頁沒有路徑，不登記）。
+        let active_key = self.tabs.get(self.active).map(|t| (t.doc.id, self.preview_tab_active));
+        if self.recent_noted != active_key {
+            self.recent_noted = active_key;
+            if !self.is_preview_tab()
+                && let Some(path) = self.tabs.get(self.active).and_then(|t| t.doc.path.clone())
+            {
+                self.settings.add_recent_file(path);
+            }
+        }
 
         #[cfg(target_os = "macos")]
         for path in crate::macos::take_open_files() {

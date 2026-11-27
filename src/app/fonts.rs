@@ -7,20 +7,10 @@ use eframe::egui::{self, FontData, FontDefinitions, FontFamily};
 /// 編輯區使用的字型家族名稱（egui 內部名稱）
 pub const EDITOR_FAMILY: &str = "editor";
 
-/// 未指定字型時，依序挑選第一個已安裝的等寬字型
-const DEFAULT_EDITOR_FONTS: &[&str] = &[
-    "Sarasa Term TC",
-    "Sarasa Mono TC",
-    "Sarasa Term SC",
-    "Noto Sans Mono CJK TC",
-    "Menlo",
-    "SF Mono",
-    "Consolas",
-    "Cascadia Mono",
-    "DejaVu Sans Mono",
-    "Liberation Mono",
-    "Courier New",
-];
+/// 內建字型：Fixedsys Excelsior 3.01（FSEX300，自由字型，見 assets/fonts/README.md）。
+/// 未選字型時作為編輯區預設字型，與程式一同打包，不依賴系統安裝。
+const BUNDLED_EDITOR_FONT: &[u8] = include_bytes!("../../assets/fonts/FSEX300.ttf");
+pub const BUNDLED_EDITOR_FAMILY: &str = "Fixedsys Excelsior 3.01";
 
 /// CJK 後備字型（介面與編輯區共用）
 const CJK_FALLBACKS: &[&str] = &[
@@ -92,13 +82,9 @@ impl FontManager {
         }
     }
 
-    /// 預設的編輯區字型（第一個已安裝的偏好字型）
+    /// 預設的編輯區字型：內建的 Fixedsys Excelsior 3.01（理論上恆可用，系統字型僅作保底）
     pub fn default_editor_family(&mut self) -> String {
-        DEFAULT_EDITOR_FONTS
-            .iter()
-            .find(|n| self.collection.family_by_name(n).is_some())
-            .map(|n| n.to_string())
-            .unwrap_or_default()
+        BUNDLED_EDITOR_FAMILY.to_string()
     }
 
     /// Mermaid 圖表用的單一字型：回傳（家族名稱, 字型檔內容）。
@@ -135,8 +121,8 @@ impl FontManager {
             .find_map(|(data, has_hangul)| has_hangul.then_some(data))
     }
 
-    /// 依設定的編輯區與介面字型重建 egui 字型定義；參數為空字串時自動（編輯區挑第一個
-    /// 已安裝的等寬字型，介面沿用 egui 內建字型）。
+    /// 依設定的編輯區與介面字型重建 egui 字型定義；參數為空字串時自動（編輯區用內建的
+    /// Fixedsys Excelsior 3.01，介面沿用 egui 內建字型）。
     ///
     /// 介面字型只影響 [`FontFamily::Proportional`]（選單、對話框、分頁、狀態列等），
     /// 編輯區與「執行輸出」面板使用的是 [`EDITOR_FAMILY`]，不會被介面字型影響。
@@ -147,7 +133,12 @@ impl FontManager {
         let wanted = if requested.is_empty() { self.default_editor_family() } else { requested.to_string() };
         self.editor_family = String::new();
         let mut editor_has_hangul = false;
-        if !wanted.is_empty()
+        if requested.is_empty() {
+            // 自動模式：直接使用內建的 Fixedsys Excelsior 3.01，不需系統安裝
+            defs.font_data.insert("editor-main".into(), Arc::new(FontData::from_static(BUNDLED_EDITOR_FONT)));
+            editor_chain.push("editor-main".into());
+            self.editor_family = wanted;
+        } else if !wanted.is_empty()
             && let Some((data, has_hangul)) = self.load_family_probe(&wanted)
         {
             defs.font_data.insert("editor-main".into(), Arc::new(data));

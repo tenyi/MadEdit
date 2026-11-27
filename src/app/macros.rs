@@ -18,7 +18,16 @@ pub enum MacroStep {
     /// 編輯區的輸入與游標動作
     Edit(EdAction),
     Find { query: String, hex: bool, match_case: bool, whole_word: bool, regex: bool, backward: bool },
-    ReplaceAll { query: String, replacement: String, match_case: bool, whole_word: bool, regex: bool },
+    /// `in_selection` was added later, so older macro files load with it off.
+    ReplaceAll {
+        query: String,
+        replacement: String,
+        match_case: bool,
+        whole_word: bool,
+        regex: bool,
+        #[serde(default)]
+        in_selection: bool,
+    },
 }
 
 #[derive(Default)]
@@ -106,13 +115,14 @@ impl App {
                     self.settings.search_regex = regex;
                     self.find_next(backward);
                 }
-                MacroStep::ReplaceAll { query, replacement, match_case, whole_word, regex } => {
+                MacroStep::ReplaceAll { query, replacement, match_case, whole_word, regex, in_selection } => {
                     self.find.query = query;
                     self.find.replacement = replacement;
                     self.find.hex = false;
                     self.settings.search_match_case = match_case;
                     self.settings.search_whole_word = whole_word;
                     self.settings.search_regex = regex;
+                    self.settings.search_in_selection = in_selection;
                     self.replace_all();
                 }
             }

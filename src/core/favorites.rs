@@ -112,6 +112,60 @@ impl FavoriteGroup {
     }
 }
 
+/// 跨群組移動一個收藏項目（面板拖動排序的資料層）：自訂顯示名跟著項目走，
+/// 目標群組已含同一檔案時拒絕並回傳 false；`insertion` 為 `None` 時追加到末尾。
+/// 來源群組用 `Vec::remove` 收合，不會留下空位。同群組內排序請用 [`reorder_item`]。
+pub fn move_item_between_groups(
+    source: &mut FavoriteGroup,
+    index: usize,
+    target: &mut FavoriteGroup,
+    insertion: Option<usize>,
+) -> bool {
+    let Some(item) = source.items.get(index) else {
+        return false;
+    };
+    if target.contains(&item.path) {
+        return false;
+    }
+    let item = source.items.remove(index);
+    let at = insertion.map_or(target.items.len(), |i| i.min(target.items.len()));
+    target.items.insert(at, item);
+    true
+}
+
+/// 群組內排序：把 `from` 位置的項目移動到插入點 `insertion`（懸停列索引 + 上半/下半），
+/// 並做死區補償（`from` 與 `from + 1` 的插入點數學上就是原位，回傳 false 不動）。
+pub fn reorder_item(group: &mut FavoriteGroup, from: usize, insertion: usize) -> bool {
+    let n = group.items.len();
+    if from >= n {
+        return false;
+    }
+    let target = insertion.min(n);
+    if target == from || target == from + 1 {
+        return false;
+    }
+    let item = group.items.remove(from);
+    let to = if from < target { target - 1 } else { target };
+    group.items.insert(to, item);
+    true
+}
+
+/// 群組排序：與 [`reorder_item`] 同一套死區補償，作用於設定檔的群組列表。
+/// 換位成功時回傳被拖動群組的新索引。
+pub fn reorder_group(groups: &mut Vec<FavoriteGroup>, from: usize, insertion: usize) -> Option<usize> {
+    if from >= groups.len() {
+        return None;
+    }
+    let target = insertion.min(groups.len());
+    if target == from || target == from + 1 {
+        return None;
+    }
+    let group = groups.remove(from);
+    let to = if from < target { target - 1 } else { target };
+    groups.insert(to, group);
+    Some(to)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,5 +241,59 @@ mod tests {
     fn test_windows_verbatim_prefix_is_removed_from_favorite_paths() {
         assert_eq!(FavoriteItem::new(PathBuf::from(r"\\?\C:\work\a.txt")).path, PathBuf::from(r"C:\work\a.txt"));
         assert_eq!(FavoriteItem::new(PathBuf::from(r"\\?\UNC\server\share\a.txt")).path, PathBuf::from(r"\\server\share\a.txt"));
+    }
+
+    #[test]
+    fn test_move_item_between_groups_keeps_name_and_refuses_duplicates() {
+        let mut a = FavoriteGroup::new("甲");
+        let mut b = FavoriteGroup::new("乙");
+        a.add(PathBuf::from("/1.txt"));
+        a.add(PathBuf::from("/2.txt"));
+        b.add(PathBuf::from("/3.txt"));
+        a.items[1].rename("乙檔案");
+
+        // 跨組：插入到乙組開頭，自訂名稱跟著走
+        assert!(move_item_between_groups(&mut a, 1, &mut b, Some(0)));
+        assert_eq!(a.items.iter().map(|i| i.file_name()).collect::<Vec<_>>(), vec!["1.txt"]);
+        assert_eq!(b.items[0].file_name(), "2.txt");
+        assert_eq!(b.items[0].name.as_deref(), Some("乙檔案"));
+
+        // 目標已含同一檔案 → 拒絕，來源不動（造一個兩組共有的路徑）
+        let mut x = FavoriteGroup::new("丙");
+        let mut y = FavoriteGroup::new("丁");
+        x.add(PathBuf::from("/dup.txt"));
+        y.add(PathBuf::from("/dup.txt"));
+        assert!(!move_item_between_groups(&mut x, 0, &mut y, None));
+        assert_eq!(x.items.len(), 1);
+        assert_eq!(y.items.len(), 1);
+
+        // insertion None → 追加到末尾
+        assert!(move_item_between_groups(&mut a, 0, &mut b, None));
+        assert_eq!(b.items.iter().map(|i| i.file_name()).collect::<Vec<_>>(), vec!["2.txt", "3.txt", "1.txt"]);
+        assert_eq!(a.items.len(), 0);
+    }
+
+    #[test]
+    fn test_reorder_helpers_skip_dead_zones_and_compensate_index() {
+        let mut g = FavoriteGroup::new("組");
+        for name in ["/1.txt", "/2.txt", "/3.txt", "/4.txt"] {
+            g.add(PathBuf::from(name));
+        }
+        // 死區：插入點等於原位（頭頂/腳底）→ false 不動
+        assert!(!reorder_item(&mut g, 1, 1));
+        assert!(!reorder_item(&mut g, 1, 2));
+        // 1 移到 4 之後（插入點 4）→ remove 後補償為 3
+        assert!(reorder_item(&mut g, 1, 4));
+        assert_eq!(g.items.iter().map(|i| i.file_name()).collect::<Vec<_>>(), vec!["1.txt", "3.txt", "4.txt", "2.txt"]);
+        assert!(!reorder_item(&mut g, 9, 0), "索引超出範圍 → false");
+
+        let mut groups = vec![FavoriteGroup::new("A"), FavoriteGroup::new("B"), FavoriteGroup::new("C")];
+        // 死區
+        assert_eq!(reorder_group(&mut groups, 0, 0), None);
+        assert_eq!(reorder_group(&mut groups, 0, 1), None);
+        // A 拖到 C 之後
+        assert_eq!(reorder_group(&mut groups, 0, 3), Some(2));
+        assert_eq!(groups.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(), vec!["B", "C", "A"]);
+        assert_eq!(reorder_group(&mut groups, 5, 0), None);
     }
 }

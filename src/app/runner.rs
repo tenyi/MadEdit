@@ -75,7 +75,7 @@ pub(crate) const MAX_OUTPUT_LINES: usize = 5_000;
 /// 面板保留的輸出位元組上限（UTF-8 約等於排版成本；5 千行 × 40 字元 ≈ 200KB）。
 const MAX_OUTPUT_CHARS: usize = 200_000;
 
-/// 開啟「輸出到檔案」時預設寫入的檔名（放在 MadEdit.exe 同目錄）
+/// 沒有腳本路徑（如未存檔的選取片段）時，退回寫到 MadEdit.exe 同目錄的 result.log
 const LOG_FILE_NAME: &str = "result.log";
 
 /// 一次運行的狀態與輸出
@@ -87,10 +87,13 @@ pub struct ScriptRunner {
     pub text: String,
     /// 因超過上限而被省略的行數（面板顯示提示用）
     pub trimmed_lines: usize,
-    /// 右鍵選單勾選「輸出到檔案」：所有輸出同時寫入 result.log（無大小限制，
+    /// 右鍵選單勾選「輸出到檔案」：所有輸出同時寫入記錄檔（無大小限制，
     /// 面板截斷不影響檔案內容）
     pub log_enabled: bool,
-    /// 記錄檔位置；None 表示 MadEdit.exe 同目錄的 [`LOG_FILE_NAME`]（測試可覆寫到暫存目錄）
+    /// 這次 F5 運行的腳本檔案；記錄檔預設放「腳本所在目錄／腳本檔名.result」
+    /// （`a.nut` → `a.nut.result`），每個腳本的日誌跟著腳本走、互不覆蓋
+    pub(crate) script_path: Option<PathBuf>,
+    /// 記錄檔位置；Some 時完全覆寫預設規則（測試可覆寫到暫存目錄）
     pub(crate) log_path: Option<PathBuf>,
     /// 已開啟的記錄檔；停用時關閉
     log_file: Option<std::fs::File>,
@@ -131,6 +134,7 @@ impl Default for ScriptRunner {
             text: String::new(),
             trimmed_lines: 0,
             log_enabled: false,
+            script_path: None,
             log_path: None,
             log_file: None,
             exit: None,
@@ -234,11 +238,22 @@ impl ScriptRunner {
         self.kill_tree();
     }
 
-    /// 記錄檔的完整路徑：使用者未覆寫時用 MadEdit.exe 同目錄的 result.log
+    /// 記錄檔的完整路徑：優先使用者覆寫（log_path），否則「腳本所在目錄／腳本檔名.result」
+    /// （`a.nut` → `a.nut.result`、`a.py` → `a.py.result`；直接在腳本名後追加 .result，
+    /// 檔名排序時與腳本相鄰、綁定關係一目了然，主名與副檔名組合唯一，互不覆蓋）；
+    /// 沒有腳本路徑時退回 MadEdit.exe 同目錄的 result.log
     pub(crate) fn resolved_log_path(&self) -> Option<PathBuf> {
-        self.log_path.clone().or_else(|| {
-            std::env::current_exe().ok().and_then(|exe| exe.parent().map(|d| d.join(LOG_FILE_NAME)))
-        })
+        if let Some(p) = &self.log_path {
+            return Some(p.clone());
+        }
+        if let Some(script) = &self.script_path
+            && let (Some(dir), Some(name)) = (script.parent(), script.file_name())
+        {
+            let mut log = name.to_string_lossy().into_owned();
+            log.push_str(".result");
+            return Some(dir.join(log));
+        }
+        std::env::current_exe().ok().and_then(|exe| exe.parent().map(|d| d.join(LOG_FILE_NAME)))
     }
 
     /// 勾選／取消「輸出到檔案」。開啟時**以清空方式開檔**，並把面板目前的輸出整段寫入
@@ -581,6 +596,8 @@ impl App {
         };
         // cmd 等外部程式不認得 `\\?\` verbatim 路徑（cd /d "%~dp0" 會失敗），先清掉前綴
         let file = crate::core::favorites::clean_path(file);
+        // 記錄檔跟著腳本走：所在目錄／腳本檔名.result（選取片段未有檔案時用臨時檔位置）
+        self.runner.script_path = self.doc().path.clone().or_else(|| Some(file.clone()));
         args.push(file.display().to_string());
         let cwd = self.doc().path.clone().map(crate::core::favorites::clean_path)
             .and_then(|source| source.parent().map(Path::to_owned));
@@ -621,6 +638,7 @@ impl App {
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "ztr".into());
         let args = vec!["--ztrtoml".to_string(), name];
+        self.runner.script_path = Some(file.clone());
         self.launch_runner(program, args, Some(&dir));
         true
     }
@@ -632,7 +650,7 @@ impl App {
         self.runner.text.clear();
         self.runner.trimmed_lines = 0;
         self.runner.follow_seen = 0;
-        // 開啟「輸出到檔案」時，新的 F5 運行從頭寫 result.log；開檔失敗就停用並告知
+        // 開啟「輸出到檔案」時，新的 F5 運行從頭寫記錄檔（腳本同名.result）；開檔失敗就停用並告知
         if let Err(e) = self.runner.reopen_log_truncated() {
             self.runner.disable_log();
             let hint = format!("{} {e}", self.t("run.log_fail", "無法開啟記錄檔："));
@@ -769,7 +787,7 @@ impl App {
         if selected.is_some() {
             self.runner.sel = selected;
         }
-        // 「輸出到檔案」是即時生效的勾選項：勾上以面板目前內容同步 result.log，取消就關檔；
+        // 「輸出到檔案」是即時生效的勾選項：勾上以面板目前內容同步記錄檔，取消就關檔；
         // 勾選狀態存進設定，重開程式沿用（啟動時以續寫模式開檔，不清空）
         if menu.toggle_log {
             let on = !self.runner.log_enabled;
@@ -900,7 +918,7 @@ fn output_menu(ui: &mut egui::Ui, lang: i18n::Lang, log_enabled: bool, menu: &mu
     }
     // 複選型選單項：點了直接切換狀態，選單保持開著（勾選狀態下幀就會更新）
     ui.separator();
-    if ui.button(menus::check_label(log_enabled, translate(lang, "run.log_to_file", "輸出到檔案（result.log）"))).clicked() {
+    if ui.button(menus::check_label(log_enabled, translate(lang, "run.log_to_file", "輸出到檔案（腳本同名.result）"))).clicked() {
         menu.toggle_log = true;
         ui.close();
     }
@@ -1128,9 +1146,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 記錄檔預設放在 MadEdit.exe 同目錄（測試可用 log_path 覆寫）
+    /// 記錄檔預設跟著腳本走：腳本所在目錄／主名.result（log_path 覆寫優先；無腳本退回 exe 目錄）
     #[test]
-    fn test_log_path_defaults_next_to_the_executable() {
+    fn test_log_path_defaults_next_to_the_script() {
+        let mut runner = ScriptRunner::default();
+        runner.script_path = Some(PathBuf::from(r"D:\work\demo\a.nut"));
+        assert_eq!(runner.resolved_log_path(), Some(PathBuf::from(r"D:\work\demo\a.nut.result")));
+        // 同目錄同名不同副檔名：互不覆蓋
+        runner.script_path = Some(PathBuf::from(r"D:\work\demo\a.py"));
+        assert_eq!(runner.resolved_log_path(), Some(PathBuf::from(r"D:\work\demo\a.py.result")));
+        // ztr 配置等多段副檔名：整個檔名後直接追加
+        runner.script_path = Some(PathBuf::from("/opt/cfg/run.ztrtoml"));
+        assert_eq!(runner.resolved_log_path(), Some(PathBuf::from("/opt/cfg/run.ztrtoml.result")));
+        // 沒有腳本路徑：退回 MadEdit.exe 同目錄
         let runner = ScriptRunner::default();
         let default = runner.resolved_log_path().expect("a default path");
         assert_eq!(default.file_name().map(|n| n.to_string_lossy().into_owned()), Some("result.log".into()));
