@@ -2768,8 +2768,8 @@ fn test_file_view_lists_groups_and_adds_the_active_file() {
     // 分頁標題和樹狀項目同名，先給項目一個不同的顯示名稱再查詢，才不會同時命中兩個節點。
     h.state_mut().apply_favorite_name(FavTarget::Item(0, 0), "報價單");
     h.run_steps(3);
-    assert!(h.query_by_label("列表").is_some(), "the file view should show its List tab");
-    assert!(h.query_by_label("收藏").is_some(), "the List tab should show the Favorites root node");
+    assert!(h.query_by_label("歷史檔案").is_some(), "the file view should show its List tab");
+    assert!(h.query_by_label("快速開啟").is_some(), "the List tab should show the Favorites root node");
     assert!(h.query_by_label("常用").is_some(), "the group should be listed under the root node");
     assert!(h.query_by_label("報價單").is_some(), "the item should be listed under its group");
 
@@ -2853,7 +2853,7 @@ fn test_file_view_root_context_menu_adds_all_open_files() {
     h.state_mut().open_path(&first);
     h.state_mut().open_path(&second);
     h.run_steps(3);
-    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("收藏")).click_secondary();
+    h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("快速開啟")).click_secondary();
     h.run_steps(3);
     h.get_by(|n| n.label().is_some_and(|l| l.contains("新增所有開啟的檔案"))).click();
     h.run_steps(3);

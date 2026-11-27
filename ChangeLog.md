@@ -27,7 +27,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ## [0.6.10] - 2026-11-25
 
 ### Added
-- A dockable File View panel (View > File View): its tabbed left panel has a Favorites tree for grouping files. Right-click the Favorites root to add a group, a folder's files, individual files, the active file or all open files, and to switch between names and full paths; right-click a group to rename or delete it, and double-click it to open every file in the group. Missing files are skipped with a status message. Its Open tab lists every editor tab, including preview tabs, for switching files when the tab bar is crowded. Recently opened files are listed below, and favorites persist in `settings.json` without touching the files on disk.
+- A dockable File View panel (View > File View): its tabbed left panel has a Quick Open tree for grouping files. Right-click the Quick Open root to add a group, a folder's files, individual files, the active file or all open files, and to switch between names and full paths; right-click a group to rename or delete it, and double-click it to open every file in the group. Missing files are skipped with a status message. Its Open tab lists every editor tab, including preview tabs, for switching files when the tab bar is crowded. Recently accessed files are listed below, and favorites persist in `settings.json` without touching the files on disk.
 - PowerShell scripts (`.ps1`, `.psm1`, `.psd1`) open with bundled syntax highlighting: comments, strings, variables, cmdlets, keywords and here-strings are colored without any external files or network access.
 - Squirrel scripts (`.nut`, <https://squirrel-lang.org/>) open with bundled syntax highlighting: classes, functions, keywords, numbers, strings and `//`, `/* */` comments are colored offline.
 - The bundled Squirrel definition also covers the user's ADO database, Win32 and MFC keyword extensions (`ADOSQLCommand`, `ADODataset`, `AttachToDB`, `MB_OK`, `CString`, …); types, functions and constants use distinct colors in the light and dark themes.
@@ -60,7 +60,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Editor tabs can be dragged to reorder them with a live preview (like MTT-File-Manager): while dragging, the source tab lifts out with a shadow and follows the pointer while the neighbors animate aside to open a slot; the move commits only on release. Clicking / double-clicking / the close button behave as before.
 - The Squirrel interpreter is now expected as `nut.exe` (previously `ZSSQConsole.exe`) next to MadEdit.exe or on PATH, and `.nut` files show "nut" as their script type in the status bar (syntax highlighting stays the Squirrel definition).
 - Tools > Run Script (F5) recognizes `*.ztrtoml` files (config files of the ztr compression tool): instead of script interpretation it runs `ztr --ztrtoml <file name>` with the working directory set to the file's own folder, so the tool compresses that folder with this configuration. It prefers `ztr.exe` sitting next to MadEdit.exe (bundled release), falling back to PATH; unsaved changes are saved first, as with other F5 runs. The status bar shows the script type as "ztr" (highlighting uses the YAML syntax).
-- In the File View panel's List tab, hovering a favorites entry or a recent-file entry shows a red "×" at the end of the row: clicking it removes only that entry from the favorites/recent list (the file on disk is untouched).
+- In the File View panel's File History tab, hovering a favorites entry or a recent-file entry shows a red "×" at the end of the row: clicking it removes only that entry from the favorites/recent list (the file on disk is untouched).
 - Duplicate Line (Edit menu) also accepts `Ctrl+D` (it keeps `Ctrl+Shift+D`), and Cut (`Ctrl+X`) behaves like Visual Studio in text mode: with no selection it cuts the whole current line; with a selection it cuts as before. Hex mode and read-only documents are unaffected.
 - Windows: the menu bar now lives in a custom-drawn title bar together with the app icon and the window buttons (minimize / maximize / close), like VS Code. The bar is 1.5× the menu height, is draggable, and double-clicking toggles maximize; edge resizing and Aero Snap still work. The zoom controls, theme toggle and quick search stay on the bar's right side. Other platforms keep the native title bar and menu bar. Because the window buttons are ordinary EGUI widgets, Windows 11 does not show the Snap Layouts flyout when hovering the maximize button.
 - Editor tabs and the File View panel's tab now use a flat, content-connected style with rounded top corners only (like Windows 11 Explorer), instead of detached rounded buttons, so the selected tab merges with the pane below it.
@@ -81,7 +81,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### 繁體中文
 
 #### 新增
-- 可停靠的「文件視圖」面板（檢視 > 文件視圖）：左側分頁面板中的「收藏」樹可將檔案分組。在「收藏」上按右鍵可新增群組、資料夾中的檔案、個別檔案、使用中的檔案或所有開啟的檔案，並切換顯示檔名／完整路徑；在群組上按右鍵可重新命名或刪除，連按兩下則開啟群組中的所有檔案，已不存在的檔案會略過並顯示訊息。「開啟」頁籤列出所有編輯器分頁（含預覽分頁），分頁列放不下時可切換檔案。下方另列最近開啟的檔案；收藏存於 `settings.json`，不會更動磁碟上的檔案。
+- 可停靠的「文件視圖」面板（檢視 > 文件視圖）：左側分頁面板中的「快速開啟」樹可將檔案分組。在「快速開啟」上按右鍵可新增群組、資料夾中的檔案、個別檔案、使用中的檔案或所有開啟的檔案，並切換顯示檔名／完整路徑；在群組上按右鍵可重新命名或刪除，連按兩下則開啟群組中的所有檔案，已不存在的檔案會略過並顯示訊息。「開啟」頁籤列出所有編輯器分頁（含預覽分頁），分頁列放不下時可切換檔案。下方另列最近存取的檔案；收藏存於 `settings.json`，不會更動磁碟上的檔案。
 - PowerShell 腳本（`.ps1`、`.psm1`、`.psd1`）內建語法高亮：註解、字串、變數、Cmdlet、關鍵字與 here-string 都會著色，不需要外部檔案或網路。
 - Squirrel 腳本（`.nut`，<https://squirrel-lang.org/>）內建語法高亮：類別、函式、關鍵字、數字、字串與 `//`、`/* */` 註解都會著色，可離線使用。
 - 內建 Squirrel 定義也涵蓋 ADO 資料庫、Win32 與 MFC 擴充關鍵字（`ADOSQLCommand`、`ADODataset`、`AttachToDB`、`MB_OK`、`CString` 等）；型別、函式與常數在淺色與深色主題各有不同顏色。
@@ -114,7 +114,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - 編輯器分頁標題支援拖動排序，並帶即時預覽（比照 MTT-File-Manager）：拖動時來源分頁浮起（帶陰影）跟隨指針，鄰居以動畫滑開一個空位；鬆手才提交搬移。單擊、雙擊與關閉按鈕行為不變。
 - Squirrel 直譯器改為使用 `nut.exe`（原 `ZSSQConsole.exe`），放在 `MadEdit.exe` 同目錄或 PATH；`.nut` 檔在狀態欄的腳本類型顯示為「nut」（語法高亮仍是 Squirrel 定義）。
 - 「工具 > 執行腳本」（F5）支援 `*.ztrtoml` 檔案（ztr 壓縮工具的配置檔）：不再當腳本解譯，而是以該檔所在目錄為工作目錄執行 `ztr --ztrtoml <檔名>`，直接按此配置壓縮該目錄。優先使用 MadEdit.exe 同目錄的 `ztr.exe`（可捆綁發佈），找不到才依賴 PATH；與其他 F5 運行一樣，未存檔修改會先存檔。狀態欄的腳本類型顯示為「ztr」（高亮沿用 YAML 樣式）。
-- 「文件視圖」面板的「列表」頁中，滑鼠懸停在收藏條目或最近開啟條目上時，列尾會出現紅色「×」：點擊只把該條目從收藏／最近清單移除（不會刪除磁碟上的檔案）。
+- 「文件視圖」面板的「歷史檔案」頁中，滑鼠懸停在收藏條目或最近開啟條目上時，列尾會出現紅色「×」：點擊只把該條目從收藏／最近清單移除（不會刪除磁碟上的檔案）。
 - 「複製整行」（編輯選單）新增 `Ctrl+D` 快捷鍵（原有 `Ctrl+Shift+D` 保留）；文字模式下「剪下」（`Ctrl+X`）比照 Visual Studio：沒有選取時剪下目前整行，有選取時行為不變。十六進位模式與唯讀文件不受影響。
 - Windows：選單列移進自繪標題欄，與應用程式圖示、視窗按鈕（最小化／最大化／關閉）同一列（類似 VS Code）。標題欄高度為選單高度的 1.5 倍，可拖動、雙擊可最大化／還原，邊緣縮放與 Aero Snap 貼邊正常。字型縮放、主題切換與快速搜尋保留在同一列右側。其他平台維持原生標題列與選單列。視窗按鈕是一般 EGUI 控件，因此 Windows 11 懸停最大化按鈕時不會顯示 Snap Layouts 浮層。
 - 編輯器分頁與「文件視圖」面板的分頁改為上緣圓角、下緣與內容相連的扁平樣式（類似 Windows 11 檔案總管），不再是有分離感的圓角按鈕；選取的分頁會與下方內容連成一體。

@@ -39,7 +39,7 @@ impl FileViewTab {
 
     fn label(self, app: &App) -> &'static str {
         match self {
-            FileViewTab::List => app.t("view.tab_list", "列表"),
+            FileViewTab::List => app.t("view.tab_list", "歷史檔案"),
             FileViewTab::Open => app.t("view.tab_open", "開啟"),
             FileViewTab::Explorer => app.t("view.tab_explorer", "資源管理器"),
         }
@@ -139,7 +139,7 @@ impl App {
             ui.spacing_mut().item_spacing.y = 2.0;
 
             // 一級節點「收藏」；群組是它的子節點。
-            let root = self.t("fav.title", "收藏");
+            let root = self.t("fav.title", "快速開啟");
             let resp = group_row(ui, root, 0, root_open, false, 0.0, &RowIcon::Folder, None);
             if resp.clicked() {
                 *action = Some(FavAction::ToggleRoot);
@@ -234,7 +234,7 @@ impl App {
             // 最近開啟的檔案是與「收藏」並列的另一個一級節點。
             ui.add_space(10.0);
             let recent_len = self.settings.recent_files.len();
-            let resp = group_row(ui, self.t("fav.recent", "最近開啟的檔案"), recent_len, recent_open, false, 0.0, &RowIcon::Folder, None);
+            let resp = group_row(ui, self.t("fav.recent", "最近存取"), recent_len, recent_open, false, 0.0, &RowIcon::Folder, None);
             if resp.clicked() {
                 *action = Some(FavAction::ToggleRecent);
             }
