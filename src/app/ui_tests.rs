@@ -2866,6 +2866,139 @@ fn test_file_view_root_context_menu_adds_all_open_files() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 以合成事件驅動面板拖動：按下來源行 → 移動到目標行下半 → 放開。
+fn drag_row(h: &mut Harness<'static, App>, source: &str, target: &str) {
+    let src = h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some(source)).rect();
+    let dst = h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some(target)).rect();
+    h.event(Event::PointerButton { pos: src.center(), button: egui::PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+    h.run_steps(2);
+    // 目標行下半沿：插入點 = 目標行索引 + 1（跨過中線才換位）
+    h.event(Event::PointerMoved(dst.center() + egui::vec2(0.0, 6.0)));
+    h.run_steps(2);
+    h.event(Event::PointerButton { pos: dst.center() + egui::vec2(0.0, 6.0), button: egui::PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+    h.run_steps(3);
+}
+
+/// 拖動排序：群組行可重排（松手才落位，死區不動）。
+#[test]
+fn test_file_view_drag_reorders_groups() {
+    let mut h = harness();
+    {
+        let s = &mut h.state_mut().settings;
+        s.show_file_view = true;
+        s.favorites.push(crate::core::favorites::FavoriteGroup::new("甲組"));
+        s.favorites.push(crate::core::favorites::FavoriteGroup::new("乙組"));
+    }
+    h.run_steps(3);
+    let names = |h: &Harness<'static, App>| -> Vec<String> { h.state().settings.favorites.iter().map(|g| g.name.clone()).collect() };
+    assert_eq!(names(&h), vec!["甲組", "乙組"]);
+    drag_row(&mut h, "甲組", "乙組");
+    assert_eq!(names(&h), vec!["乙組", "甲組"], "拖動後群組順序應改變");
+    // 死區：把乙組拖回自己腳底（同位置）不會再動
+    drag_row(&mut h, "乙組", "乙組");
+    assert_eq!(names(&h), vec!["乙組", "甲組"], "死區落點不得改變順序");
+}
+
+/// 拖動跨組：檔案移到其他群組末尾時自訂顯示名跟著走；目標已含同一檔案時拒絕。
+#[test]
+fn test_file_view_drag_moves_item_between_groups_and_refuses_duplicates() {
+    let dir = std::env::temp_dir().join(format!("madedit-fav-drag-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let a = dir.join("a.txt");
+    let b = dir.join("b.txt");
+    std::fs::write(&a, "a").unwrap();
+    std::fs::write(&b, "b").unwrap();
+
+    let mut h = harness();
+    {
+        let s = &mut h.state_mut().settings;
+        s.show_file_view = true;
+        let mut g1 = crate::core::favorites::FavoriteGroup::new("甲組");
+        g1.add(a.clone());
+        g1.add(b.clone());
+        g1.items[1].rename("乙檔案");
+        s.favorites.push(g1);
+        s.favorites.push(crate::core::favorites::FavoriteGroup::new("乙組"));
+    }
+    h.run_steps(3);
+    // b.txt（顯示名「乙檔案」）拖到空群組「乙組」標題行 → 追加到末尾，自訂名保留
+    drag_row(&mut h, "乙檔案", "乙組");
+    {
+        let fav = &h.state().settings.favorites;
+        assert_eq!(fav[0].items.len(), 1, "來源群組應少一項");
+        assert_eq!(fav[1].items.len(), 1);
+        assert_eq!(fav[1].items[0].file_name(), "b.txt");
+        assert_eq!(fav[1].items[0].name.as_deref(), Some("乙檔案"), "自訂顯示名應跟著項目走");
+    }
+    // 重複拒絕：把 a.txt 拖到已含 a.txt 的群組 → 不動
+    let mut g = crate::core::favorites::FavoriteGroup::new("丙組");
+    g.add(a.clone());
+    g.items[0].rename("丙副本"); // 同一路徑只換顯示名，讓來源行「a.txt」的查詢唯一
+    h.state_mut().settings.favorites.push(g);
+    h.run_steps(2);
+    // a.txt 顯示為檔名
+    drag_row(&mut h, "a.txt", "丙組");
+    {
+        let fav = &h.state().settings.favorites;
+        assert_eq!(fav[0].items.len(), 1, "拒絕時來源群組不得變動");
+        assert_eq!(fav[2].items.len(), 1, "拒絕時目標群組不得變動");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 「最近存取」行拖入群組：落地後加入群組並從最近清單移除（照搬 MTT 語義）。
+#[test]
+fn test_file_view_drag_recent_row_into_group() {
+    let dir = std::env::temp_dir().join(format!("madedit-recent-drag-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let r = dir.join("recent.txt");
+    std::fs::write(&r, "r").unwrap();
+
+    let mut h = harness();
+    {
+        let s = &mut h.state_mut().settings;
+        s.show_file_view = true;
+        s.favorites_recent_expanded = true;
+        s.favorites.push(crate::core::favorites::FavoriteGroup::new("甲組"));
+        s.recent_files.push(r.clone());
+    }
+    h.run_steps(3);
+    drag_row(&mut h, "recent.txt", "甲組");
+    {
+        let st = &h.state().settings;
+        assert!(st.recent_files.is_empty(), "落地後應從最近清單移除");
+        assert_eq!(st.favorites[0].items.len(), 1);
+        assert_eq!(st.favorites[0].items[0].path, r, "檔案應以完整路徑加入群組");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 切換編輯器分頁即視為「存取」：最近存取清單把啟用中的檔案移到最前面。
+#[test]
+fn test_switching_tabs_moves_the_active_file_to_recent_access_top() {
+    let dir = std::env::temp_dir().join(format!("madedit-recent-activate-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let first = dir.join("one.txt");
+    let second = dir.join("two.txt");
+    std::fs::write(&first, "one").unwrap();
+    std::fs::write(&second, "two").unwrap();
+
+    let mut h = harness();
+    h.state_mut().open_path(&first);
+    h.state_mut().open_path(&second);
+    h.run_steps(3);
+    let recent = |h: &Harness<'static, App>| -> Vec<String> { h.state().settings.recent_files.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect() };
+    assert_eq!(recent(&h), vec!["two.txt", "one.txt"], "前置：後開的 two.txt 在最前面");
+    // 點編輯器分頁標題切回 one.txt
+    h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some("one.txt")).click();
+    h.run_steps(3);
+    assert_eq!(recent(&h), vec!["one.txt", "two.txt"], "切換分頁後最近存取應即時刷新");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 關閉最後一個分頁後留下空白工作區：不自動開新檔、不結束程式，文件命令不會動作。
 #[test]
 fn test_closing_the_last_tab_leaves_an_empty_workspace_and_keeps_the_window_open() {

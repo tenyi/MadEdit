@@ -11,7 +11,7 @@ use eframe::egui::{self, RichText};
 
 use super::form;
 use super::{menus, App};
-use crate::core::favorites::FavoriteGroup;
+use crate::core::favorites::{FavoriteGroup, move_item_between_groups, reorder_group, reorder_item};
 
 /// Number of recently opened files listed under the favorites tree.
 const RECENT_LIMIT: usize = 15;
@@ -54,6 +54,18 @@ pub(crate) enum FavTarget {
     Item(usize, usize),
 }
 
+/// 歷史檔案面板正在拖動的條目。拖動跨多幀，狀態放在 `App`（會話級），松手才落位。
+/// 索引在拖動期間不會失效：所有落庫都只發生在松手那一刻，松手即清空拖動狀態。
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum FavDrag {
+    /// 拖某個群組（組排序）
+    Group(usize),
+    /// 拖群組內的檔案（組內排序／跨組）
+    Item { group: usize, index: usize },
+    /// 拖「最近存取」的一行（拖入群組，落地後從最近清單移除）
+    Recent(PathBuf),
+}
+
 /// A panel interaction, applied after drawing so no settings borrow is held while the lists
 /// are painted.
 enum FavAction {
@@ -78,6 +90,14 @@ enum FavAction {
     DeleteItem(usize, usize),
     ToggleShowNames,
     ToggleRecent,
+    /// 起拖／結束拖動（渲染中採集，渲染後統一寫回）
+    SetDrag(Option<FavDrag>),
+    /// 群組排序：把 `from` 群組移動到插入點 `insertion`（死區在資料層跳過）
+    ReorderGroup { from: usize, insertion: usize },
+    /// 檔案在群組間移動（同群組即組內排序）；`insertion` 為 None 表示追加到末尾（落在群組標題行）
+    MoveItem { from_group: usize, index: usize, to_group: usize, insertion: Option<usize> },
+    /// 「最近存取」的一行拖入群組；落地後從最近清單移除（該檔案也從「重新打開」選單消失）
+    RecentToGroup { path: PathBuf, to_group: usize, insertion: Option<usize> },
 }
 
 impl App {
@@ -135,12 +155,20 @@ impl App {
         let selected = self.fav_selected;
         let root_open = self.fav_root_open;
         let recent_open = self.settings.favorites_recent_expanded;
+        // 渲染前快照拖動狀態；渲染中只採集落點，渲染後統一落位與清理。
+        let drag = self.favorites_drag.clone();
+        // 光標只在確認拖動中顯示四向箭頭（Windows 把 Grabbing 映射成四向移動箭頭）；
+        // 懸停保持普通箭頭。拒絕行會在同一幀稍後覆蓋成禁止光標。
+        if drag.is_some() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        }
+        let mut drop: Option<FavAction> = None;
         egui::ScrollArea::vertical().id_salt("file-view-list").auto_shrink([false, false]).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
 
             // 一級節點「收藏」；群組是它的子節點。
             let root = self.t("fav.title", "快速開啟");
-            let resp = group_row(ui, root, 0, root_open, false, 0.0, &RowIcon::Folder, None);
+            let resp = group_row(ui, root, 0, root_open, false, 0.0, &RowIcon::Folder, None, false);
             if resp.clicked() {
                 *action = Some(FavAction::ToggleRoot);
             }
@@ -166,11 +194,37 @@ impl App {
                         let group = &self.settings.favorites[gi];
                         (group.name.clone(), group.expanded, group.items.len())
                     };
-                    let resp = group_row(ui, &name, count, expanded, selected == Some(gi), GROUP_INDENT, &RowIcon::Folder, None);
+                    let resp = group_row(ui, &name, count, expanded, selected == Some(gi), GROUP_INDENT, &RowIcon::Folder, None, true);
+                    let rect = resp.rect;
                     if resp.double_clicked() {
                         *action = Some(FavAction::OpenGroup(gi));
+                    } else if resp.drag_started() {
+                        *action = Some(FavAction::SetDrag(Some(FavDrag::Group(gi))));
                     } else if resp.clicked() {
                         *action = Some(FavAction::ToggleGroup(gi));
+                    }
+                    // 拖動中的行淡藍著色；其他行成為落點時畫插入線／拒絕框。
+                    match &drag {
+                        Some(FavDrag::Group(from)) if *from == gi => drag_tint(ui, rect),
+                        Some(FavDrag::Group(from)) if row_hit(ui, rect) => {
+                            let after = drop_line(ui, rect, GROUP_INDENT, false);
+                            drop = Some(FavAction::ReorderGroup { from: *from, insertion: gi + after as usize });
+                        }
+                        Some(FavDrag::Item { group, index }) if row_hit(ui, rect) => {
+                            let refused = self.settings.favorites[gi].contains(&self.settings.favorites[*group].items[*index].path);
+                            drop_frame(ui, rect, refused);
+                            if !refused {
+                                drop = Some(FavAction::MoveItem { from_group: *group, index: *index, to_group: gi, insertion: None });
+                            }
+                        }
+                        Some(FavDrag::Recent(path)) if row_hit(ui, rect) => {
+                            let refused = self.settings.favorites[gi].contains(path);
+                            drop_frame(ui, rect, refused);
+                            if !refused {
+                                drop = Some(FavAction::RecentToGroup { path: path.clone(), to_group: gi, insertion: None });
+                            }
+                        }
+                        _ => {}
                     }
                     let resp = resp.on_hover_text(self.t("fav.group_hint", "按兩下開啟群組中的所有檔案（取代目前開啟的分頁）"));
                     resp.context_menu(|ui| {
@@ -201,11 +255,37 @@ impl App {
                                 (item.label(names_only), item.path.clone())
                             };
                             let remove_label = self.t("fav.remove_favorite", "移除此收藏");
-                            let (resp, remove) = item_row(ui, &label, ITEM_INDENT, false, true, &remove_label, &RowIcon::File, None);
-                            let resp = resp.on_hover_text(path.display().to_string());
-                            if resp.clicked() {
+                            let (resp, remove) = item_row(ui, &label, ITEM_INDENT, false, true, &remove_label, &RowIcon::File, None, true);
+                            let rect = resp.rect;
+                            if resp.drag_started() {
+                                *action = Some(FavAction::SetDrag(Some(FavDrag::Item { group: gi, index: ii })));
+                            } else if resp.clicked() {
                                 *action = Some(FavAction::OpenFavorite(gi, ii));
                             }
+                            if matches!(&drag, Some(FavDrag::Item { group, index }) if *group == gi && *index == ii) {
+                                drag_tint(ui, rect);
+                            }
+                            // 群組不能落在檔案行上（不是有效落點，不畫線）；檔案與最近行按位置插入。
+                            match &drag {
+                                Some(FavDrag::Group(_)) => {}
+                                Some(FavDrag::Item { group, index }) if row_hit(ui, rect) => {
+                                    let same = *group == gi;
+                                    let refused = !same && self.settings.favorites[gi].contains(&self.settings.favorites[*group].items[*index].path);
+                                    let after = drop_line(ui, rect, ITEM_INDENT, refused);
+                                    if !refused {
+                                        drop = Some(FavAction::MoveItem { from_group: *group, index: *index, to_group: gi, insertion: Some(ii + after as usize) });
+                                    }
+                                }
+                                Some(FavDrag::Recent(path)) if row_hit(ui, rect) => {
+                                    let refused = self.settings.favorites[gi].contains(path);
+                                    let after = drop_line(ui, rect, ITEM_INDENT, refused);
+                                    if !refused {
+                                        drop = Some(FavAction::RecentToGroup { path: path.clone(), to_group: gi, insertion: Some(ii + after as usize) });
+                                    }
+                                }
+                                _ => {}
+                            }
+                            let resp = resp.on_hover_text(path.display().to_string());
                             // 懸停在列尾的紅色「×」：只把這一項從收藏移除，不刪除檔案。
                             if remove.is_some_and(|c| c.clicked()) {
                                 *action = Some(FavAction::DeleteItem(gi, ii));
@@ -234,7 +314,7 @@ impl App {
             // 最近開啟的檔案是與「收藏」並列的另一個一級節點。
             ui.add_space(10.0);
             let recent_len = self.settings.recent_files.len();
-            let resp = group_row(ui, self.t("fav.recent", "最近存取"), recent_len, recent_open, false, 0.0, &RowIcon::Folder, None);
+            let resp = group_row(ui, self.t("fav.recent", "最近存取"), recent_len, recent_open, false, 0.0, &RowIcon::Folder, None, false);
             if resp.clicked() {
                 *action = Some(FavAction::ToggleRecent);
             }
@@ -253,11 +333,17 @@ impl App {
                         path.display().to_string()
                     };
                     let remove_label = self.t("fav.remove_recent", "從最近清單移除");
-                    let (resp, remove) = item_row(ui, &label, RECENT_ITEM_INDENT, false, true, &remove_label, &RowIcon::File, None);
-                    let resp = resp.on_hover_text(path.display().to_string());
-                    if resp.clicked() {
+                    let (resp, remove) = item_row(ui, &label, RECENT_ITEM_INDENT, false, true, &remove_label, &RowIcon::File, None, true);
+                    let rect = resp.rect;
+                    if resp.drag_started() {
+                        *action = Some(FavAction::SetDrag(Some(FavDrag::Recent(path.clone()))));
+                    } else if resp.clicked() {
                         *action = Some(FavAction::OpenRecent(path.clone()));
                     }
+                    if matches!(&drag, Some(FavDrag::Recent(dragged)) if dragged == path) {
+                        drag_tint(ui, rect);
+                    }
+                    resp.on_hover_text(path.display().to_string());
                     // 懸停在列尾的紅色「×」：只從最近清單移除這一項，不刪除檔案。
                     if remove.is_some_and(|c| c.clicked()) {
                         *action = Some(FavAction::RemoveRecent(path.clone()));
@@ -266,6 +352,16 @@ impl App {
             }
             ui.add_space(4.0);
         });
+        // 松手落位：落點命中檢測不要求按住，所以松手幀仍保有落點；拒絕態的落點不落庫。
+        let released = ui.input(|i| i.pointer.primary_released());
+        let primary_down = ui.input(|i| i.pointer.primary_down());
+        if released && let Some(act) = drop {
+            *action = Some(act);
+        }
+        // 拖動只在松開時結束；落庫與否都不在這裡之外清狀態，避免「拖動被靜默清除」。
+        if drag.is_some() && (released || !primary_down) {
+            self.favorites_drag = None;
+        }
     }
 
     /// 「開啟」頁籤：目前開啟的所有編輯器分頁（含 Markdown 預覽分頁），點一下切換。
@@ -300,7 +396,7 @@ impl App {
                 }
                 let tooltip = tab.doc.path.as_ref().map(|p| crate::core::display_path(p)).unwrap_or_else(|| unsaved.clone());
                 let selected = i == active && preview == preview_active;
-                let (resp, close) = item_row(ui, &label, 6.0, selected, true, &close_label, &RowIcon::None, None);
+                let (resp, close) = item_row(ui, &label, 6.0, selected, true, &close_label, &RowIcon::None, None, false);
                 let resp = resp.on_hover_text(tooltip);
                 if resp.clicked() {
                     *action = Some(FavAction::ActivateView(i, preview));
@@ -402,6 +498,52 @@ impl App {
             }
             FavAction::ToggleRecent => {
                 self.settings.favorites_recent_expanded = !self.settings.favorites_recent_expanded;
+                self.save_settings();
+            }
+            FavAction::SetDrag(drag) => self.favorites_drag = drag,
+            FavAction::ReorderGroup { from, insertion } => {
+                let groups = &mut self.settings.favorites;
+                if let Some(to) = reorder_group(groups, from, insertion) {
+                    self.fav_selected = Some(to);
+                    self.save_settings();
+                }
+            }
+            FavAction::MoveItem { from_group, index, to_group, insertion } => {
+                let groups = &mut self.settings.favorites;
+                if from_group == to_group {
+                    if let Some(group) = groups.get_mut(from_group)
+                        && reorder_item(group, index, insertion.unwrap_or(usize::MAX))
+                    {
+                        self.save_settings();
+                    }
+                } else if from_group.min(to_group) < groups.len() && to_group.max(from_group) < groups.len() {
+                    let (left, right) = groups.split_at_mut(from_group.max(to_group));
+                    let (src, dst) = if from_group < to_group {
+                        (&mut left[from_group], &mut right[0])
+                    } else {
+                        (&mut right[0], &mut left[to_group])
+                    };
+                    // 落點已在渲染期檢查過重複；資料層仍拒絕重複，雙保險
+                    if move_item_between_groups(src, index, dst, insertion) {
+                        self.fav_selected = Some(to_group);
+                        self.save_settings();
+                    }
+                }
+            }
+            FavAction::RecentToGroup { path, to_group, insertion } => {
+                let Some(group) = self.settings.favorites.get_mut(to_group) else {
+                    return;
+                };
+                if group.contains(&path) {
+                    return; // 落點渲染期已畫拒絕態；不會走到這裡
+                }
+                let item = crate::core::favorites::FavoriteItem::new(path.clone());
+                let at = insertion.map_or(group.items.len(), |i| i.min(group.items.len()));
+                group.items.insert(at, item);
+                // 照搬 MTT 語義：落地後從最近清單移除（該檔案也從「重新打開」選單消失）
+                self.settings.recent_files.retain(|p| p != &path);
+                self.fav_selected = Some(to_group);
+                self.fav_root_open = true;
                 self.save_settings();
             }
         }
@@ -671,9 +813,10 @@ pub(crate) fn paint_row_icon(ui: &mut egui::Ui, center: egui::Pos2, kind: &RowIc
 /// Reused by the Explorer tab for its directory rows.
 /// `width`: 列的最小內容寬度（None = 填滿可用寬度）。橫向捲動的樹／列表傳入自然寬度，
 /// 讓長路徑撐開內容並出現橫向捲軸。
-pub(crate) fn group_row(ui: &mut egui::Ui, name: &str, count: usize, expanded: bool, selected: bool, indent: f32, icon: &RowIcon<'_>, width: Option<f32>) -> egui::Response {
+pub(crate) fn group_row(ui: &mut egui::Ui, name: &str, count: usize, expanded: bool, selected: bool, indent: f32, icon: &RowIcon<'_>, width: Option<f32>, draggable: bool) -> egui::Response {
     let row_w = width.unwrap_or(ui.available_width()).max(ui.available_width());
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(row_w, ROW_HEIGHT), egui::Sense::click());
+    let sense = if draggable { egui::Sense::click_and_drag() } else { egui::Sense::click() };
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(row_w, ROW_HEIGHT), sense);
     // 無障礙資訊在裁剪與否都註冊（樹很長時列會被 ScrollArea 裁剪，但節點仍須可查詢）。
     response.widget_info(|| egui::WidgetInfo::selected(egui::accesskit::Role::Button, ui.is_enabled(), selected, name));
     if ui.is_rect_visible(rect) {
@@ -716,10 +859,11 @@ pub(crate) fn group_row(ui: &mut egui::Ui, name: &str, count: usize, expanded: b
 /// When `closable`, a "×" close button appears at the right end on hover or selection;
 /// it owns its own rectangle (never overlapping the row hit rect) with a derived Id
 /// so the row click and the close click never fight over the same widget state.
-pub(crate) fn item_row(ui: &mut egui::Ui, label: &str, indent: f32, selected: bool, closable: bool, close_label: &str, icon: &RowIcon<'_>, width: Option<f32>) -> (egui::Response, Option<egui::Response>) {
+pub(crate) fn item_row(ui: &mut egui::Ui, label: &str, indent: f32, selected: bool, closable: bool, close_label: &str, icon: &RowIcon<'_>, width: Option<f32>, draggable: bool) -> (egui::Response, Option<egui::Response>) {
     const CLOSE_WIDTH: f32 = 20.0;
     let row_w = width.unwrap_or(ui.available_width()).max(ui.available_width());
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(row_w, ROW_HEIGHT), egui::Sense::click());
+    let sense = if draggable { egui::Sense::click_and_drag() } else { egui::Sense::click() };
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(row_w, ROW_HEIGHT), sense);
     response.widget_info(|| egui::WidgetInfo::selected(egui::accesskit::Role::Button, ui.is_enabled(), selected, label));
     let mut close = None;
     // Pointer-in-rect instead of response.hovered(): the close button's interact rect sits
@@ -763,4 +907,62 @@ pub(crate) fn item_row(ui: &mut egui::Ui, label: &str, indent: f32, selected: bo
         }
     }
     (response, close)
+}
+
+/// 插入線的可落點顏色（Windows 慣用藍）與拒絕紅。
+const DROP_LINE: egui::Color32 = egui::Color32::from_rgb(0, 120, 215);
+const DROP_REFUSED: egui::Color32 = egui::Color32::from_rgb(232, 17, 35);
+
+/// 行命中（含行間 2 px 縫隙的上下放寬）：拖動時指標快速移動，落在縫隙裡也必須有落點，
+/// 否則插入線會斷續出現。命中檢測【不】要求按住按鍵——松手那一幀按鍵已抬起，仍要能命中落點。
+fn row_hit(ui: &egui::Ui, rect: egui::Rect) -> bool {
+    ui.input(|i| i.pointer.latest_pos()).is_some_and(|p| {
+        p.x >= rect.left() && p.x <= rect.right() && p.y >= rect.top() - 1.0 && p.y <= rect.bottom() + 2.0
+    })
+}
+
+/// 插入線：回傳是否插在懸停行的下半沿之後。`refused` 時畫紅色虛線並顯示禁止游標
+/// （egui 沒有虛線 stroke，用 `Shape::dashed_line`）。
+fn drop_line(ui: &egui::Ui, rect: egui::Rect, indent: f32, refused: bool) -> bool {
+    let after = ui.input(|i| i.pointer.latest_pos()).is_some_and(|p| p.y > rect.center().y);
+    let y = if after { rect.bottom() } else { rect.top() };
+    let stroke = egui::Stroke::new(2.0, if refused { DROP_REFUSED } else { DROP_LINE });
+    let from = egui::pos2(rect.left() + indent, y);
+    let to = egui::pos2(rect.right(), y);
+    if refused {
+        for shape in egui::Shape::dashed_line(&[from, to], stroke, 4.0, 3.0) {
+            ui.painter().add(shape);
+        }
+        ui.ctx().set_cursor_icon(egui::CursorIcon::NotAllowed);
+    } else {
+        ui.painter().line_segment([from, to], stroke);
+    }
+    after
+}
+
+/// 群組標題行的落點框：藍色描邊 = 追加到群組末尾；紅色虛框 = 拒絕（目標群組已含該檔案）。
+fn drop_frame(ui: &egui::Ui, rect: egui::Rect, refused: bool) {
+    let color = if refused { DROP_REFUSED } else { DROP_LINE };
+    let stroke = egui::Stroke::new(2.0, color);
+    let inset = 1.0;
+    let r = rect.shrink(inset);
+    let corners = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom()];
+    for i in 0..4 {
+        let edge = [corners[i], corners[(i + 1) % 4]];
+        if refused {
+            for shape in egui::Shape::dashed_line(&edge, stroke, 4.0, 3.0) {
+                ui.painter().add(shape);
+            }
+        } else {
+            ui.painter().line_segment(edge, stroke);
+        }
+    }
+    if refused {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::NotAllowed);
+    }
+}
+
+/// 被拖動行的淡藍著色（拖動過程的視覺跟蹤，松手即消失）。
+fn drag_tint(ui: &egui::Ui, rect: egui::Rect) {
+    ui.painter().rect_filled(rect, 4.0, DROP_LINE.gamma_multiply(0.35));
 }
